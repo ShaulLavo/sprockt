@@ -276,6 +276,39 @@ test("a write expecting no file never replaces one that appeared after the check
   expect(memory.text("/workspace/new.txt")).toBe("from the shell");
 });
 
+test("a file created just before an exclusive restore is a conflict, even when the filesystem repeats its error", async () => {
+  const memory = memoryFilesystem();
+  // As Waffle does: the exclusive write fails with EEXIST because the shell created the file
+  // after every check, and the next read throws that same error once more.
+  const exists = new Error("EEXIST: file already exists");
+  const { readFile, writeFile, resolvePath } = memory.filesystem;
+  let pendingError: Error | undefined;
+  let checks = 0;
+  memory.filesystem.resolvePath = async (path) => {
+    checks += 1;
+    return resolvePath(path);
+  };
+  memory.filesystem.writeFile = async (path, content, mode) => {
+    if (!mode?.exclusive) return writeFile(path, content, mode);
+    await writeFile(path, "from the shell");
+    pendingError = exists;
+    throw exists;
+  };
+  memory.filesystem.readFile = async (path) => {
+    const error = pendingError;
+    pendingError = undefined;
+    if (error) throw error;
+    return readFile(path);
+  };
+  const service = createProjectFiles(memory.filesystem, noWatch);
+  expect(await service.writeIfUnchanged("new.txt", "mine", undefined)).toEqual({
+    written: false,
+    current: "from the shell",
+  });
+  expect(checks).toBeGreaterThan(0);
+  expect(memory.text("/workspace/new.txt")).toBe("from the shell");
+});
+
 test("after the workspace moved to another tab every write is refused", async () => {
   const memory = memoryFilesystem();
   const service = createProjectFiles(memory.filesystem, noWatch);

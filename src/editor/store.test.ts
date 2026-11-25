@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import { createRoot } from "solid-js";
 import type { FileChange } from "../files/service";
+import { isDetached, originalPath } from "./buffers";
 import { createEditorStore } from "./store";
 
 // The store remembers tabs and recovers drafts through localStorage; bun has none.
@@ -16,12 +17,19 @@ beforeEach(() => {
 /** A store over an in-memory disk, with `emit` standing in for FileService change events. */
 function setUpStore(files: Record<string, string>) {
   const disk = new Map(Object.entries(files));
+  const writes: string[] = [];
   const listeners = new Set<(change: FileChange) => void>();
   const workspace = {
     id: "test",
     files: {
       read: async (path: string) => disk.get(path),
-      writeIfUnchanged: async () => ({ written: true as const }),
+      async writeIfUnchanged(path: string, content: string, expected: string | undefined) {
+        const current = disk.get(path);
+        if (current !== expected) return { written: false as const, current };
+        writes.push(path);
+        disk.set(path, content);
+        return { written: true as const };
+      },
       saved: async () => {},
       revision: () => 0,
       writable: () => true,
@@ -35,7 +43,7 @@ function setUpStore(files: Record<string, string>) {
     const full: FileChange = { paths: [], reset: false, moves: [], removed: [], ...change };
     for (const listener of listeners) listener(full);
   };
-  return { store: createRoot(() => createEditorStore(workspace)), disk, emit };
+  return { store: createRoot(() => createEditorStore(workspace)), disk, emit, writes };
 }
 
 const storeWith = (files: Record<string, string>) => setUpStore(files).store;
@@ -124,9 +132,9 @@ test("a folder moved through FileService takes its open files along, unsaved tex
   disk.delete("docs/b.txt");
   emit({
     moves: [
-      { from: "docs", to: "moved" },
-      { from: "docs/a.txt", to: "moved/a.txt" },
-      { from: "docs/b.txt", to: "moved/b.txt" },
+      { from: "docs", to: "moved", operation: 1 },
+      { from: "docs/a.txt", to: "moved/a.txt", operation: 1 },
+      { from: "docs/b.txt", to: "moved/b.txt", operation: 1 },
     ],
   });
   await tick();
@@ -151,7 +159,7 @@ test("a read that started before a move does not mark the moved file deleted", a
   disk.delete("a.txt");
   // The revision sync reads the old path, and the move arrives before that read finishes.
   const syncing = store.buffers.sync();
-  emit({ moves: [{ from: "a.txt", to: "b.txt" }] });
+  emit({ moves: [{ from: "a.txt", to: "b.txt", operation: 1 }] });
   await syncing;
   await tick();
   const buffer = store.buffers.get("b.txt");
@@ -176,33 +184,100 @@ test("deleted files keep their tabs and unsaved text, marked deleted", async () 
   expect(store.buffers.get("top.txt")?.missing()).toBe(false);
 });
 
-test("moves the explorer already applied are not applied again when their event arrives", async () => {
+test("each move operation is applied once and in order, whatever the event stream repeats", async () => {
   const { store, disk, emit } = setUpStore({ "a.txt": "same", "c.txt": "same" });
   store.open("a.txt");
   store.open("c.txt");
   await store.buffers.load("a.txt");
   await store.buffers.load("c.txt");
   type(store, "c.txt", "draft ");
-  // The explorer renames a.txt to b.txt, then the edited c.txt to a.txt, following each at once.
+  // a.txt moves to b.txt, then the edited c.txt moves to a.txt.
   disk.set("b.txt", "same");
   disk.set("a.txt", "same");
   disk.delete("c.txt");
-  store.rename("a.txt", "b.txt");
-  store.rename("c.txt", "a.txt");
-  // One coalesced event then reports both moves.
-  emit({
-    moves: [
-      { from: "a.txt", to: "b.txt" },
-      { from: "c.txt", to: "a.txt" },
-    ],
-  });
+  const first = { from: "a.txt", to: "b.txt", operation: 1 };
+  const second = { from: "c.txt", to: "a.txt", operation: 2 };
+  emit({ moves: [first, second] });
+  // The same operations arriving again (a late or repeated batch) change nothing.
+  emit({ moves: [first] });
+  emit({ moves: [first, second] });
   await tick();
   expect(store.buffers.get("a.txt")?.session.materializeFullText()).toBe("draft same");
   expect(store.buffers.get("b.txt")?.session.materializeFullText()).toBe("same");
   expect(store.hasUnsaved("b.txt")).toBe(false);
 });
 
-test("a folder moved onto a deleted folder whose file had unsaved text keeps both files open", async () => {
+test("a later move between the same paths is applied, and a folder's file list is covered by the folder", async () => {
+  const { store, disk, emit } = setUpStore({ "src/x.txt": "old", "dst/keep.txt": "k" });
+  store.open("src/x.txt");
+  await store.buffers.load("src/x.txt");
+  // Operation 1 moves the folder, listing its file. Operation 2 moves dst/x.txt away.
+  disk.set("dst/x.txt", "old");
+  disk.delete("src/x.txt");
+  emit({
+    moves: [
+      { from: "src", to: "dst", operation: 1 },
+      { from: "src/x.txt", to: "dst/x.txt", operation: 1 },
+    ],
+  });
+  expect(store.tabs().map((tab) => tab.path)).toEqual(["dst/x.txt"]);
+  disk.set("away.txt", "old");
+  disk.delete("dst/x.txt");
+  emit({ moves: [{ from: "dst/x.txt", to: "away.txt", operation: 2 }] });
+  // A new src/x.txt is created, edited, and moved to dst/x.txt: same paths as before, new operation.
+  disk.set("src/x.txt", "new");
+  store.open("src/x.txt");
+  await store.buffers.load("src/x.txt");
+  type(store, "src/x.txt", "draft ");
+  disk.set("dst/x.txt", "new");
+  disk.delete("src/x.txt");
+  emit({ moves: [{ from: "src/x.txt", to: "dst/x.txt", operation: 3 }] });
+  await tick();
+  expect(store.buffers.get("dst/x.txt")?.session.materializeFullText()).toBe("draft new");
+  expect(store.buffers.get("away.txt")?.session.materializeFullText()).toBe("old");
+  expect(store.buffers.get("src/x.txt")).toBeUndefined();
+});
+
+test("a move only points a buffer elsewhere: different text there under unsaved edits is a conflict", async () => {
+  const { store, disk, emit, writes } = setUpStore({ "a.txt": "base", "b.txt": "other" });
+  store.open("a.txt");
+  await store.buffers.load("a.txt");
+  type(store, "a.txt", "draft ");
+  // The file that ends up at b.txt is not the one the buffer was read from.
+  disk.delete("a.txt");
+  emit({ moves: [{ from: "a.txt", to: "b.txt", operation: 1 }] });
+  await tick();
+  await tick();
+  const buffer = store.buffers.get("b.txt");
+  expect(buffer?.session.materializeFullText()).toBe("draft base");
+  expect(buffer?.conflict()).toEqual({ diskText: "other" });
+  expect(writes).toEqual([]);
+});
+
+test("a save made while a move holds the lock waits and writes to the moved path", async () => {
+  const { store, disk, emit, writes } = setUpStore({ "a.txt": "base" });
+  store.open("a.txt");
+  await store.buffers.load("a.txt");
+  store.setDisplayed("a.txt");
+  type(store, "a.txt", "draft ");
+  const lock = await store.lockPaths(["a.txt", "b.txt"]);
+  const saving = store.save("a.txt");
+  await tick();
+  expect(writes).toEqual([]);
+  // The explorer's move runs, then releases its lock; saves still wait for the move's event.
+  disk.set("b.txt", "base");
+  disk.delete("a.txt");
+  lock.release(true);
+  await tick();
+  expect(writes).toEqual([]);
+  emit({ moves: [{ from: "a.txt", to: "b.txt", operation: 1 }] });
+  await saving;
+  expect(writes).toEqual(["b.txt"]);
+  expect(disk.get("b.txt")).toBe("draft base");
+  expect(disk.has("a.txt")).toBe(false);
+});
+
+test("a folder moved onto a deleted folder with an unsaved file keeps that draft apart, at no real path", async () => {
   const { store, disk, emit } = setUpStore({ "target/a.txt": "old", "src/a.txt": "new" });
   store.open("target/a.txt");
   await store.buffers.load("target/a.txt");
@@ -215,14 +290,22 @@ test("a folder moved onto a deleted folder whose file had unsaved text keeps bot
   disk.delete("src/a.txt");
   emit({
     moves: [
-      { from: "src", to: "target" },
-      { from: "src/a.txt", to: "target/a.txt" },
+      { from: "src", to: "target", operation: 1 },
+      { from: "src/a.txt", to: "target/a.txt", operation: 1 },
     ],
   });
   await tick();
-  expect(store.tabs().map((tab) => tab.path)).toEqual(["target/a (unsaved).txt", "target/a.txt"]);
-  expect(store.active()).toBe("target/a.txt");
-  expect(store.buffers.get("target/a (unsaved).txt")?.session.materializeFullText()).toBe("draft old");
-  expect(store.hasUnsaved("target/a (unsaved).txt")).toBe(true);
+  const [aside, incoming] = store.tabs().map((tab) => tab.path);
+  expect(incoming).toBe("target/a.txt");
+  expect(aside !== undefined && isDetached(aside)).toBe(true);
+  expect(originalPath(aside as string)).toBe("target/a.txt");
+  expect(store.buffers.get(aside as string)?.session.materializeFullText()).toBe("draft old");
   expect(store.buffers.get("target/a.txt")?.session.materializeFullText()).toBe("new");
+  // A file that happens to be named like a free name is still just that file.
+  disk.set("target/a (unsaved).txt", "someone else's");
+  // Saving the detached draft picks a free name at that moment.
+  await store.save(aside);
+  expect(disk.get("target/a (unsaved 2).txt")).toBe("draft old");
+  expect(disk.get("target/a (unsaved).txt")).toBe("someone else's");
+  expect(store.tabs().map((tab) => tab.path)).toContain("target/a (unsaved 2).txt");
 });

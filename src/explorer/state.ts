@@ -42,10 +42,11 @@ export interface ExplorerOptions {
   hasUnsaved(path: string): boolean;
   /** The paths of the files open in tabs. */
   openPaths(): readonly string[];
-  /** Makes the editor follow a file or folder that moved. */
-  rename(from: string, to: string): void;
-  /** Resolves once the editor's saves to these paths (or files inside them) have finished. */
-  settle(paths: readonly string[]): Promise<void>;
+  /**
+   * Locks paths in the editor for a move: resolves once its saves there have finished and holds
+   * new ones until released. The editor follows the move itself, from FileService's change event.
+   */
+  lock(paths: readonly string[]): Promise<{ release(moved: boolean): void }>;
   /**
    * Closes the tab of a file that was deleted. Only called for files without unsaved edits: the
    * editor keeps an edited file open, marked deleted, so its text is not lost.
@@ -243,8 +244,21 @@ export function createExplorerState(options: ExplorerOptions) {
     setExpanded(withNames(expanded(), from, to));
     setSelected(withNames(selected(), from, to));
     forget(from);
-    // Tabs, drafts and the file on screen follow the move, for every file inside a moved folder.
-    options.rename(from, to);
+  }
+
+  /**
+   * Moves under the editor's lock on both ends, so no save writes the old path while the move
+   * runs or before the editor has followed it.
+   */
+  async function lockedMove(from: string, to: string): Promise<void> {
+    const lock = await options.lock([from, to]);
+    let moved = false;
+    try {
+      await files.move(from, to);
+      moved = true;
+    } finally {
+      lock.release(moved);
+    }
   }
 
   /** The person acted on the tree: from here on it keeps exactly what they leave open. */
@@ -351,9 +365,7 @@ export function createExplorerState(options: ExplorerOptions) {
   async function runDraft(current: Draft, name: string): Promise<string> {
     if (current.mode === "rename") {
       const to = joinPath(parentOf(current.path), name);
-      // A save still writing to the old path would recreate it after the move.
-      await options.settle([current.path]);
-      await files.move(current.path, to);
+      await lockedMove(current.path, to);
       followMove(current.path, to);
       return to;
     }
@@ -434,12 +446,10 @@ export function createExplorerState(options: ExplorerOptions) {
       const names = moving.map(baseName);
       const clash = names.find((name, index) => existing.has(name) || names.indexOf(name) !== index);
       if (clash !== undefined) return say(fill(copy.notices.moveExists, { name: clash }));
-      // A save still writing to an old path would recreate it after the move.
-      await options.settle(moving);
       await Promise.all(
         moving.map(async (path) => {
           const to = joinPath(directory, baseName(path));
-          await files.move(path, to);
+          await lockedMove(path, to);
           followMove(path, to);
         }),
       );

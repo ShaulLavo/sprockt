@@ -287,8 +287,7 @@ export function Explorer(props: { store: EditorStore }) {
     active: props.store.active,
     hasUnsaved: (path) => props.store.hasUnsaved(path),
     openPaths: () => props.store.tabs().map((tab) => tab.path),
-    settle: (paths) => props.store.buffers.settled(paths),
-    rename: (from, to) => props.store.rename(from, to),
+    lock: (paths) => props.store.lockPaths(paths),
     close: (path) => props.store.close(path),
   });
   let list: HTMLUListElement | undefined;

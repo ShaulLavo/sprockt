@@ -28,8 +28,35 @@ export interface Conflict {
 }
 
 const isSameOrInside = (path: string, other: string) => path === other || path.startsWith(`${other}/`);
+const under = (path: string, roots: readonly string[]) => roots.some((root) => isSameOrInside(path, root));
+
+/**
+ * A draft pushed aside by a move keeps its text under a key that is no project path at all (it
+ * starts with a NUL, which FileService refuses), so no file can ever open at it. Saving such a
+ * draft picks a real, free name at that moment.
+ */
+const DETACHED = "\u0000unsaved:";
+
+let detachedCount = 0;
+
+export function detachedKey(original: string): string {
+  detachedCount += 1;
+  return `${DETACHED}${detachedCount}/${original}`;
+}
+
+export const isDetached = (key: string) => key.startsWith(DETACHED);
+
+/** The path a detached draft came from, or the key itself for an ordinary path. */
+export function originalPath(key: string): string {
+  if (!isDetached(key)) return key;
+  return key.slice(key.indexOf("/") + 1);
+}
 
 /** An unsaved draft moved out of the way of a file that moved onto its path. */
+export interface PathLock {
+  release(): void;
+}
+
 export interface Displacement {
   readonly from: string;
   readonly to: string;
@@ -71,8 +98,12 @@ export interface BufferSet {
    * a free name rather than dropped; the returned list says where each went.
    */
   rename(from: string, to: string): Displacement[];
-  /** Resolves once every save already queued for these paths, or files inside them, settled. */
-  settled(roots: readonly string[]): Promise<void>;
+  /**
+   * Locks paths (and everything inside them) for a move: resolves once writes already running
+   * there have finished, and from then until `release`, saves to those paths wait. A save that
+   * waited writes to its buffer's path as it is after the move.
+   */
+  lock(roots: readonly string[]): Promise<PathLock>;
   /** Files (and everything inside folders) deleted: their buffers stay, marked deleted, text kept. */
   markRemoved(paths: readonly string[]): void;
   /**
@@ -215,6 +246,8 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
   async function syncOne(entry: Entry): Promise<void> {
     if (entry.saving > 0) return;
     const path = entry.buffer.path;
+    // A detached draft has no file to compare with.
+    if (isDetached(path)) return;
     const text = await files.read(path);
     // The buffer may have been closed, moved or saved while the read ran; a moved buffer is
     // compared again under its new path by the sync that follows the move.
@@ -233,8 +266,8 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
 
   /**
    * Before buffers move onto paths, a buffer already at one of those paths gives way: a clean
-   * one is let go (its file was replaced), one with unsaved text moves aside to a free name and is
-   * marked deleted, so no draft is dropped. Returns where the drafts went.
+   * one is let go (its file was replaced), one with unsaved text is detached (a key no file can
+   * open at) and marked deleted, so no draft is dropped. Returns where the drafts went.
    */
   function makeRoom(moving: readonly Entry[], from: string, to: string): Displacement[] {
     const movingSet = new Set(moving);
@@ -248,7 +281,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
         occupant.unsubscribe();
         continue;
       }
-      occupant.buffer.path = freeName(target, (path) => entries.has(path));
+      occupant.buffer.path = detachedKey(target);
       markGone(occupant);
       entries.set(occupant.buffer.path, occupant);
       displaced.push({ from: target, to: occupant.buffer.path });
@@ -315,8 +348,45 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
   }
 
   /** One save, run when the file's earlier saves have finished: it captures its text and baseline now. */
+  interface Lock {
+    readonly roots: readonly string[];
+    readonly released: Promise<void>;
+  }
+  const locks = new Set<Lock>();
+  /** Writes running now, by the path they write. */
+  const writing = new Set<{ readonly path: string; readonly done: Promise<unknown> }>();
+
+  /** Waits until no lock covers the buffer's path; the path may change (a move) while waiting. */
+  async function untilUnlocked(entry: Entry): Promise<void> {
+    for (;;) {
+      const blocking = Array.from(locks).filter((held) => under(entry.buffer.path, held.roots));
+      if (blocking.length === 0) return;
+      // oxlint-disable-next-line no-await-in-loop -- a lock released may reveal another on the new path
+      await Promise.all(blocking.map((held) => held.released));
+    }
+  }
+
+  async function lock(roots: readonly string[]): Promise<PathLock> {
+    const gate = Promise.withResolvers<void>();
+    const record: Lock = { roots, released: gate.promise };
+    locks.add(record);
+    const running = Array.from(writing).filter((write) => under(write.path, roots));
+    await Promise.all(running.map((write) => write.done.catch(() => {})));
+    return {
+      release() {
+        locks.delete(record);
+        gate.resolve();
+      },
+    };
+  }
+
+  const lockedFor = (entry: Entry) => Array.from(locks).some((held) => under(entry.buffer.path, held.roots));
+
   async function saveNow(entry: Entry): Promise<void> {
-    if (!live(entry)) return;
+    // Only a locked path waits: otherwise the save captures the text exactly when it was asked for.
+    if (lockedFor(entry)) await untilUnlocked(entry);
+    // Nothing awaits between here and the write starting: a lock taken now sees this write.
+    if (!live(entry) || isDetached(entry.buffer.path)) return;
     const target = entry.buffer.path;
     const snapshot = entry.buffer.session.getSnapshot();
     const text = entry.buffer.session.materializeFullText();
@@ -324,7 +394,10 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     entry.inflight = snapshot;
     refreshDirty(entry);
     try {
-      const outcome = await files.writeIfUnchanged(target, text, entry.disk);
+      const write = files.writeIfUnchanged(target, text, entry.disk);
+      const record = { path: target, done: write };
+      writing.add(record);
+      const outcome = await write.finally(() => writing.delete(record));
       if (outcome.written) void untilDurable(target, { text, baseText: entry.disk });
       // The file moved while the write ran: what was written went to the old path, so it says
       // nothing about this buffer's file. The buffer stays unsaved.
@@ -413,12 +486,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       membershipChanged();
       return displaced;
     },
-    settled: (roots) =>
-      Promise.all(
-        Array.from(pathQueues, ([path, queue]) =>
-          roots.some((root) => isSameOrInside(path, root)) ? queue.tail : undefined,
-        ),
-      ).then(() => undefined),
+    lock,
     sync() {
       if (syncing) {
         syncAgain = true;

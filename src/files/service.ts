@@ -33,10 +33,12 @@ export interface FileChange {
   /** Events may have been lost (watcher overflow or reopen): treat everything as changed. */
   readonly reset: boolean;
   /**
-   * Renames and moves made through `FileService.move`, so open tabs can follow their file. Moving
-   * a folder lists the folder itself and every file inside it, each with its old and new path.
+   * Renames and moves made through `FileService.move`, in the order they happened, so open tabs
+   * can follow their file. Moving a folder lists the folder itself, then every file inside it,
+   * each with its old and new path. `operation` is the same for one `move` call and grows with
+   * every call: apply the first entry of an operation once, the others describe it.
    */
-  readonly moves: readonly { readonly from: string; readonly to: string }[];
+  readonly moves: readonly { readonly from: string; readonly to: string; readonly operation: number }[];
   /**
    * Paths deleted through `FileService.remove`. Deleting a folder lists the folder itself and every
    * file that was inside it, so no open buffer is left attached to a path that no longer exists.

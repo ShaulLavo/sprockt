@@ -11,7 +11,7 @@ import { debugHandle } from "../app/debug";
 import { PROJECT_ROOT, projectRelative } from "../workspace/paths";
 import { STATUS_SLOT } from "../workbench/slots";
 import { useWorkspace } from "../workspace/session";
-import type { Buffer } from "./buffers";
+import { isDetached, type Buffer } from "./buffers";
 import { EDITOR_COPY, fill } from "./copy";
 import { languageName, languageOf } from "./languages";
 import { mountEditorPlugins } from "./plugins";
@@ -169,7 +169,8 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
     if (current?.buffer === buffer && current.path === buffer.path) return;
     if (current) current.buffer.scroll = instance.getScrollPosition();
     instance.attachSession(buffer.session, {
-      documentId: `${PROJECT_ROOT}/${buffer.path}`,
+      // A detached draft has no file, so no document id: language servers leave it alone.
+      documentId: isDetached(buffer.path) ? null : `${PROJECT_ROOT}/${buffer.path}`,
       languageId: languageOf(buffer.path),
       scrollPosition: buffer.scroll,
     });

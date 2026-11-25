@@ -60,7 +60,7 @@ const BATCH = 8;
 
 interface Pending {
   paths: Set<string>;
-  moves: { from: string; to: string }[];
+  moves: { from: string; to: string; operation: number }[];
   removed: Set<string>;
   reset: boolean;
 }
@@ -68,7 +68,7 @@ interface Pending {
 /** What one change did, beyond the paths it touched: filled in by the change itself. */
 interface Effects {
   readonly paths: string[];
-  readonly moves: { from: string; to: string }[];
+  readonly moves: { from: string; to: string; operation: number }[];
   readonly removed: string[];
 }
 
@@ -151,12 +151,25 @@ export function createProjectFiles(
     }
   }
   const persistence = createPersistence(flushUnlessReported, setSaveState);
-  const found = (path: string) => filesystem.resolvePath(path).catch(absentWhenMissing);
+  const found = (path: string) => pastReported(() => filesystem.resolvePath(path)).catch(absentWhenMissing);
+  /**
+   * Runs a read that Waffle may fail with an error an operation already reported (it throws the
+   * failed change once more on the next call): that error is not this read's, so it runs again.
+   */
+  async function pastReported<T>(read: () => Promise<T>): Promise<T> {
+    try {
+      return await read();
+    } catch (error) {
+      if (typeof error !== "object" || error === null || !reported.has(error)) throw error;
+      return read();
+    }
+  }
   const decoder = new TextDecoder();
   const listeners = new Set<(change: FileChange) => void>();
   let revoked: Error | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending = emptyPending();
+  let moveOperations = 0;
 
   function announce(): void {
     timer = undefined;
@@ -352,9 +365,9 @@ export function createProjectFiles(
           return { written: true };
         }
         // Expected absent: create it exclusively, so a file that appears between the check and
-        // the write (the shell, another tab) is reported, never replaced.
+        // the write (the shell, another tab) is reported as a conflict, never replaced.
         if (await writeExclusive(path, content)) return { written: true };
-        return { written: false, current: await readText(path) };
+        return { written: false, current: await pastReported(() => readText(path)) };
       }, [path]),
     async writeMany(files) {
       const entries = Object.entries(files);
@@ -413,9 +426,13 @@ export function createProjectFiles(
             remember(error);
             throw error;
           }
+          // One operation id for the folder and every file listed with it: a reader applies the
+          // operation once, and can tell it apart from a later move between the same paths.
+          moveOperations += 1;
+          const operation = moveOperations;
           effects.moves.push(
-            { from, to },
-            ...inside.map((file) => ({ from: file, to: rebase(file, from, to) })),
+            { from, to, operation },
+            ...inside.map((file) => ({ from: file, to: rebase(file, from, to), operation })),
           );
         },
         [from, to],
