@@ -3,7 +3,7 @@
 // Drives Safari through safaridriver (WebDriver), so it needs nothing installed beyond Xcode.
 //
 //   bun scripts/iphone-smoke.ts --base-url https://sprockt.dev
-//   bun scripts/iphone-smoke.ts --serve dist          # serves a build on localhost first
+//   bun scripts/iphone-smoke.ts --serve dist          # serves a build on 127.0.0.1 first
 //
 // Options: --udid <simulator> (default: the shared C4D2 iPhone simulator), --driver-port <n>,
 // --port <n> (for --serve), --out <dir> (screenshots and result.json). Run it on the Mac through
@@ -16,9 +16,8 @@ import { parseArgs } from "node:util";
 const C4D2 = "C4D2FFD4-A0D2-4608-B180-35854521B830";
 /** A hang cap per step, not a speed target: the first `bun` downloads and compiles the guest. */
 const STEP_LIMIT_MS = 240_000;
-const ENTER = "";
-const ELEMENT = "element-6066-11e4-a6c3-4f4a4e2a3e4b";
-
+/** WebDriver's Enter key. */
+const ENTER = String.fromCodePoint(0xe007);
 const ISOLATION = {
   "Cross-Origin-Opener-Policy": "same-origin",
   "Cross-Origin-Embedder-Policy": "require-corp",
@@ -98,18 +97,25 @@ class WebDriver {
   screenshot = () => this.call<string>("GET", "/screenshot");
   end = () => fetch(`${this.base}/session/${this.session}`, { method: "DELETE" });
 
+  /**
+   * Clicks from inside the page. safaridriver's element click on the iOS Simulator lands as a
+   * long press that selects the button's text instead of activating it.
+   */
   async click(selector: string): Promise<void> {
-    const found = await this.call<Record<string, string>>("POST", "/element", {
-      using: "css selector",
-      value: selector,
-    });
-    await this.call("POST", `/element/${found[ELEMENT]}/click`, {});
+    const clicked = await this.script<boolean>(
+      `const target = document.querySelector(${JSON.stringify(selector)}); target?.click(); return Boolean(target);`,
+    );
+    if (!clicked) throw new Error(`Nothing matches ${selector}`);
   }
 
-  /** Types into whatever has focus, as a person on the on-screen keyboard would. */
+  /** Types into whatever has focus, as key presses (the terminal's input is not a visible field). */
   async type(text: string): Promise<void> {
-    const active = await this.call<Record<string, string>>("GET", "/element/active");
-    await this.call("POST", `/element/${active[ELEMENT]}/value`, { text });
+    const keys = Array.from(text).flatMap((value) => [
+      { type: "keyDown", value },
+      { type: "keyUp", value },
+    ]);
+    await this.call("POST", "/actions", { actions: [{ type: "key", id: "keyboard", actions: keys }] });
+    await this.call("DELETE", "/actions");
   }
 
   /** Polls a page expression until it returns true. */
@@ -222,7 +228,7 @@ async function main(): Promise<number> {
   const out = resolve(values.out!);
   await mkdir(out, { recursive: true });
   const server = values.serve ? serveBuild(values.serve, Number(values.port)) : undefined;
-  const baseUrl = values["base-url"] ?? (server ? `http://localhost:${server.port}/` : undefined);
+  const baseUrl = values["base-url"] ?? (server ? `http://127.0.0.1:${server.port}/` : undefined);
   if (!baseUrl) throw new Error("Pass --base-url <url> or --serve <build directory>");
 
   const driverPort = Number(values["driver-port"]);
