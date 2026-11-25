@@ -6,38 +6,61 @@
 // Order matters: the plugin starts the server as soon as it is mounted, so the program is
 // installed first. Otherwise the first start fails with ExecutableNotFound and uses up the
 // first restart delay.
+import type { Runtime } from "waffle";
 import type { EditorHostContext, EditorPluginSet } from "../editor/plugins";
-import { watchFilesystem } from "../files/watch";
+import { watchFilesystemEvents } from "../files/watch";
 import { createGuestLanguageServerPlugin, disposeLanguageServers } from "./glue";
-import { hasOwnScriptFile, projectRelativeName } from "./project";
+import { checkForScripts, hasOwnScriptFile, projectRelativeName } from "./project";
 import type { TypeScriptServer } from "./servers";
 import { tsrs } from "./tsrs";
 import { watchProjectFiles } from "./watch";
 
 const SERVER: TypeScriptServer = tsrs;
 
+/** Whether the tree at `absolute` holds a script file of the project's own. */
+async function subtreeHasScript(runtime: Runtime, projectRoot: string, absolute: string): Promise<boolean> {
+  // A path that is gone, or is a file, lists nothing.
+  const files = await runtime.filesystem.listFiles(absolute).catch((): string[] => []);
+  return hasOwnScriptFile(
+    files.flatMap((path) => {
+      const name = projectRelativeName(projectRoot, path.slice(1));
+      return name === undefined ? [] : [name];
+    }),
+  );
+}
+
 /**
  * Resolves once the project has a TypeScript or JavaScript file of its own, at once when it
  * already has one. A project without any never pays for the server's download or memory.
+ *
+ * The watch is registered before the project is listed (its first update is a resync), so a
+ * file that arrives in between is seen by one or the other. A directory moved or created in the
+ * project announces only itself, so its tree is listed too.
  */
-async function untilScriptFiles(context: EditorHostContext): Promise<void> {
+function untilScriptFiles(context: EditorHostContext): Promise<void> {
   const { runtime, projectRoot, signal } = context;
-  const relative = (await runtime.filesystem.listFiles(projectRoot)).flatMap((path) => {
-    const name = projectRelativeName(projectRoot, path.slice(1));
-    return name === undefined ? [] : [name];
-  });
-  if (hasOwnScriptFile(relative)) return;
-  signal.throwIfAborted();
-  await new Promise<void>((resolve, reject) => {
-    const stop = watchFilesystem(runtime, (names) => {
-      const created = names.some((name) => {
-        const path = name === null ? undefined : projectRelativeName(projectRoot, name);
-        return path !== undefined && hasOwnScriptFile([path]);
-      });
-      if (!created) return;
+  return new Promise<void>((resolve, reject) => {
+    let found = false;
+    const finish = (hasScript: boolean): void => {
+      if (!hasScript || found) return;
+      found = true;
       stop();
       resolve();
-    });
+    };
+    const recheck = (absolute: string): void =>
+      void subtreeHasScript(runtime, projectRoot, absolute).then(finish, (error: unknown) =>
+        console.warn("Could not list the project for TypeScript files", error),
+      );
+    const stop = watchFilesystemEvents(
+      runtime,
+      (update) => {
+        if (update === "resync") return recheck(projectRoot);
+        const check = checkForScripts(projectRoot, update);
+        if (check.found) return finish(true);
+        for (const path of check.recheck) recheck(path);
+      },
+      { resyncOnFirstOpen: true },
+    );
     signal.addEventListener("abort", () => (stop(), reject(signal.reason)), { once: true });
   });
 }
@@ -55,6 +78,7 @@ export async function typescriptPlugins(context: EditorHostContext): Promise<Edi
     openFile: (path, range) =>
       context.openFile(path, { line: range.start.line + 1, column: range.start.character + 1 }),
     onConnected: watched.connected,
+    onStart: watched.started,
   });
   return {
     plugins: [plugin],

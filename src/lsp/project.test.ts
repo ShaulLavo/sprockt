@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  checkForScripts,
   FileChange,
   fileChangeType,
   hasOwnScriptFile,
@@ -20,6 +21,37 @@ test("only the project's own sources start a server, not dependencies or .git", 
   expect(hasOwnScriptFile(["README.md", "src/main.ts"])).toBe(true);
   expect(hasOwnScriptFile(["README.md", "node_modules/pkg/index.js", ".git/hooks/x.js"])).toBe(false);
   expect(hasOwnScriptFile([])).toBe(false);
+});
+
+const rename = (name: string) => ({ type: "rename" as const, name });
+const change = (name: string) => ({ type: "change" as const, name });
+
+test("a script file named by an event is found at once", () => {
+  expect(
+    checkForScripts("/workspace", [change("workspace/README.md"), rename("workspace/src/a.ts")]),
+  ).toEqual({
+    found: true,
+    recheck: [],
+  });
+});
+
+test("a directory moved or created in the project is listed again, since its files are not named", () => {
+  // Moving node_modules/prepared (holding main.ts) to src announces only the two directories.
+  const check = checkForScripts("/workspace", [
+    rename("workspace/node_modules/prepared"),
+    rename("workspace/src"),
+  ]);
+  expect(check).toEqual({ found: false, recheck: ["/workspace/src"] });
+});
+
+test("changes inside dependencies, .git or outside the project need no listing", () => {
+  const check = checkForScripts("/workspace", [
+    rename("workspace/node_modules/pkg/index.js"),
+    rename("workspace/.git/refs"),
+    rename("tmp/x"),
+    change("workspace/docs"),
+  ]);
+  expect(check).toEqual({ found: false, recheck: [] });
 });
 
 test("watch names are made project-relative, and names outside the project are dropped", () => {

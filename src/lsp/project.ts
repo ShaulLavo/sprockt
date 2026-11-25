@@ -25,6 +25,32 @@ export function projectRelativeName(projectRoot: string, name: string): string |
   return name.startsWith(prefix) && name.length > prefix.length ? name.slice(prefix.length) : undefined;
 }
 
+/** What a batch of watch events says about whether the project has a script file now. */
+export interface ScriptCheck {
+  /** A script file of the project's own was named. */
+  readonly found: boolean;
+  /**
+   * Absolute paths to list: a rename names a moved or created directory only by itself, so a
+   * script inside it shows up only when the directory is listed.
+   */
+  readonly recheck: readonly string[];
+}
+
+/** Events are `{ type, name }` with names relative to the filesystem root. */
+export function checkForScripts(
+  projectRoot: string,
+  events: readonly { readonly type: "change" | "rename"; readonly name: string | null }[],
+): ScriptCheck {
+  const recheck = new Set<string>();
+  for (const event of events) {
+    const relative = event.name === null ? undefined : projectRelativeName(projectRoot, event.name);
+    if (relative === undefined || isHeavyPath(relative)) continue;
+    if (isScriptFile(relative)) return { found: true, recheck: [] };
+    if (event.type === "rename") recheck.add(`${projectRoot}/${relative}`);
+  }
+  return { found: false, recheck: Array.from(recheck) };
+}
+
 /** LSP `FileChangeType`. */
 export const FileChange = { created: 1, changed: 2, deleted: 3 } as const;
 export type FileChangeType = (typeof FileChange)[keyof typeof FileChange];

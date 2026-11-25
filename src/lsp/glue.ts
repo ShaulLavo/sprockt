@@ -2,7 +2,8 @@
 // Copied from the LSP lane's verified glue (sprockt-glue.ts, its headless Chromium acceptance
 // ran this file unchanged). Differences: Waffle is imported as `waffle` (Sprockt's alias for
 // `@waffle-os/runtime`), `openFile` answers whether it opened the file, and the host can
-// follow the connection (`onConnected`) to send notifications of its own.
+// follow the connection (`onConnected`) to send notifications of its own and restart the
+// server (`onStart`) when it has to re-read the disk.
 import {
   LspServerExitedError,
   createStdioLspTransport,
@@ -43,8 +44,15 @@ function createStderrTail() {
   };
 }
 
-/** Starts the server process and returns the transport of this one run. */
-export function connectLanguageServer(runtime: Runtime, server: GuestServer): LspManagedTransport {
+/**
+ * Starts the server process and returns the transport of this one run. `onStart` receives the
+ * function that kills this run, which the connection then restarts as it would after a crash.
+ */
+export function connectLanguageServer(
+  runtime: Runtime,
+  server: GuestServer,
+  onStart?: (kill: () => void) => void,
+): LspManagedTransport {
   const stderr = createStderrTail();
   const stdio = createStdioLspTransport({ stop: () => void command.kill() });
   const command = startCommand(runtime, server.executable, {
@@ -70,6 +78,7 @@ export function connectLanguageServer(runtime: Runtime, server: GuestServer): Ls
       ),
     (error: unknown) => stdio.exited(error),
   );
+  onStart?.(() => void command.kill());
   return stdio.transport;
 }
 
@@ -78,6 +87,8 @@ export type LanguageServerHost = {
   openFile(path: string, range: LanguageServerDefinitionTarget["range"]): boolean;
   /** The server answered `initialize`; called again after every restart. */
   onConnected?(context: LanguageServerConnectionContext): void;
+  /** A server process started; `kill` ends it, and the connection restarts it. */
+  onStart?(kill: () => void): void;
 };
 
 /** One pool for the page, so a file switch reuses the running server. */
@@ -101,7 +112,7 @@ export function createGuestLanguageServerPlugin(
   return createLanguageServerAdapterPlugin({
     name,
     rootUri: pathToFileUri(server.rootPath),
-    createTransport: () => connectLanguageServer(runtime, server),
+    createTransport: () => connectLanguageServer(runtime, server, host.onStart),
     reconnect: { delaysMs: [250, 1000, 4000] },
     connectionProvider: pool.provider(`${name}:${server.rootPath}`),
     // Document ids are absolute Waffle paths, mapped to URIs exactly.

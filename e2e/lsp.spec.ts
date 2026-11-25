@@ -71,7 +71,7 @@ export declare const ZERO: Money;
 };
 
 /** Writes the project through the page's FileService, folders first, in the order given. */
-async function writeProject(page: Page): Promise<void> {
+async function writeProject(page: Page, project: Record<string, string> = PROJECT): Promise<void> {
   await page.evaluate(async (files) => {
     const workspace = globalThis.sprockt?.workspace;
     if (!workspace) throw new Error("No workspace on the debug handle");
@@ -84,7 +84,7 @@ async function writeProject(page: Page): Promise<void> {
       // oxlint-disable-next-line no-await-in-loop
       await workspace.files.write(path, text);
     }
-  }, PROJECT);
+  }, project);
 }
 
 const isMac = (page: Page) =>
@@ -174,4 +174,18 @@ test("TypeScript diagnostics, hover, completion and go-to-definition come from t
   await caretTo(page, 6, 25);
   await page.keyboard.press("F12");
   await expect.poll(() => caret(page)).toMatchObject({ path: "node_modules/tiny-money/index.d.ts", line: 6 });
+});
+
+test("the server starts when the first TypeScript file arrives inside a moved directory", async ({
+  page,
+}) => {
+  await newWorkspace(page);
+  await expect(page.getByTestId("boot-stage")).toHaveText("Ready");
+  // Inside node_modules it does not count as the project's own source, so nothing starts yet.
+  await writeProject(page, { "node_modules/prepared/main.ts": 'const broken: number = "text";\n' });
+  // The move announces only the directory; its file is never named by an event.
+  await page.evaluate(() => globalThis.sprockt?.workspace?.files.move("node_modules/prepared", "src"));
+  await page.getByTestId("file-tree").getByRole("button", { name: "main.ts", exact: true }).click();
+  await expect.poll(() => editorText(page)).toBe('const broken: number = "text";\n');
+  await expect.poll(() => errorRanges(page)).toEqual(["broken"]);
 });
