@@ -24,3 +24,9 @@ test("every pinned guest has a well-formed lock entry", () => {
     expect(pinned.source).toStartWith("https://");
   }
 });
+
+test("every guest comes from the hash-addressed store, at a URL that names its hash", () => {
+  for (const pinned of Object.values(guestEntries)) {
+    expect(pinned.source).toStartWith(`https://bun-artifacts.shaulavo.dev/${pinned.sha256}/`);
+  }
+});
