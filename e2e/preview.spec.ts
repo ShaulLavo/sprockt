@@ -160,8 +160,12 @@ test("reload, the error indicator and the viewport switch", async ({ page }) => 
   expect(await width()).toBe(390);
   await page.getByRole("button", { name: "Tablet viewport" }).click();
   expect(await width()).toBe(768);
+  // The desktop size is the pane's own width, whatever the layout gives it; the other two are
+  // fixed, and scroll inside a pane that is narrower.
+  const stage = () => page.locator(".preview-stage").evaluate((element) => element.clientWidth);
   await page.getByRole("button", { name: "Desktop viewport" }).click();
-  expect(await width()).toBeGreaterThan(390);
+  expect(await width()).toBeCloseTo(await stage(), 0);
+  expect(await width()).not.toBe(768);
 });
 
 // A server entry file the dev-server task can start: it runs one with `bun --hot`, which in
@@ -351,6 +355,8 @@ test("a dev command that fails leaves its output on screen", async ({ page }) =>
   // The command ended, and what it said is still there.
   await expect(task).toHaveAttribute("data-status", "stopped");
   await expect(page.getByTestId("preview-task-output")).toContainText("not-there.ts");
+  // As text: the terminal's colour codes are not printed.
+  expect(await page.getByTestId("preview-task-output").textContent()).not.toContain("\u001B");
   await expect(page.getByTestId("dev-server")).toHaveCount(0);
 });
 

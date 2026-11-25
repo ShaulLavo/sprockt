@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show, type JSX } from "solid-js";
 import { createDevServer } from "../tasks/dev-server";
+import { plainOutput } from "../tasks/output";
 import { trackOverflowFade } from "../ui/fade";
 import { fill } from "../ui/format";
 import { STATUS_SLOT } from "../workbench/slots";
@@ -323,7 +324,7 @@ export function PreviewPane() {
             {/* The output stays after a server that ended by itself: it says why. */}
             <Show when={(devServer.status() === "starting" || devServer.ended()) && devServer.output()}>
               <pre class="preview-task-output" data-testid="preview-task-output">
-                {devServer.output().slice(-2000)}
+                {plainOutput(devServer.output()).slice(-2000)}
               </pre>
             </Show>
           </div>
