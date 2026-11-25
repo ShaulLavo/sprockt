@@ -1,0 +1,61 @@
+/* The workbench Share control. Circuit tokens with the foundation's variables as fallbacks. */
+.share {
+  position: relative;
+  display: inline-flex;
+  margin-left: auto;
+}
+
+.share-button {
+  padding: 4px 12px;
+  border: 1px solid var(--line-strong, var(--border));
+  border-radius: 6px;
+  color: var(--fg, var(--text));
+}
+
+.share-button:hover {
+  background: var(--bg-hover, var(--surface));
+}
+
+.share-button:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+
+.share-button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.share-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 10;
+  display: grid;
+  gap: 6px;
+  width: min(360px, calc(100vw - 32px));
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line, var(--border));
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--surface-raised));
+  color: var(--fg-muted, var(--text-muted));
+  font-size: 12px;
+}
+
+.share-link {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line, var(--border));
+  border-radius: 6px;
+  background: var(--bg-input, var(--surface));
+  color: var(--fg, var(--text));
+  font:
+    12px ui-monospace,
+    monospace;
+}
+
+.share-error {
+  color: var(--danger);
+  line-height: 1.5;
+}

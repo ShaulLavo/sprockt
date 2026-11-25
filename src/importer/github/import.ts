@@ -29,7 +29,13 @@ export interface ImportOptions {
   readonly fetch?: Fetch;
   readonly limits?: Partial<ImportLimits>;
   readonly signal?: AbortSignal;
+  /** Called as the import moves along; `downloading` repeats as bytes arrive. */
+  readonly onProgress?: (progress: ImportProgress) => void;
 }
+
+export type ImportProgress =
+  | { readonly stage: "resolving" }
+  | { readonly stage: "downloading"; readonly bytes: number; readonly files: number };
 
 export interface ImportResult {
   readonly owner: string;
@@ -59,7 +65,9 @@ export async function importGitHubRepo(
     limits: { ...DEFAULT_IMPORT_LIMITS, ...options.limits },
     signal: options.signal,
     source,
+    progress: options.onProgress ?? noProgress,
   };
+  context.progress({ stage: "resolving" });
   const split = await resolveSplit(context);
   const response = await request(context, archiveUrl(context, split.fetchRef));
   if (!response.ok) throw await responseError(response, context);
@@ -79,6 +87,7 @@ export async function fetchRepoInfo(
     limits: DEFAULT_IMPORT_LIMITS,
     signal: options.signal,
     source: { owner, repo, refAndPath: [], target: "tree" },
+    progress: noProgress,
   };
   const url = `${base}/repo/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
   const info = await requestJson(context, url);
@@ -94,7 +103,10 @@ interface Context {
   readonly limits: ImportLimits;
   readonly signal: AbortSignal | undefined;
   readonly source: GitHubSource;
+  readonly progress: (progress: ImportProgress) => void;
 }
+
+function noProgress(): void {}
 
 type ResolvedSplit = RefSplit & { readonly fetchRef: string };
 
@@ -219,8 +231,12 @@ async function unpack(context: Context, split: RefSplit, response: Response): Pr
   if (declared > limits.maxArchiveBytes) throw tooLarge(source, limits.maxArchiveBytes);
   const counter = new UnpackCounter(context, split.subdir);
   let commit: string | undefined;
+  const downloaded = (bytes: number) =>
+    context.progress({ stage: "downloading", bytes, files: counter.files.length });
   const stream = response.body
-    .pipeThrough(byteLimit(limits.maxArchiveBytes, () => tooLarge(source, limits.maxArchiveBytes)))
+    .pipeThrough(
+      byteLimit(limits.maxArchiveBytes, () => tooLarge(source, limits.maxArchiveBytes), downloaded),
+    )
     .pipeThrough(decompressionStream("gzip"))
     .pipeThrough(
       byteLimit(limits.maxScannedBytes, () => tooLarge(source, limits.maxScannedBytes, "unpacks to")),
@@ -327,7 +343,11 @@ class UnpackCounter {
 }
 
 /** Passes bytes through, failing the stream with `makeError()` once more than `limit` bytes went by. */
-function byteLimit(limit: number, makeError: () => Error): TransformStream<Uint8Array, Uint8Array> {
+function byteLimit(
+  limit: number,
+  makeError: () => Error,
+  onTotal: (total: number) => void = noProgress,
+): TransformStream<Uint8Array, Uint8Array> {
   let total = 0;
   return new TransformStream({
     transform(chunk, controller) {
@@ -336,6 +356,7 @@ function byteLimit(limit: number, makeError: () => Error): TransformStream<Uint8
         controller.error(makeError());
         return;
       }
+      onTotal(total);
       controller.enqueue(chunk);
     },
   });

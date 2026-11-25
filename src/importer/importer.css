@@ -1,0 +1,120 @@
+/* Import and share-link pages. Circuit tokens (design/tokens/circuit.css) with the foundation's
+   variables as fallbacks until the workbench slice lands the token set in styles.css. */
+.importer {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 24px 16px;
+  background: var(--bg, var(--surface));
+  color: var(--fg, var(--text));
+}
+
+.importer-card {
+  display: grid;
+  gap: 16px;
+  width: min(100%, 440px);
+  padding: 28px;
+  border: 1px solid var(--line, var(--border));
+  border-radius: 12px;
+  background: var(--bg-panel, var(--surface-raised));
+}
+
+.importer-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.importer-stage {
+  margin: 0;
+  color: var(--fg-muted, var(--text-muted));
+  font-variant-numeric: tabular-nums;
+}
+
+.importer-progress {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line, var(--border));
+}
+
+.importer-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--accent);
+  animation: importer-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes importer-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .importer-progress::after {
+    width: 100%;
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
+.importer-error {
+  margin: 0;
+  color: var(--danger);
+  line-height: 1.5;
+}
+
+.importer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.importer-button {
+  padding: 8px 14px;
+  border: 1px solid var(--line-strong, var(--border));
+  border-radius: 8px;
+}
+
+.importer-button.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-fg, #08101f);
+}
+
+.importer-button.danger {
+  border-color: transparent;
+  background: var(--danger);
+  color: var(--accent-fg, #08101f);
+}
+
+a.importer-button {
+  color: inherit;
+  text-decoration: none;
+}
+
+.incomplete-import,
+.incomplete-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.incomplete-label {
+  color: var(--warn, var(--text-muted));
+}
+
+.importer-button:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}

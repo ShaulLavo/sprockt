@@ -4,8 +4,10 @@ import { navigate } from "../app/router";
 import { EditorPane } from "../editor/EditorPane";
 import { createEditorStore } from "../editor/store";
 import { Explorer } from "../explorer/Explorer";
+import { attachAfterImport } from "../importer/after-import";
 import { PreviewPane } from "../preview/PreviewPane";
 import { workspaceIsOpenElsewhere, type BootStage } from "../runtime/boot";
+import { ShareButton } from "../share/ShareButton";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { workspaceTurnstile } from "../workspace/lifecycle";
 import { openWorkspace, WorkspaceContext, type WorkspaceSession } from "../workspace/session";
@@ -26,6 +28,7 @@ const WAIT_NOTICE_MS = 500;
 
 function Panes(props: { session: WorkspaceSession }) {
   const editor = createEditorStore(props.session);
+  onCleanup(attachAfterImport(props.session));
   return (
     <WorkspaceContext.Provider value={props.session}>
       <div class="workbench-panes">
@@ -47,8 +50,14 @@ function Panes(props: { session: WorkspaceSession }) {
  * while it boots, or while it waits for storage another tab holds, is safe: closing aborts the
  * boot, the turnstile disposes the runtime, and the next workspace waits for that.
  */
-function Opened(props: { id: string; takeOver: boolean; onStage: (stage: BootStage) => void }) {
-  const { id, takeOver, onStage } = props;
+function Opened(props: {
+  id: string;
+  takeOver: boolean;
+  onStage: (stage: BootStage) => void;
+  /** The live session for the header (Share), and `undefined` again once it closes. */
+  onSession: (session: WorkspaceSession | undefined) => void;
+}) {
+  const { id, takeOver, onStage, onSession } = props;
   const opening = workspaceTurnstile.open((signal) => openWorkspace(id, onStage, { takeOver, signal }));
   // Plain signals, not a resource: a resource that is still loading would suspend the whole
   // workbench, and a tab waiting for storage has to keep showing why it waits.
@@ -58,6 +67,7 @@ function Opened(props: { id: string; takeOver: boolean; onStage: (stage: BootSta
   const started = (opened: WorkspaceSession): void => {
     debugHandle().workspace = opened;
     setSession(opened);
+    if (!closed) onSession(opened);
   };
   const failed = (error: unknown): void => {
     // A boot that was aborted by closing fails too; that is not an error to show.
@@ -66,6 +76,7 @@ function Opened(props: { id: string; takeOver: boolean; onStage: (stage: BootSta
   opening.session.then(started, failed);
   onCleanup(() => {
     closed = true;
+    onSession(undefined);
     void opening.close();
   });
 
@@ -92,6 +103,8 @@ async function openElsewhere(id: string): Promise<boolean> {
 
 export function Workbench(props: { id: string }) {
   const [stage, setStage] = createSignal<BootStage>("storage");
+  // Only a session that started is shared; a failed or closed boot leaves this undefined.
+  const [live, setLive] = createSignal<WorkspaceSession>();
   // The quick answer, before anything is started. It can be out of date a moment later, so it
   // only decides what is shown first: an ordinary open never takes storage from another tab.
   // Undefined while the answer is still on its way.
@@ -118,6 +131,7 @@ export function Workbench(props: { id: string }) {
         <span class="workbench-stage" data-testid="boot-stage">
           {STAGE_TEXT[stage()]}
         </span>
+        <Show when={live()}>{(opened) => <ShareButton session={opened()} />}</Show>
       </header>
       {/* Opening here takes the workspace away from the other tab, so the person is asked. */}
       <Show when={busy()}>
@@ -129,8 +143,12 @@ export function Workbench(props: { id: string }) {
         </div>
       </Show>
       <Show when={starts()}>
-        <Show when={takeOver()} keyed fallback={<Opened id={props.id} takeOver={false} onStage={setStage} />}>
-          <Opened id={props.id} takeOver onStage={setStage} />
+        <Show
+          when={takeOver()}
+          keyed
+          fallback={<Opened id={props.id} takeOver={false} onStage={setStage} onSession={setLive} />}
+        >
+          <Opened id={props.id} takeOver onStage={setStage} onSession={setLive} />
         </Show>
       </Show>
     </main>
