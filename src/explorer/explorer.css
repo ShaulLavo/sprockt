@@ -1,31 +1,509 @@
-.tree,
-.tree ul {
+/* The explorer in Circuit's direction. Colours come from the Circuit tokens; each falls back to the
+   foundation's tokens so the pane also reads correctly before the workbench ships them. Everything
+   is scoped to .explorer-pane because the class names (.row, .name, .dirty) are generic. */
+
+.explorer-pane {
+  --e-bg: var(--bg-panel, var(--surface-raised, #121821));
+  --e-fg: var(--fg, var(--text, #e6ebf2));
+  --e-muted: var(--fg-muted, var(--text-muted, #a0acbc));
+  --e-subtle: var(--fg-subtle, var(--text-muted, #7f8b9c));
+  --e-line: var(--line, var(--border, #222c39));
+  --e-hover: var(--bg-hover, #1b2431);
+  --e-active: var(--bg-active, #2a1d29);
+  --e-accent: var(--accent, var(--accent-color, #ff5c8a));
+  --e-accent-soft: var(--accent-soft, #2c1724);
+  --e-focus: var(--focus, #ff7ea2);
+  --e-modified: var(--git-modified, #f0bd4f);
+  --e-danger: var(--danger, #ff6b6b);
+  --e-indent: var(--indent, 12px);
+
+  display: flex;
+  flex-direction: column;
+  background: var(--e-bg);
+  color: var(--e-fg);
+  font-size: var(--text-sm, 13px);
+  position: relative;
+}
+
+.explorer-pane .ico {
+  width: var(--icon-size, 16px);
+  height: var(--icon-size, 16px);
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--icon-stroke, 1.7);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ───────────── Header ───────────── */
+
+.explorer-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: var(--tab-h, 36px);
+  padding: 0 var(--space-1, 4px) 0 var(--space-3, 12px);
+  gap: var(--space-1, 4px);
+  border-bottom: 0;
+}
+
+.explorer-head .pane-title {
+  flex: 1;
+  font-size: var(--text-xs, 12px);
+  font-weight: var(--weight-semibold, 600);
+  letter-spacing: 0.09em;
+  color: var(--e-muted);
+}
+
+.explorer-pane .pane-actions {
+  display: inline-flex;
+  gap: 1px;
+}
+
+.explorer-pane .pane-actions button {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm, 6px);
+  color: var(--e-muted);
+  transition:
+    background-color var(--dur-fast, 110ms) var(--ease-out, ease-out),
+    color var(--dur-fast, 110ms) var(--ease-out, ease-out);
+}
+
+.explorer-pane .pane-actions .ico {
+  width: 15px;
+  height: 15px;
+}
+
+.explorer-pane .pane-actions button:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+@media (hover: hover) {
+  .explorer-pane .pane-actions button:hover:not(:disabled) {
+    background: var(--e-hover);
+    color: var(--e-fg);
+  }
+}
+
+.explorer-pane button:focus-visible,
+.explorer-pane .tree-input:focus-visible {
+  outline: 2px solid var(--e-focus);
+  outline-offset: -2px;
+}
+
+/* ───────────── Tree ───────────── */
+
+.tree-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: var(--space-2, 8px);
+}
+
+.tree-scroll.is-drop-root {
+  background: var(--e-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--e-accent);
+}
+
+.explorer-pane .tree-root {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1, 4px);
+  height: var(--row-h, 24px);
+  padding: 0 var(--space-2, 8px);
+  font-size: var(--text-xs, 12px);
+  font-weight: var(--weight-semibold, 600);
+  color: var(--e-fg);
+}
+
+.explorer-pane .tree-root .ico {
+  width: 14px;
+  height: 14px;
+  color: var(--e-muted);
+}
+
+.explorer-pane .tree,
+.explorer-pane .tree ul {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.tree {
-  overflow: auto;
+.tree-item {
+  position: relative;
 }
 
-.tree-row {
-  display: block;
+.explorer-pane .row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1_5, 6px);
   width: 100%;
-  padding: 3px 8px;
+  height: var(--row-h, 24px);
+  padding: 0 var(--space-2, 8px) 0 calc(var(--space-2, 8px) + var(--depth, 0) * var(--e-indent));
+  color: var(--e-fg);
   text-align: left;
   white-space: nowrap;
+  cursor: default;
 }
 
-.tree-directory,
-.tree-empty {
-  color: var(--text-muted);
+@media (hover: hover) {
+  .explorer-pane .row:not(.editing):hover {
+    background: var(--e-hover);
+  }
 }
 
-.tree-empty {
-  padding: 8px;
+.explorer-pane .row.is-selected {
+  background: var(--e-hover);
 }
 
-.tree-file.active {
-  background: var(--border);
+/* The open file: an accent bar on its left edge. */
+.explorer-pane .row.is-active {
+  background: var(--e-active);
+  box-shadow: inset 2px 0 0 var(--e-accent);
+}
+
+.explorer-pane .row.is-drop {
+  background: var(--e-accent-soft);
+  outline: 1px dashed var(--e-accent);
+  outline-offset: -1px;
+}
+
+.explorer-pane .row.is-dim .name {
+  color: var(--e-subtle);
+}
+
+.explorer-pane .row .chev,
+.explorer-pane .row .chev-space {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--e-subtle);
+}
+
+.explorer-pane .row .ft {
+  width: 15px;
+  height: 15px;
+  color: var(--e-subtle);
+}
+
+.explorer-pane .row.is-dir .ft {
+  color: var(--ft-folder, #7a8698);
+}
+
+.explorer-pane .row .ft.ft-ts {
+  color: var(--ft-ts, #7fb6ff);
+}
+
+.explorer-pane .row .ft.ft-js,
+.explorer-pane .row .ft.ft-json {
+  color: var(--ft-json, #f0bd4f);
+}
+
+.explorer-pane .row .ft.ft-css {
+  color: var(--ft-css, #ff8fb0);
+}
+
+.explorer-pane .row .ft.ft-html {
+  color: var(--ft-html, #ffb27a);
+}
+
+.explorer-pane .row .ft.ft-md {
+  color: var(--info, #7fb6ff);
+}
+
+.explorer-pane .row .ft.ft-image {
+  color: var(--ok, #4cd08c);
+}
+
+.explorer-pane .row .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A file with unsaved changes reads in the modified colour, except the open one: there the name
+   stays in normal foreground and only the M badge carries the colour. */
+.explorer-pane .row.is-file.is-dirty .name {
+  color: var(--e-modified);
+}
+
+.explorer-pane .row.is-file.is-dirty.is-active .name {
+  color: var(--e-fg);
+}
+
+.explorer-pane .row .dirty {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--dirty, var(--e-fg));
+}
+
+.explorer-pane .row .git {
+  width: 12px;
+  flex: none;
+  text-align: center;
+  font: var(--weight-semibold, 600) var(--text-2xs, 11px) / 1 var(--font-mono, ui-monospace, monospace);
+}
+
+.explorer-pane .row .git-m {
+  color: var(--e-modified);
+}
+
+.explorer-pane .row .git-dot {
+  width: 5px;
+  height: 5px;
+  margin-right: 4px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--e-modified);
+}
+
+.tree-spinner {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border: 1.5px solid var(--e-line);
+  border-top-color: var(--e-accent);
+  border-radius: 50%;
+  animation: tree-spin 700ms linear infinite;
+}
+
+@keyframes tree-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tree-spinner {
+    animation-duration: 2s;
+  }
+}
+
+/* The "more" button: the way to a context menu where there is no right click. */
+.explorer-pane .row-more {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  display: none;
+  place-items: center;
+  width: 24px;
+  height: var(--row-h, 24px);
+  color: var(--e-muted);
+}
+
+.explorer-pane .row-more .ico {
+  width: 15px;
+  height: 15px;
+}
+
+@media (hover: hover) {
+  .tree-item:hover .row-more,
+  .tree-item:focus-within .row-more {
+    display: inline-grid;
+  }
+}
+
+@media (hover: none) {
+  /* Room for the always-visible more button, so it never covers the unsaved markers. */
+  .explorer-pane .row {
+    padding-right: 44px;
+  }
+
+  .explorer-pane .row-more {
+    display: inline-grid;
+    width: 40px;
+    height: var(--touch-row-h, 44px);
+  }
+
+  .explorer-pane .row-more .ico {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* Touch screens get the 44 px rows and larger text of the phone density. */
+@media (pointer: coarse) {
+  .explorer-pane .row {
+    height: var(--touch-row-h, 44px);
+    gap: var(--space-2, 8px);
+    font-size: var(--text-md, 15px);
+  }
+
+  .explorer-pane .row .ft {
+    width: 18px;
+    height: 18px;
+  }
+
+  .explorer-pane .tree-root,
+  .explorer-head {
+    height: 44px;
+  }
+
+  .explorer-pane .pane-actions button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .explorer-pane .pane-actions .ico {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* ───────────── Inline name box ───────────── */
+
+.explorer-pane .row.editing {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: var(--row-h, 24px);
+  background: var(--e-hover);
+}
+
+.tree-input {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 var(--space-1_5, 6px);
+  border: 1px solid var(--e-focus);
+  border-radius: var(--radius-xs, 4px);
+  background: var(--bg-input, var(--e-bg));
+  color: var(--e-fg);
+  font: inherit;
+}
+
+.tree-input.invalid {
+  border-color: var(--e-danger);
+}
+
+.tree-problem {
+  flex-basis: 100%;
+  padding: 2px 0 4px calc(14px + 15px + var(--space-1_5, 6px) * 2);
+  color: var(--e-danger);
+  font-size: var(--text-2xs, 11px);
+  white-space: normal;
+}
+
+.tree-empty,
+.tree-notice {
+  margin: 0;
+  padding: var(--space-3, 12px);
+  color: var(--e-muted);
+  font-size: var(--text-xs, 12px);
+  line-height: var(--leading-ui, 1.45);
+}
+
+.tree-notice {
+  flex: none;
+  border-top: 1px solid var(--e-line);
+  background: var(--e-bg);
+}
+
+/* ───────────── Context menu ───────────── */
+
+.tree-menu {
+  position: fixed;
+  z-index: 50;
+  display: grid;
+  min-width: 200px;
+  padding: var(--space-1, 4px);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-elevated, #1c2533);
+  box-shadow: var(--shadow-pop, 0 0 0 1px var(--e-line), 0 16px 36px rgb(0 0 0 / 0.6));
+}
+
+.tree-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4, 16px);
+  height: 28px;
+  padding: 0 var(--space-2, 8px);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--e-fg);
+  text-align: left;
+  font-size: var(--text-sm, 13px);
+}
+
+.tree-menu-item kbd {
+  color: var(--e-subtle);
+  font: var(--text-2xs, 11px) var(--font-mono, ui-monospace, monospace);
+}
+
+.tree-menu-item.danger {
+  color: var(--e-danger);
+}
+
+.tree-menu-item:hover,
+.tree-menu-item:focus-visible {
+  background: var(--e-hover);
+  outline: 0;
+}
+
+@media (pointer: coarse) {
+  .tree-menu-item {
+    height: 44px;
+    font-size: var(--text-md, 15px);
+  }
+}
+
+/* ───────────── Confirmation ───────────── */
+
+.tree-dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: var(--space-5, 20px);
+  border: 0;
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-elevated, #1c2533);
+  color: var(--fg, var(--text, #e6ebf2));
+  box-shadow: var(--shadow-pop, 0 0 0 1px #303c4c, 0 16px 36px rgb(0 0 0 / 0.6));
+}
+
+.tree-dialog::backdrop {
+  background: rgb(5 8 12 / 0.55);
+}
+
+.tree-dialog h2 {
+  margin: 0 0 var(--space-2, 8px);
+  font-size: var(--text-lg, 17px);
+  font-weight: var(--weight-semibold, 600);
+  overflow-wrap: anywhere;
+}
+
+.tree-dialog p {
+  margin: 0 0 var(--space-5, 20px);
+  color: var(--fg-muted, var(--text-muted, #a0acbc));
+  line-height: var(--leading-ui, 1.45);
+}
+
+.tree-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2, 8px);
+}
+
+.tree-dialog-button {
+  height: 32px;
+  padding: 0 var(--space-4, 16px);
+  border: 1px solid var(--line-strong, #303c4c);
+  border-radius: var(--radius-md, 8px);
+  font-weight: var(--weight-medium, 500);
+}
+
+.tree-dialog-button.danger {
+  border-color: transparent;
+  background: var(--danger, #ff6b6b);
+  color: var(--danger-fg, light-dark(#ffffff, #1a0610));
+}
+
+.tree-dialog-button:focus-visible {
+  outline: 2px solid var(--focus, #ff7ea2);
+  outline-offset: 2px;
 }

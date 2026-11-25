@@ -8,26 +8,60 @@ export interface TreeNode {
   readonly children: TreeNode[];
 }
 
+/** One entry of a directory listing. */
+export interface DirEntry {
+  readonly name: string;
+  readonly kind: "file" | "directory";
+}
+
 /** Directories the explorer never expands into on its own: far too many entries to list. */
 const HEAVY_DIRECTORIES = new Set(["node_modules", ".git"]);
 
+export function isHeavyName(name: string): boolean {
+  return HEAVY_DIRECTORIES.has(name);
+}
+
 export function isHeavyPath(path: string): boolean {
-  return path.split("/").some((part) => HEAVY_DIRECTORIES.has(part));
+  return path.split("/").some(isHeavyName);
 }
 
 const PROJECT_DIRECTORY = PROJECT_ROOT.slice(1);
+
+/**
+ * The project-relative path ("" for the project directory itself) a watcher event name (relative
+ * to the filesystem root) points at, or undefined when the event cannot change what the project
+ * shows: it is outside the project, or inside `node_modules` or `.git`.
+ * The heavy directory itself still counts, because its parent's listing gains or loses it.
+ */
+export function toProjectPath(name: string): string | undefined {
+  const path = name.replace(/^\/+/, "");
+  if (path === PROJECT_DIRECTORY) return "";
+  if (!path.startsWith(`${PROJECT_DIRECTORY}/`)) return undefined;
+  const relative = path.slice(PROJECT_DIRECTORY.length + 1);
+  const parts = relative.split("/");
+  if (parts.slice(0, -1).some(isHeavyName)) return undefined;
+  return relative;
+}
 
 /**
  * Whether a batch of changed paths (relative to the filesystem root) can change what the
  * explorer shows. A null name means "something changed, the watcher cannot say what".
  */
 export function touchesProject(names: readonly (string | null)[]): boolean {
-  return names.some((name) => {
-    if (name === null) return true;
-    const path = name.replace(/^\/+/, "");
-    if (path === PROJECT_DIRECTORY) return true;
-    return path.startsWith(`${PROJECT_DIRECTORY}/`) && !isHeavyPath(path.slice(PROJECT_DIRECTORY.length + 1));
-  });
+  return names.some((name) => name === null || toProjectPath(name) !== undefined);
+}
+
+/** Folders first, then by name, the way the explorer lists a directory. */
+export function compareEntries(a: DirEntry, b: DirEntry): number {
+  if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
+  return (
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }) ||
+    (a.name < b.name ? -1 : 1)
+  );
+}
+
+export function sortEntries(entries: readonly DirEntry[]): DirEntry[] {
+  return entries.toSorted(compareEntries);
 }
 
 function childNamed(siblings: TreeNode[], name: string, path: string, kind: TreeNode["kind"]): TreeNode {
@@ -49,12 +83,10 @@ function insert(roots: TreeNode[], file: string): void {
 
 function sortTree(nodes: TreeNode[]): TreeNode[] {
   for (const node of nodes) sortTree(node.children);
-  return nodes.sort((a, b) =>
-    a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "directory" ? -1 : 1,
-  );
+  return nodes.sort(compareEntries);
 }
 
-/** Builds the explorer tree from project-relative file paths: directories first, then by name. */
+/** Builds a tree from project-relative file paths: directories first, then by name. */
 export function buildTree(files: readonly string[]): TreeNode[] {
   const roots: TreeNode[] = [];
   for (const file of files) insert(roots, file);
