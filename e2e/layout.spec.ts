@@ -61,6 +61,8 @@ test("pane sizes and closed panes survive a reload", async ({ page }) => {
   await expect(page.locator("#wb-slot-preview")).toBeVisible();
 });
 
+type Snapshot = { when: string; theme: string | null; colorScheme: string; mounted: boolean };
+
 test("the theme toggle sticks across a reload", async ({ page }) => {
   await newWorkspace(page);
   const systemDark = await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches);
@@ -70,26 +72,45 @@ test("the theme toggle sticks across a reload", async ({ page }) => {
   await option(other === "light" ? "Light" : "Dark").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", other);
 
-  // The saved theme applies before the app's code runs: hold the entry bundle back on reload.
-  const entry = /\/assets\/index-[^/]+\.js$/;
-  const held = Promise.withResolvers<void>();
-  await page.route(
-    entry,
-    async (route) => {
-      await held.promise;
-      await route.continue();
-    },
-    { times: 1 },
-  );
-  await page.reload({ waitUntil: "commit" });
-  await expect(page.locator("html")).toHaveAttribute("data-theme", other);
-  // The stylesheet is render-blocking, so the first paint already uses it; wait for it here.
-  await expect
-    .poll(() => page.evaluate(() => getComputedStyle(document.documentElement).colorScheme))
-    .toBe(other);
-  expect(await page.getByTestId("workbench").count()).toBe(0);
-  held.resolve();
+  // The saved theme applies before the app's code runs. The entry bundle is a module script, so
+  // it runs only after the document is parsed and the render-blocking stylesheet has loaded.
+  // Snapshot the page at those two moments on the next load, with no network interception:
+  // holding the bundle back by route raced with the browser's own caching.
+  await page.addInitScript(() => {
+    const snapshots: Snapshot[] = [];
+    Object.assign(window, { sprocktBeforeApp: snapshots });
+    const take = (when: string) => {
+      const root = document.documentElement;
+      snapshots.push({
+        when,
+        theme: root.getAttribute("data-theme"),
+        colorScheme: getComputedStyle(root).colorScheme,
+        mounted: (document.getElementById("app")?.childElementCount ?? 0) > 0,
+      });
+    };
+    document.addEventListener("readystatechange", () => {
+      if (document.readyState === "interactive") take("parsed");
+    });
+    document.addEventListener(
+      "load",
+      (event) => {
+        // Only the first: the app adds its own stylesheets once it runs.
+        const first = snapshots.every((snap) => snap.when !== "stylesheet");
+        if (first && event.target instanceof HTMLLinkElement) take("stylesheet");
+      },
+      true,
+    );
+  });
+  await page.reload();
   await expect(page.getByTestId("workbench")).toBeVisible();
+  const before = await page.evaluate(
+    () => (window as unknown as { sprocktBeforeApp: Snapshot[] }).sprocktBeforeApp,
+  );
+  expect(before.map((snap) => snap.when).toSorted()).toEqual(["parsed", "stylesheet"]);
+  expect(before.find((snap) => snap.when === "stylesheet")?.colorScheme).toBe(other);
+  for (const snap of before) {
+    expect(snap).toMatchObject({ theme: other, mounted: false });
+  }
   await expect(page.locator("html")).toHaveAttribute("data-theme", other);
 
   // Picking the system's own theme goes back to following the system.
