@@ -39,7 +39,18 @@ describe("template catalog", () => {
     }
   });
 
-  test("bun-sqlite template uses bun:sqlite and Bun.serve with no package dependencies", () => {
+  test("every starter with TypeScript sources ships a tsconfig.json for the editor's checker", () => {
+    for (const template of ALL_TEMPLATES) {
+      const paths = Object.keys(template.files);
+      if (!paths.some((path) => /\.tsx?$/.test(path))) continue;
+      expect({ id: template.id, tsconfig: paths.includes("tsconfig.json") }).toEqual({
+        id: template.id,
+        tsconfig: true,
+      });
+    }
+  });
+
+  test("bun-sqlite template uses bun:sqlite and Bun.serve with no package dependencies, only Bun's types", () => {
     const sqlite = findTemplate("bun-sqlite");
     expect(sqlite).toBeDefined();
     const pkg = JSON.parse(sqlite?.files["package.json"] ?? "{}") as {
@@ -47,7 +58,7 @@ describe("template catalog", () => {
       devDependencies?: Record<string, string>;
     };
     expect(pkg.dependencies).toBeUndefined();
-    expect(pkg.devDependencies).toBeUndefined();
+    expect(Object.keys(pkg.devDependencies ?? {})).toEqual(["@types/bun"]);
     expect(sqlite?.files["server.ts"]).toContain('from "bun:sqlite"');
     expect(sqlite?.files["server.ts"]).toContain("Bun.serve");
   });

@@ -121,6 +121,23 @@ const errorRanges = (page: Page) =>
     return texts;
   });
 
+/** Text of every range the syntax highlighter paints, by highlight name. */
+const syntaxRanges = (page: Page) =>
+  page.evaluate(() => {
+    const texts: string[] = [];
+    for (const [name, highlight] of CSS.highlights) {
+      if (name.includes("lsp-plugin")) continue;
+      // Token ranges are StaticRanges, which cannot print their text.
+      for (const painted of highlight) {
+        const range = document.createRange();
+        range.setStart(painted.startContainer, painted.startOffset);
+        range.setEnd(painted.endContainer, painted.endOffset);
+        texts.push(range.toString());
+      }
+    }
+    return texts;
+  });
+
 const completionLabels = (page: Page) =>
   page.evaluate(() =>
     Array.from(
@@ -188,4 +205,50 @@ test("the server starts when the first TypeScript file arrives inside a moved di
   await page.getByTestId("file-tree").getByRole("button", { name: "main.ts", exact: true }).click();
   await expect.poll(() => editorText(page)).toBe('const broken: number = "text";\n');
   await expect.poll(() => errorRanges(page)).toEqual(["broken"]);
+});
+
+// What `bun install` puts in node_modules for the Vite + React starter, cut down to the types
+// src/App.tsx uses: React's hooks and JSX runtime, and Vite's client types for the CSS import.
+const REACT_STARTER_TYPES: Record<string, string> = {
+  "node_modules/@types/react/package.json":
+    '{ "name": "@types/react", "version": "0.0.0", "types": "index.d.ts" }\n',
+  "node_modules/@types/react/index.d.ts":
+    "export function useState<S>(initial: S): [S, (next: S | ((previous: S) => S)) => void];\n",
+  "node_modules/@types/react/jsx-runtime.d.ts": `export namespace JSX {
+  interface Element {}
+  interface IntrinsicElements {
+    [name: string]: { [attribute: string]: unknown };
+  }
+}
+export function jsx(type: unknown, props: unknown): JSX.Element;
+export function jsxs(type: unknown, props: unknown): JSX.Element;
+`,
+  "node_modules/vite/package.json": '{ "name": "vite", "version": "0.0.0" }\n',
+  "node_modules/vite/client.d.ts":
+    'declare module "*.css" {\n  const css: string;\n  export default css;\n}\n',
+};
+
+test("the Vite + React starter checks clean once installed, and keeps its syntax colours", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByTestId("template-vite-react").click();
+  await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
+  await page.getByTestId("file-tree").getByRole("button", { name: "App.tsx", exact: true }).click();
+  await expect.poll(() => editorText(page)).toContain("Hello from bun.wasm");
+  // Before the install React has no types, so its import is an error, as in any editor.
+  await expect.poll(() => errorRanges(page)).toContain('"react"');
+
+  // The install's files arrive while the server runs, as they would from `bun install`.
+  await writeProject(page, REACT_STARTER_TYPES);
+  await expect.poll(() => errorRanges(page)).toEqual([]);
+  // The language server adds nothing over the JSX: the highlighter still paints it.
+  await expect.poll(() => syntaxRanges(page)).toEqual(expect.arrayContaining(["main", "className"]));
+
+  // One deliberate error gets exactly one diagnostic, and the colours stay.
+  await page.getByTestId("editor").click();
+  await page.keyboard.press((await isMac(page)) ? "Meta+ArrowDown" : "Control+End");
+  await page.keyboard.type('const wrong: number = "text";');
+  await expect.poll(() => errorRanges(page)).toEqual(["wrong"]);
+  expect(await syntaxRanges(page)).toEqual(expect.arrayContaining(["main", "className"]));
 });

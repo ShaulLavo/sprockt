@@ -14,6 +14,26 @@ export interface StarterTemplate extends TemplateSummary {
   readonly files: Readonly<Record<string, string>>;
 }
 
+// Every starter with TypeScript ships a tsconfig.json and the type packages its code needs, so
+// the editor's language server checks it the way the project's own tools would. Without one,
+// TypeScript's defaults reject JSX, `Bun`, `bun:*` modules and CSS imports.
+
+/** For starters that run on Bun: Bun's globals and modules, plus the DOM for browser files. */
+const BUN_TSCONFIG = `{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext", "DOM"],
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
+    "types": ["bun"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  }
+}
+`;
+
 const VITE_REACT_FILES: Readonly<Record<string, string>> = {
   "index.html": `<!doctype html>
 <html lang="en">
@@ -41,9 +61,26 @@ const VITE_REACT_FILES: Readonly<Record<string, string>> = {
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "vite": "8.3.5",
-    "@vitejs/plugin-react": "6.1.2"
+    "@types/react": "19.3.3",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "vite": "8.3.5"
   }
+}
+`,
+  "tsconfig.json": `{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src", "vite.config.ts"]
 }
 `,
   "vite.config.ts": `import { defineConfig } from "vite";
@@ -233,9 +270,13 @@ const HONO_FILES: Readonly<Record<string, string>> = {
   },
   "dependencies": {
     "hono": "4.10.2"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.5"
   }
 }
 `,
+  "tsconfig.json": BUN_TSCONFIG,
   "server.ts": `import { Hono } from "hono";
 import page from "./src/page.html" with { type: "text" };
 
@@ -243,7 +284,8 @@ const client = await Bun.build({ entrypoints: ["counter.ts"], target: "browser" 
 if (!client.success || !client.outputs[0]) throw new Error("Counter build failed");
 const app = new Hono();
 app.get("/counter.ts", () => new Response(client.outputs[0], { headers: { "content-type": "text/javascript" } }));
-app.get("/", (c) => c.html(page));
+// Bun's types call every .html import an HTML bundle; with type "text" it is the file's text.
+app.get("/", (c) => c.html(String(page)));
 Bun.serve({ hostname: "127.0.0.1", port: 5173, fetch: app.fetch });
 `,
   "counter.ts": `const button = document.querySelector<HTMLButtonElement>("#increment");
@@ -282,9 +324,13 @@ const ASTRO_FILES: Readonly<Record<string, string>> = {
     "astro": "5.14.1",
     "@astrojs/node": "9.4.4",
     "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.5"
   }
 }
 `,
+  "tsconfig.json": BUN_TSCONFIG,
   "astro.config.ts": `import { defineConfig } from "astro/config";
 import node from "@astrojs/node";
 
@@ -326,7 +372,9 @@ process.env.HOST = "127.0.0.1";
 process.env.PORT = port;
 process.env.NITRO_HOST = "127.0.0.1";
 process.env.NITRO_PORT = port;
-await import("./dist/server/entry.mjs");
+// What "bun run build" writes. A variable, so the editor does not check a file not built yet.
+const server = "./dist/server/entry.mjs";
+await import(server);
 `,
 };
 
@@ -348,9 +396,13 @@ const SVELTEKIT_FILES: Readonly<Record<string, string>> = {
     "svelte": "5.39.11",
     "vite": "7.1.12",
     "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.5"
   }
 }
 `,
+  "tsconfig.json": BUN_TSCONFIG,
   "svelte.config.ts": `import adapter from "@sveltejs/adapter-node";
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
@@ -395,7 +447,9 @@ process.env.HOST = "127.0.0.1";
 process.env.PORT = port;
 process.env.NITRO_HOST = "127.0.0.1";
 process.env.NITRO_PORT = port;
-await import("./build/index.js");
+// What "bun run build" writes. A variable, so the editor does not check a file not built yet.
+const server = "./build/index.js";
+await import(server);
 `,
 };
 
@@ -424,6 +478,20 @@ const VANILLA_FILES: Readonly<Record<string, string>> = {
   "devDependencies": {
     "vite": "8.3.5"
   }
+}
+`,
+  "tsconfig.json": `{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["vite/client"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src"]
 }
 `,
   "src/main.ts": `import "./App.css";
@@ -511,9 +579,13 @@ const BUN_SQLITE_FILES: Readonly<Record<string, string>> = {
     "dev": "bun --hot run server.ts",
     "start": "bun run server.ts",
     "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.5"
   }
 }
 `,
+  "tsconfig.json": BUN_TSCONFIG,
   "server.ts": `import { Database } from "bun:sqlite";
 
 const db = new Database("notes.sqlite", { create: true });
