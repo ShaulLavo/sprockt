@@ -3,7 +3,6 @@
 import { createSignal } from "solid-js";
 import {
   isInsideProject,
-  linkTarget,
   PROJECT_ROOT,
   projectPath,
   ProjectPathError,
@@ -44,34 +43,32 @@ export interface ProjectFiles extends FileService {
 
 /** How long changes are gathered before the explorer is told: an install touches many files. */
 const COALESCE_MS = 50;
-/** A chain of links longer than this is treated as a loop. */
-const MAX_LINKS = 16;
 
 const parentOf = (absolute: string) => absolute.slice(0, absolute.lastIndexOf("/"));
 type Lookup = (path: string) => Promise<ResolvedEntry | undefined>;
 
 /**
- * The real location of an absolute path, following symbolic links one component at a time. A
- * link that leads out of the project is refused: the service never reads or writes through it.
+ * Checks where a path really leads, right before it is used. The filesystem resolves the
+ * path itself, so links are followed exactly as the operation will follow them; nothing about
+ * links is worked out here. Two things are refused:
+ *
+ * - a path the filesystem resolves to a place outside the project, and
+ * - a symbolic link as the entry to read or write (`through`), or as the directory a new entry
+ *   would be created in. The filesystem reports such a link without following it, so where it
+ *   leads cannot be checked; it is not followed at all.
+ *
+ * For a path that does not exist yet, the nearest existing directory above it is checked.
  */
-async function realPath(
-  lookup: Lookup,
-  base: string,
-  parts: readonly string[],
-  hops: number,
-): Promise<string> {
-  const [name, ...rest] = parts;
-  if (name === undefined) return base;
-  const next = `${base}/${name}`;
-  const entry = await lookup(next);
-  // Nothing exists from here on, so there is no link left to follow.
-  if (!entry) return [next].concat(rest).join("/");
-  if (entry.kind !== "symlink") return realPath(lookup, next, rest, hops);
-  const target = linkTarget(next, entry.target ?? "");
-  if (!isInsideProject(target))
-    throw new ProjectPathError(next, `it is a link to ${target}, outside the project`);
-  if (hops >= MAX_LINKS) throw new ProjectPathError(next, "its links form a loop");
-  return realPath(lookup, "", target.split("/").slice(1).concat(rest), hops + 1);
+async function confirmInside(lookup: Lookup, absolute: string, through: boolean): Promise<void> {
+  if (!isInsideProject(absolute)) throw new ProjectPathError(absolute, "it is outside the project");
+  const entry = await lookup(absolute);
+  if (!entry) return confirmInside(lookup, parentOf(absolute), true);
+  if (!isInsideProject(entry.path)) {
+    throw new ProjectPathError(absolute, `it leads to ${entry.path}, outside the project`);
+  }
+  if (through && entry.kind === "symlink") {
+    throw new ProjectPathError(absolute, "it is a symbolic link, and links are not followed here");
+  }
 }
 
 export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFiles): ProjectFiles {
@@ -98,9 +95,12 @@ export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFi
       seen.set(path, known);
       return known;
     };
-    return async (absolute, followLast) => {
-      const parts = (followLast ? absolute : parentOf(absolute)).split("/").slice(1);
-      await realPath(lookup, "", parts, 0);
+    // `through`: the operation reads or writes the entry. Otherwise it acts on the entry
+    // itself (remove, move), which may be a link; then only the way to it has to stay inside.
+    return async (absolute, through) => {
+      if (through) return confirmInside(lookup, absolute, true);
+      await confirmInside(lookup, parentOf(absolute), true);
+      await confirmInside(lookup, absolute, false);
     };
   }
 

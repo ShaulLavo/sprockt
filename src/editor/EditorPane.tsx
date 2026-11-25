@@ -8,13 +8,8 @@ import { useWorkspace } from "../workspace/session";
 import "./editor.css";
 import { languageOf } from "./languages";
 import { mountEditorPlugins } from "./plugins";
-import { leaveForRecovery } from "./recovery";
+import { discardRecovered, leaveForRecovery } from "./recovery";
 import type { EditorStore } from "./store";
-
-/** The text on screen, handed from one editor view to the next when the plugin set changes. */
-interface Carried {
-  text: string | undefined;
-}
 
 const TEXT_CHANGES: ReadonlySet<string> = new Set(["edit", "undo", "redo", "checkout"]);
 
@@ -27,20 +22,17 @@ const documentFor = (path: string, text: string): SolidEditorDocument => ({
   languageId: languageOf(path),
 });
 
-function EditorView(props: { store: EditorStore; plugins: readonly EditorPlugin[]; carried: Carried }) {
+export function EditorPane(props: { store: EditorStore }) {
   const workspace = useWorkspace();
   const { store } = props;
   const { documents } = store;
-  const shown = documents.displayed;
-  const [document, setDocument] = createSignal<SolidEditorDocument | null>(
-    shown === undefined ? null : documentFor(shown, props.carried.text ?? ""),
-  );
+  const [document, setDocument] = createSignal<SolidEditorDocument | null>(null);
   /** True while we put text on screen ourselves: that is not the person editing. */
   let placing = false;
+  let closed = false;
 
   const controller = createEditor({
     document,
-    plugins: props.plugins,
     editability: () => (workspace.files.writable() ? "editable" : "readonly"),
     onChange: (state, change) => {
       // The editor also reports selection moves here; only a change of the text is an edit.
@@ -51,7 +43,28 @@ function EditorView(props: { store: EditorStore; plugins: readonly EditorPlugin[
       store.changed();
     },
   });
-  const currentText = () => controller.materializeFullText();
+  // Read from the editor itself, at the moment it is needed: this is what gets saved.
+  const currentText = () => controller.editor()?.materializeFullText() ?? "";
+
+  // Plugins join the editor that is already running. It is never rebuilt for them, so the
+  // text on screen and its undo history stay as they are when a language server arrives late.
+  const [delivered, setDelivered] = createSignal<readonly EditorPlugin[]>([]);
+  const added = new Set<EditorPlugin>();
+  onCleanup(
+    mountEditorPlugins(
+      { runtime: workspace.runtime, projectRoot: PROJECT_ROOT, rootUri: `file://${PROJECT_ROOT}` },
+      (plugins) => setDelivered((all) => all.concat(plugins)),
+    ),
+  );
+  createEffect(() => {
+    const editor = controller.editor();
+    if (!editor) return;
+    for (const plugin of delivered()) {
+      if (added.has(plugin)) continue;
+      added.add(plugin);
+      editor.addPlugin(plugin);
+    }
+  });
 
   function place(put: () => void): void {
     placing = true;
@@ -65,6 +78,7 @@ function EditorView(props: { store: EditorStore; plugins: readonly EditorPlugin[
 
   async function load(path: string): Promise<void> {
     const disk = await workspace.files.read(path);
+    if (closed) return;
     const text = documents.show(path, disk, currentText);
     // Undefined: another file was selected while this one was being read.
     if (text !== undefined) place(() => setDocument(documentFor(path, text)));
@@ -88,6 +102,12 @@ function EditorView(props: { store: EditorStore; plugins: readonly EditorPlugin[
     if (outcome.written) documents.saved(request, text);
     else documents.conflicted(request, outcome.current);
     store.changed();
+    if (!outcome.written) return;
+    // The write was acknowledged from memory. Until its flush is done the text stays
+    // recoverable; only then is a copy another tab left for this file no longer needed.
+    await workspace.files.saved();
+    documents.durable(request, text);
+    discardRecovered(localStorage, workspace.id, request.path);
   }
 
   const saveNow = () => void save().catch((error: unknown) => console.error("Saving failed", error));
@@ -99,8 +119,11 @@ function EditorView(props: { store: EditorStore; plugins: readonly EditorPlugin[
   }
 
   function takeTheirs(): void {
+    const path = documents.displayed;
     const text = documents.takeTheirs();
-    if (text !== undefined) place(() => controller.commands.setText(text));
+    if (text === undefined || path === undefined) return;
+    discardRecovered(localStorage, workspace.id, path);
+    place(() => controller.commands.setText(text));
   }
 
   function onKeyDown(event: KeyboardEvent): void {
@@ -109,8 +132,9 @@ function EditorView(props: { store: EditorStore; plugins: readonly EditorPlugin[
     saveNow();
   }
 
-  // Once another tab owns the workspace this tab cannot save. Its unsaved text is left where
-  // that tab finds it.
+  // Once another tab owns the workspace this tab cannot save. Everything storage does not
+  // hold yet (unsaved edits, and saves whose flush never finished) is left where that tab
+  // finds it.
   createEffect(() => {
     if (workspace.files.writable()) return;
     leaveForRecovery(localStorage, workspace.id, documents.unsaved(currentText));
@@ -120,12 +144,20 @@ function EditorView(props: { store: EditorStore; plugins: readonly EditorPlugin[
   // The shortcut works wherever the focus is: after picking a file it is still in the explorer.
   addEventListener("keydown", onKeyDown);
   onCleanup(() => {
+    closed = true;
     removeEventListener("keydown", onKeyDown);
-    props.carried.text = documents.displayed === undefined ? undefined : currentText();
   });
 
   return (
-    <>
+    <section class="pane editor-pane" aria-label="Editor">
+      <header class="pane-header">
+        <span data-testid="editor-file">{store.displayed() ?? "No file open"}</span>
+        <Show when={store.dirty()}>
+          <span class="pane-status" title="Unsaved changes" data-testid="editor-dirty">
+            ●
+          </span>
+        </Show>
+      </header>
       <Show when={store.conflict()}>
         <div class="editor-conflict" role="alert" data-testid="editor-conflict">
           <span>This file changed in another tab or process. Reload from disk or keep your edits.</span>
@@ -138,36 +170,6 @@ function EditorView(props: { store: EditorStore; plugins: readonly EditorPlugin[
         </div>
       </Show>
       <div class="editor-host" data-testid="editor" ref={controller.ref} />
-    </>
-  );
-}
-
-export function EditorPane(props: { store: EditorStore }) {
-  const workspace = useWorkspace();
-  // The editor opens at once with no plugins and is rebuilt, keeping its text, when a provider
-  // (a language server, say) delivers. A provider that fails or stalls costs only its plugins.
-  const [plugins, setPlugins] = createSignal<readonly EditorPlugin[]>([]);
-  const carried: Carried = { text: undefined };
-  onCleanup(
-    mountEditorPlugins(
-      { runtime: workspace.runtime, projectRoot: PROJECT_ROOT, rootUri: `file://${PROJECT_ROOT}` },
-      setPlugins,
-    ),
-  );
-
-  return (
-    <section class="pane editor-pane" aria-label="Editor">
-      <header class="pane-header">
-        <span data-testid="editor-file">{props.store.displayed() ?? "No file open"}</span>
-        <Show when={props.store.dirty()}>
-          <span class="pane-status" title="Unsaved changes" data-testid="editor-dirty">
-            ●
-          </span>
-        </Show>
-      </header>
-      <Show when={plugins()} keyed>
-        {(resolved) => <EditorView store={props.store} plugins={resolved} carried={carried} />}
-      </Show>
     </section>
   );
 }

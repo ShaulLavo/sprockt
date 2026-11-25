@@ -3,8 +3,8 @@
 // `file:///workspace/src/main.ts`.
 //
 // The editor never waits for a provider. Each one starts on its own; the editor opens at once
-// and gains a provider's plugins when that provider delivers. One that throws or never answers
-// only loses its own plugins.
+// and a provider's plugins are added to the running editor when that provider delivers. One
+// that throws or never answers only loses its own plugins.
 import type { EditorPlugin } from "@singapore-editor/core/extensions";
 import type { Runtime } from "waffle";
 
@@ -27,25 +27,47 @@ export interface EditorPluginSet {
 type Provided = readonly EditorPlugin[] | EditorPluginSet;
 export type EditorPluginProvider = (context: EditorHostContext) => Provided | Promise<Provided>;
 
-const providers = new Set<EditorPluginProvider>();
+/** One workspace's editor, waiting for plugins. */
+interface Mount {
+  start(provider: EditorPluginProvider): void;
+}
 
-/** Adds a provider for every workspace opened from now on. Returns the function that removes it. */
+const providers = new Set<EditorPluginProvider>();
+const mounts = new Set<Mount>();
+
+/**
+ * Adds a provider for every workspace: the ones opened from now on, and the one that is open.
+ * Returns the function that removes it for workspaces opened later.
+ */
 export function registerEditorPlugins(provider: EditorPluginProvider): () => void {
   providers.add(provider);
+  for (const mount of mounts) mount.start(provider);
   return () => providers.delete(provider);
 }
 
 const asSet = (provided: Provided): EditorPluginSet =>
   "plugins" in provided ? provided : { plugins: provided };
 
+const failed = (what: string) => (error: unknown) => console.error(what, error);
+
+/** A set that fails to shut down must not keep the others from shutting down. */
+function disposeQuietly(set: EditorPluginSet): void {
+  try {
+    set.dispose?.();
+  } catch (error) {
+    failed("Disposing editor plugins failed")(error);
+  }
+}
+
 /**
- * Starts every registered provider for one workspace. `onPlugins` is called with all plugins
- * delivered so far each time a provider answers. The returned function ends the workspace's
- * plugins: it aborts `signal` and disposes every set, including one that arrives afterwards.
+ * Starts every registered provider for one workspace. `onPlugins` is called with the plugins
+ * of each provider when it delivers; they are meant to be added to the editor that is already
+ * running. The returned function ends the workspace's plugins: it aborts `signal` and disposes
+ * every set, including one that arrives afterwards.
  */
 export function mountEditorPlugins(
   host: Omit<EditorHostContext, "signal">,
-  onPlugins: (plugins: EditorPlugin[]) => void,
+  onPlugins: (plugins: readonly EditorPlugin[]) => void,
 ): () => void {
   const lifetime = new AbortController();
   const context: EditorHostContext = { ...host, signal: lifetime.signal };
@@ -53,19 +75,24 @@ export function mountEditorPlugins(
 
   function accept(provided: Provided): void {
     const set = asSet(provided);
-    if (lifetime.signal.aborted) return set.dispose?.();
+    if (lifetime.signal.aborted) return disposeQuietly(set);
     delivered.push(set);
-    onPlugins(delivered.flatMap((each) => each.plugins));
+    onPlugins(set.plugins);
   }
 
-  for (const provider of providers) {
-    // The async wrapper turns a synchronous throw into this provider's own rejection.
-    const started = (async () => provider(context))();
-    started.then(accept).catch((error: unknown) => console.error("Editor plugin provider failed", error));
-  }
+  const mount: Mount = {
+    start(provider) {
+      // The async wrapper turns a synchronous throw into this provider's own rejection.
+      const started = (async () => provider(context))();
+      started.then(accept).catch(failed("Editor plugin provider failed"));
+    },
+  };
+  mounts.add(mount);
+  for (const provider of providers) mount.start(provider);
 
   return () => {
+    mounts.delete(mount);
     lifetime.abort();
-    for (const set of delivered.splice(0)) set.dispose?.();
+    for (const set of delivered.splice(0)) disposeQuietly(set);
   };
 }

@@ -1,11 +1,18 @@
-// When another tab takes a workspace over, this tab can no longer save. Its unsaved text goes
-// to localStorage, keyed by workspace, and the tab that now owns the workspace shows it as an
+// When another tab takes a workspace over, this tab can no longer save. The text storage does
+// not hold yet goes to localStorage, and the tab that now owns the workspace shows it as an
 // unsaved edit when the file is opened.
+//
+// Each file's text has its own key. Nothing reads a shared list, changes it and writes it back,
+// so two tabs leaving or finishing text at the same moment cannot lose each other's entries.
+// An entry stays until its text is safely in storage or the person discards it; opening the
+// file does not remove it.
 import type { Draft } from "./documents";
 
 type TextStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
-const key = (workspace: string) => `sprockt:recovery:${workspace}`;
+/** `v1` is the format of the stored value. */
+const key = (workspace: string, path: string) =>
+  `sprockt:recovery:v1:${workspace}:${encodeURIComponent(path)}`;
 
 const isDraft = (value: unknown): value is Draft =>
   typeof value === "object" &&
@@ -14,32 +21,26 @@ const isDraft = (value: unknown): value is Draft =>
   typeof value.text === "string" &&
   (!("baseText" in value) || value.baseText === undefined || typeof value.baseText === "string");
 
-function read(storage: TextStore, workspace: string): Record<string, Draft> {
+/** Leaves each text where the tab that owns the workspace next will find it. */
+export function leaveForRecovery(
+  storage: TextStore,
+  workspace: string,
+  drafts: ReadonlyMap<string, Draft>,
+): void {
+  for (const [path, draft] of drafts) storage.setItem(key(workspace, path), JSON.stringify(draft));
+}
+
+/** The text waiting for one file. It stays in place: see `discardRecovered`. */
+export function recovered(storage: TextStore, workspace: string, path: string): Draft | undefined {
   try {
-    const parsed: unknown = JSON.parse(storage.getItem(key(workspace)) ?? "{}");
-    if (typeof parsed !== "object" || parsed === null) return {};
-    return Object.fromEntries(
-      Object.entries(parsed).filter((entry): entry is [string, Draft] => isDraft(entry[1])),
-    );
+    const parsed: unknown = JSON.parse(storage.getItem(key(workspace, path)) ?? "null");
+    return isDraft(parsed) ? parsed : undefined;
   } catch {
-    return {};
+    return undefined;
   }
 }
 
-function write(storage: TextStore, workspace: string, drafts: Record<string, Draft>): void {
-  if (Object.keys(drafts).length === 0) storage.removeItem(key(workspace));
-  else storage.setItem(key(workspace), JSON.stringify(drafts));
-}
-
-/** Adds unsaved text to what is already waiting for this workspace. */
-export function leaveForRecovery(storage: TextStore, workspace: string, drafts: Record<string, Draft>): void {
-  if (Object.keys(drafts).length === 0) return;
-  write(storage, workspace, { ...read(storage, workspace), ...drafts });
-}
-
-/** Takes the text waiting for one file, so it is recovered once. */
-export function takeRecovered(storage: TextStore, workspace: string, path: string): Draft | undefined {
-  const { [path]: draft, ...rest } = read(storage, workspace);
-  if (draft) write(storage, workspace, rest);
-  return draft;
+/** Call once the file's text is safely in storage, or the person chose to drop it. */
+export function discardRecovered(storage: TextStore, workspace: string, path: string): void {
+  storage.removeItem(key(workspace, path));
 }

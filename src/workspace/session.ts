@@ -3,7 +3,7 @@
 import { createContext, useContext } from "solid-js";
 import { createFileService, type FileService } from "../files/service";
 import { createInactivePreviewTransport, type PreviewTransport } from "../preview/transport";
-import { bootWorkspace, type BootStage, type WorkspaceRuntime } from "../runtime/boot";
+import { bootWorkspace, type BootOptions, type BootStage, type WorkspaceRuntime } from "../runtime/boot";
 import { tearDownAll } from "./lifecycle";
 
 export interface WorkspaceSession extends WorkspaceRuntime {
@@ -16,14 +16,19 @@ const movedError = () => new Error("This workspace is open in another tab, so th
 export async function openWorkspace(
   id: string,
   onStage?: (stage: BootStage) => void,
+  options?: BootOptions,
 ): Promise<WorkspaceSession> {
   let moved = false;
   let revoke = (): void => void (moved = true);
-  const booted = await bootWorkspace(id, (stage) => {
-    // Another tab took the workspace: this tab's storage is gone, so its writes stop here.
-    if (stage === "moved") revoke();
-    onStage?.(stage);
-  });
+  const booted = await bootWorkspace(
+    id,
+    (stage) => {
+      // Another tab took the workspace: this tab's storage is gone, so its writes stop here.
+      if (stage === "moved") revoke();
+      onStage?.(stage);
+    },
+    options,
+  );
   const preview = createInactivePreviewTransport();
   const files = createFileService(booted.runtime);
   revoke = () => files.revoke(movedError());

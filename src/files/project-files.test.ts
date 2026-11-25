@@ -2,27 +2,62 @@ import { expect, test } from "bun:test";
 import { ProjectPathError } from "../workspace/paths";
 import { createProjectFiles, type ProjectFilesystem, type ResolvedEntry } from "./project-files";
 
-/** An in-memory filesystem: files, directories and symbolic links by absolute path. */
-function memoryFilesystem(links: Readonly<Record<string, string>> = {}) {
-  const files = new Map<string, Uint8Array>();
-  const directories = new Set<string>(["/workspace"]);
-  const flushes: PromiseWithResolvers<void>[] = [];
+interface Setup {
+  /** Symbolic links: absolute path of the link to its target, as written in the link. */
+  readonly links?: Readonly<Record<string, string>>;
+  /** Directories that exist besides the project root. */
+  readonly directories?: readonly string[];
+  /** Files that exist, by real absolute path. */
+  readonly files?: Readonly<Record<string, string>>;
+}
+
+/**
+ * An in-memory filesystem that resolves paths the way Waffle does: a link in the middle of a
+ * path is followed, and `..` then climbs from where the link really led, not from where the
+ * link was written. Every operation resolves its path again, as Waffle's operations do.
+ */
+function memoryFilesystem(setup: Setup = {}) {
+  const links = setup.links ?? {};
   const encoder = new TextEncoder();
+  const files = new Map<string, Uint8Array>(
+    Object.entries(setup.files ?? {}).map(([path, text]) => [path, encoder.encode(text)]),
+  );
+  const directories = new Set(["/workspace"].concat(setup.directories ?? []));
+  const flushes: PromiseWithResolvers<void>[] = [];
+
+  function real(path: string, followLast: boolean, hops = 0): string {
+    if (hops > 16) throw new Error("ELOOP: too many levels of symbolic links");
+    const parts = path.split("/").filter(Boolean);
+    const walked: string[] = [];
+    for (const [index, name] of parts.entries()) {
+      if (name === "..") walked.pop();
+      if (name === ".." || name === ".") continue;
+      const target = links[`/${walked.concat([name]).join("/")}`];
+      if (target === undefined || (index === parts.length - 1 && !followLast)) {
+        walked.push(name);
+        continue;
+      }
+      const from = target.startsWith("/") ? target : `/${walked.join("/")}/${target}`;
+      return real([from].concat(parts.slice(index + 1)).join("/"), followLast, hops + 1);
+    }
+    return `/${walked.join("/")}`;
+  }
+
   const filesystem: ProjectFilesystem = {
     async mkdirp(path) {
-      const parts = path.split("/").slice(1);
+      const parts = real(path, true).split("/").slice(1);
       for (const [index] of parts.entries()) directories.add(`/${parts.slice(0, index + 1).join("/")}`);
     },
     async writeFile(path, content) {
-      files.set(path, typeof content === "string" ? encoder.encode(content) : content);
+      files.set(real(path, true), typeof content === "string" ? encoder.encode(content) : content);
     },
-    readFile: async (path) => files.get(path),
+    readFile: async (path) => files.get(real(path, true)),
     listFiles: async (path) => Array.from(files.keys()).filter((file) => file.startsWith(`${path}/`)),
-    remove: async (path) => files.delete(path),
+    remove: async (path) => files.delete(real(path, false)),
     async move(from, to) {
-      const content = files.get(from);
-      if (content) files.set(to, content);
-      files.delete(from);
+      const content = files.get(real(from, false));
+      if (content) files.set(real(to, false), content);
+      files.delete(real(from, false));
     },
     flush() {
       const next = Promise.withResolvers<void>();
@@ -30,10 +65,11 @@ function memoryFilesystem(links: Readonly<Record<string, string>> = {}) {
       return next.promise;
     },
     async resolvePath(path): Promise<ResolvedEntry | undefined> {
-      const target = links[path];
-      if (target !== undefined) return { path, kind: "symlink", target };
-      if (files.has(path)) return { path, kind: "file" };
-      return directories.has(path) ? { path, kind: "dir" } : undefined;
+      const canonical = real(path, false);
+      const target = links[canonical];
+      if (target !== undefined) return { path: canonical, kind: "symlink", target };
+      if (files.has(canonical)) return { path: canonical, kind: "file" };
+      return directories.has(canonical) ? { path: canonical, kind: "dir" } : undefined;
     },
   };
   const text = (path: string) => new TextDecoder().decode(files.get(path));
@@ -73,28 +109,81 @@ test("a bulk write with one bad path writes none of its files", async () => {
 });
 
 test("a link that leaves the project is not written or read through", async () => {
-  const memory = memoryFilesystem({ "/workspace/out": "/home/guest", "/workspace/up": "../etc" });
+  const memory = memoryFilesystem({
+    links: { "/workspace/out": "/home/guest", "/workspace/up": "../etc" },
+    directories: ["/home", "/home/guest", "/etc"],
+    files: { "/home/guest/notes.txt": "private", "/etc/passwd": "root" },
+  });
   const service = createProjectFiles(memory.filesystem, noWatch);
   await expect(service.write("out/secret.txt", "x")).rejects.toBeInstanceOf(ProjectPathError);
+  await expect(service.write("out/notes.txt", "x")).rejects.toBeInstanceOf(ProjectPathError);
+  await expect(service.read("out/notes.txt")).rejects.toBeInstanceOf(ProjectPathError);
   await expect(service.read("up/passwd")).rejects.toBeInstanceOf(ProjectPathError);
   await expect(service.writeMany({ "a.txt": "a", "out/b.txt": "b" })).rejects.toBeInstanceOf(
     ProjectPathError,
   );
-  expect(memory.files.size).toBe(0);
+  expect(Array.from(memory.files.keys()).toSorted()).toEqual(["/etc/passwd", "/home/guest/notes.txt"]);
+  expect(memory.text("/home/guest/notes.txt")).toBe("private");
 });
 
-test("a link that stays inside the project works, and a link itself can be removed", async () => {
-  const memory = memoryFilesystem({ "/workspace/alias": "src", "/workspace/out": "/home/guest" });
+test("a link whose target only looks inside the project when read as text is refused", async () => {
+  // `l2` is `l1/..`. Read as text that is the project root. In the filesystem `l1` leads to
+  // /home/guest/x first, so `l2` is /home/guest.
+  const memory = memoryFilesystem({
+    links: { "/workspace/l1": "/home/guest/x", "/workspace/l2": "l1/.." },
+    directories: ["/home", "/home/guest", "/home/guest/x"],
+    files: { "/home/guest/existing.txt": "private" },
+  });
   const service = createProjectFiles(memory.filesystem, noWatch);
-  await service.write("alias/main.ts", "inside");
-  expect(memory.text("/workspace/alias/main.ts")).toBe("inside");
+  await expect(service.write("l2/escaped.txt", "x")).rejects.toBeInstanceOf(ProjectPathError);
+  await expect(service.write("l2/existing.txt", "x")).rejects.toBeInstanceOf(ProjectPathError);
+  await expect(service.read("l2/existing.txt")).rejects.toBeInstanceOf(ProjectPathError);
+  await expect(service.move("l2/existing.txt", "stolen.txt")).rejects.toBeInstanceOf(ProjectPathError);
+  expect(Array.from(memory.files.keys())).toEqual(["/home/guest/existing.txt"]);
+  expect(memory.text("/home/guest/existing.txt")).toBe("private");
+});
+
+test("a directory link that stays inside the project is followed for files that exist", async () => {
+  const memory = memoryFilesystem({
+    links: { "/workspace/alias": "src" },
+    directories: ["/workspace/src"],
+    files: { "/workspace/src/main.ts": "old" },
+  });
+  const service = createProjectFiles(memory.filesystem, noWatch);
+  expect(await service.read("alias/main.ts")).toBe("old");
+  await service.write("alias/main.ts", "new");
+  expect(memory.text("/workspace/src/main.ts")).toBe("new");
+});
+
+test("a link is never the entry that is read or written, and never the directory created in", async () => {
+  const memory = memoryFilesystem({
+    links: { "/workspace/link.txt": "real.txt", "/workspace/alias": "src" },
+    directories: ["/workspace/src"],
+    files: { "/workspace/real.txt": "real" },
+  });
+  const service = createProjectFiles(memory.filesystem, noWatch);
+  await expect(service.read("link.txt")).rejects.toBeInstanceOf(ProjectPathError);
+  await expect(service.write("link.txt", "x")).rejects.toBeInstanceOf(ProjectPathError);
+  await expect(service.write("alias/new.ts", "x")).rejects.toBeInstanceOf(ProjectPathError);
+  await expect(service.mkdir("alias/deeper")).rejects.toBeInstanceOf(ProjectPathError);
+  expect(memory.text("/workspace/real.txt")).toBe("real");
+});
+
+test("a link itself can be removed, wherever it points", async () => {
+  const memory = memoryFilesystem({
+    links: { "/workspace/out": "/home/guest" },
+    directories: ["/home/guest"],
+  });
+  const service = createProjectFiles(memory.filesystem, noWatch);
   await expect(service.remove("out")).resolves.toBeUndefined();
 });
 
-test("a loop of links is refused instead of followed forever", async () => {
-  const memory = memoryFilesystem({ "/workspace/a": "b", "/workspace/b": "a" });
+test("a loop of links fails instead of being followed forever", async () => {
+  const memory = memoryFilesystem({ links: { "/workspace/a": "b", "/workspace/b": "a" } });
   const service = createProjectFiles(memory.filesystem, noWatch);
-  await expect(service.read("a/file")).rejects.toBeInstanceOf(ProjectPathError);
+  await expect(service.read("a/file")).rejects.toThrow();
+  await expect(service.write("a/file", "x")).rejects.toThrow();
+  expect(memory.files.size).toBe(0);
 });
 
 test("the state is `saving` from the start of a write until its flush finished", async () => {

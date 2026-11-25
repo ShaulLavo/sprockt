@@ -1,20 +1,21 @@
-// Which document the editor shows, whether it has unsaved edits, and where unsaved text goes
-// when another file is shown. No UI here: the pane feeds it events, the tests replay them.
+// Which document the editor shows, whether it has unsaved edits, and what happens to text that
+// is not safely stored yet. No UI here: the pane feeds it events, the tests replay them.
 //
 // The rules: saving always targets the document on screen, never the file merely selected;
-// "dirty" is cleared only for the edits a finished save actually contained; and unsaved text is
-// never dropped by switching files.
+// every document keeps its own edit count for as long as the workspace is open, so a save
+// that finishes late can only vouch for the edits it contained; a conflict belongs to its
+// document; and text is recoverable until storage, not just memory, holds it.
 
-/** Unsaved text of a file that is not on screen. */
+/** Text of a file that storage does not hold yet. */
 export interface Draft {
   readonly text: string;
-  /** What the file held when this text was last in step with it; absent: it did not exist. */
+  /** What storage held when this text was last in step with it; absent: no such file. */
   readonly baseText?: string | undefined;
 }
 
 export interface SaveRequest {
   readonly path: string;
-  /** The edit count the saved text will contain. */
+  /** The edit count the saved text contains. */
   readonly generation: number;
   /** What the file is expected to hold right now. */
   readonly baseText: string | undefined;
@@ -26,21 +27,32 @@ export interface Conflict {
   readonly diskText: string | undefined;
 }
 
-interface Displayed {
-  readonly path: string;
+interface Entry {
+  /** What the file holds as far as this tab knows, counting writes acknowledged from memory. */
   baseText: string | undefined;
+  /** Edits made to this document since it was first opened. Never reset. */
   generation: number;
+  /** The edit count of the last acknowledged write. */
   savedGeneration: number;
+  /** What storage is known to hold, and the edit count that text contained. */
+  durableBase: string | undefined;
+  durableGeneration: number;
+  /** The document's text while it is not on screen, when storage does not hold it yet. */
+  text: string | undefined;
+  conflict: { readonly diskText: string | undefined } | undefined;
 }
 
 export class Documents {
   private selectedPath: string | undefined;
-  private shown: Displayed | undefined;
-  private pendingConflict: Conflict | undefined;
-  private readonly drafts = new Map<string, Draft>();
+  private shownPath: string | undefined;
+  private readonly entries = new Map<string, Entry>();
 
   /** `recover` supplies text another tab left behind when it lost the workspace. */
   constructor(private readonly recover: (path: string) => Draft | undefined = () => undefined) {}
+
+  private get shown(): Entry | undefined {
+    return this.shownPath === undefined ? undefined : this.entries.get(this.shownPath);
+  }
 
   get selected(): string | undefined {
     return this.selectedPath;
@@ -48,19 +60,22 @@ export class Documents {
 
   /** The path on screen. It trails `selected` while the newly selected file is being read. */
   get displayed(): string | undefined {
-    return this.shown?.path;
+    return this.shownPath;
   }
 
   get dirty(): boolean {
-    return this.shown !== undefined && this.shown.generation > this.shown.savedGeneration;
+    return this.shownPath !== undefined && this.hasUnsaved(this.shownPath);
   }
 
+  /** The conflict of the document on screen. A conflict of another document waits for it. */
   get conflict(): Conflict | undefined {
-    return this.pendingConflict;
+    const pending = this.shown?.conflict;
+    return pending && this.shownPath !== undefined ? { path: this.shownPath, ...pending } : undefined;
   }
 
   hasUnsaved(path: string): boolean {
-    return this.shown?.path === path ? this.dirty : this.drafts.has(path);
+    const entry = this.entries.get(path);
+    return entry !== undefined && entry.generation > entry.savedGeneration;
   }
 
   /** Returns false when `path` is already selected: selecting it again changes nothing. */
@@ -70,80 +85,124 @@ export class Documents {
     return true;
   }
 
+  private opened(path: string, diskText: string | undefined): Entry {
+    const recovered = this.recover(path);
+    // Recovered text is one unsaved edit on top of what its tab had read from storage.
+    const entry: Entry = recovered
+      ? {
+          baseText: recovered.baseText,
+          generation: 1,
+          savedGeneration: 0,
+          durableBase: recovered.baseText,
+          durableGeneration: 0,
+          text: recovered.text,
+          conflict: undefined,
+        }
+      : {
+          baseText: diskText,
+          generation: 0,
+          savedGeneration: 0,
+          durableBase: diskText,
+          durableGeneration: 0,
+          text: undefined,
+          conflict: undefined,
+        };
+    this.entries.set(path, entry);
+    return entry;
+  }
+
   /**
    * The read of `path` finished. Returns the text to put on screen, or undefined when the
    * selection moved on meanwhile and this read is stale. `currentText` is read only when the
-   * document leaving the screen has unsaved edits to keep.
+   * document leaving the screen has text storage does not hold yet.
    */
   show(path: string, diskText: string | undefined, currentText: () => string): string | undefined {
     if (this.selectedPath !== path) return undefined;
-    if (this.shown && this.dirty) {
-      this.drafts.set(this.shown.path, { text: currentText(), baseText: this.shown.baseText });
+    const leaving = this.shown;
+    if (leaving && this.shownPath !== path) {
+      leaving.text = leaving.generation > leaving.durableGeneration ? currentText() : undefined;
     }
-    const draft = this.drafts.get(path) ?? this.recover(path);
-    this.drafts.delete(path);
-    this.pendingConflict = undefined;
-    this.shown = draft
-      ? { path, baseText: draft.baseText, generation: 1, savedGeneration: 0 }
-      : { path, baseText: diskText, generation: 0, savedGeneration: 0 };
-    return draft ? draft.text : (diskText ?? "");
+    this.shownPath = path;
+    const entry = this.entries.get(path) ?? this.opened(path, diskText);
+    if (entry.generation > entry.savedGeneration) return entry.text ?? diskText ?? "";
+    // No unsaved edits: the file is shown as storage has it now.
+    entry.baseText = diskText;
+    return diskText ?? "";
   }
 
   /**
    * The person changed the text of `path`. An edit reported after its file left the screen is
-   * already part of that file's draft and must not mark the file now on screen.
+   * already part of that file's kept text and must not mark the file now on screen.
    */
   edited(path: string | undefined): void {
-    if (this.shown && this.shown.path === path) this.shown.generation += 1;
+    const entry = this.shown;
+    if (entry && this.shownPath === path) entry.generation += 1;
   }
 
   /** What a save started now has to write, or undefined when nothing is on screen. */
   beginSave(): SaveRequest | undefined {
-    if (!this.shown) return undefined;
-    return { path: this.shown.path, generation: this.shown.generation, baseText: this.shown.baseText };
+    const entry = this.shown;
+    if (!entry || this.shownPath === undefined) return undefined;
+    return { path: this.shownPath, generation: entry.generation, baseText: entry.baseText };
   }
 
-  /** The save for `request` reached the file with `text`. */
+  /** The write for `request` was acknowledged with `text`. Storage may not hold it yet. */
   saved(request: SaveRequest, text: string): void {
-    if (this.pendingConflict?.path === request.path) this.pendingConflict = undefined;
-    if (this.shown?.path === request.path) {
-      this.shown.baseText = text;
-      this.shown.savedGeneration = Math.max(this.shown.savedGeneration, request.generation);
-      return;
-    }
-    // The file left the screen while it was being saved: its draft is done unless it moved on.
-    const draft = this.drafts.get(request.path);
-    if (!draft) return;
-    if (draft.text === text) this.drafts.delete(request.path);
-    else this.drafts.set(request.path, { text: draft.text, baseText: text });
+    const entry = this.entries.get(request.path);
+    // A write that finishes after a newer one of the same document has nothing to add.
+    if (!entry || request.generation < entry.savedGeneration) return;
+    entry.savedGeneration = request.generation;
+    entry.baseText = text;
+    entry.conflict = undefined;
+    // Off screen and with no newer edits, the written text is what is kept for recovery.
+    if (this.shownPath !== request.path && entry.generation === request.generation) entry.text = text;
+  }
+
+  /** Storage now holds the text written for `request`. */
+  durable(request: SaveRequest, text: string): void {
+    const entry = this.entries.get(request.path);
+    if (!entry || request.generation < entry.durableGeneration) return;
+    entry.durableGeneration = request.generation;
+    entry.durableBase = text;
+    if (this.shownPath !== request.path && entry.generation === request.generation) entry.text = undefined;
   }
 
   /** The save was refused: the file holds `diskText`, not what the editor last read. */
   conflicted(request: SaveRequest, diskText: string | undefined): void {
-    this.pendingConflict = { path: request.path, diskText };
+    const entry = this.entries.get(request.path);
+    if (entry) entry.conflict = { diskText };
   }
 
-  /** The person chose to keep their text: the next save expects what is on disk now. */
+  /** The person keeps the text on screen: its next save expects what is on disk now. */
   keepMine(): void {
-    if (this.shown && this.pendingConflict?.path === this.shown.path)
-      this.shown.baseText = this.pendingConflict.diskText;
-    this.pendingConflict = undefined;
+    const entry = this.shown;
+    if (!entry?.conflict) return;
+    entry.baseText = entry.conflict.diskText;
+    entry.conflict = undefined;
   }
 
-  /** The person chose the text on disk. Returns it, for the pane to put on screen. */
+  /** The person takes the text on disk for the document on screen. Returns that text. */
   takeTheirs(): string | undefined {
-    const conflict = this.pendingConflict;
-    if (!conflict || this.shown?.path !== conflict.path) return undefined;
-    this.pendingConflict = undefined;
-    this.shown = { path: conflict.path, baseText: conflict.diskText, generation: 0, savedGeneration: 0 };
-    return conflict.diskText ?? "";
+    const entry = this.shown;
+    if (!entry?.conflict) return undefined;
+    const { diskText } = entry.conflict;
+    entry.conflict = undefined;
+    entry.baseText = entry.durableBase = diskText;
+    entry.savedGeneration = entry.durableGeneration = entry.generation;
+    return diskText ?? "";
   }
 
-  /** Every unsaved text, on screen or not, to hand to another tab. */
-  unsaved(currentText: () => string): Record<string, Draft> {
-    const all = Object.fromEntries(this.drafts);
-    if (this.shown && this.dirty)
-      all[this.shown.path] = { text: currentText(), baseText: this.shown.baseText };
+  /**
+   * Every text storage does not hold yet: unsaved edits, and writes acknowledged from memory
+   * whose flush has not finished. This is what another tab needs if this one loses storage.
+   */
+  unsaved(currentText: () => string): Map<string, Draft> {
+    const all = new Map<string, Draft>();
+    for (const [path, entry] of this.entries) {
+      if (entry.generation <= entry.durableGeneration) continue;
+      const text = path === this.shownPath ? currentText() : entry.text;
+      if (text !== undefined) all.set(path, { text, baseText: entry.durableBase });
+    }
     return all;
   }
 }

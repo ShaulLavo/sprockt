@@ -34,7 +34,7 @@ test("Bun runs in the shell and writes files the explorer picks up", async ({ pa
   await expect.poll(() => terminalText(page)).toMatch(/^written-by-bun$/m);
 });
 
-// Needs `whenBusy: "attach"` (TAB_POLICY in src/runtime/boot.ts). With it, Waffle 0.0.148 loses
+// Needs `whenBusy: "attach"` (createWorkspaceRuntime in src/runtime/boot.ts). With it, Waffle 0.0.148 loses
 // file bytes for programs: `cat` prints nothing and a shell redirect leaves an empty file.
 // Remove `fixme` when the fix is pinned and the policy is back on "attach".
 test.fixme("a second tab attaches to the same workspace and sees its files live", async ({

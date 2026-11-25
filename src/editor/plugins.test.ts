@@ -13,16 +13,22 @@ afterEach(() => {
   for (const remove of registered.splice(0)) remove();
 });
 
+/** Mounts and collects every delivery, as the editor pane would add them. */
+function mounted() {
+  const deliveries: (readonly EditorPlugin[])[] = [];
+  const stop = mountEditorPlugins(host, (plugins) => deliveries.push(plugins));
+  return { deliveries, stop };
+}
+
 test("a provider that throws synchronously does not stop the next provider", async () => {
   const good = plugin("good");
   register(() => {
     throw new Error("broken provider");
   });
   register(() => [good]);
-  let latest: EditorPlugin[] = [];
-  const stop = mountEditorPlugins(host, (plugins) => (latest = plugins));
+  const { deliveries, stop } = mounted();
   await tick();
-  expect(latest).toEqual([good]);
+  expect(deliveries).toEqual([[good]]);
   stop();
 });
 
@@ -30,25 +36,32 @@ test("a provider that never answers does not hold back the others", async () => 
   const fast = plugin("fast");
   register(() => new Promise<EditorPlugin[]>(() => {}));
   register(async () => [fast]);
-  let latest: EditorPlugin[] = [];
-  const stop = mountEditorPlugins(host, (plugins) => (latest = plugins));
+  const { deliveries, stop } = mounted();
   await tick();
-  expect(latest).toEqual([fast]);
+  expect(deliveries).toEqual([[fast]]);
   stop();
 });
 
-test("plugins accumulate as providers deliver, in delivery order", async () => {
+test("each provider's plugins are delivered once, when that provider answers", async () => {
   const slow = Promise.withResolvers<EditorPlugin[]>();
   const first = plugin("first");
   const second = plugin("second");
   register(() => slow.promise);
   register(() => [first]);
-  const seen: EditorPlugin[][] = [];
-  const stop = mountEditorPlugins(host, (plugins) => seen.push(plugins));
+  const { deliveries, stop } = mounted();
   await tick();
   slow.resolve([second]);
   await tick();
-  expect(seen).toEqual([[first], [first, second]]);
+  expect(deliveries).toEqual([[first], [second]]);
+  stop();
+});
+
+test("a provider registered while a workspace is open reaches that workspace", async () => {
+  const { deliveries, stop } = mounted();
+  const late = plugin("late");
+  register(() => [late]);
+  await tick();
+  expect(deliveries).toEqual([[late]]);
   stop();
 });
 
@@ -59,22 +72,36 @@ test("stopping aborts the signal and disposes what was delivered", async () => {
     context.signal.addEventListener("abort", () => (aborted = true));
     return { plugins: [plugin("lsp")], dispose: () => (disposed += 1) };
   });
-  const stop = mountEditorPlugins(host, () => {});
+  const { stop } = mounted();
   await tick();
   stop();
   expect(aborted).toBe(true);
   expect(disposed).toBe(1);
 });
 
-test("a set that arrives after the workspace closed is disposed and never mounted", async () => {
+test("a set whose dispose throws does not keep the next set from being disposed", async () => {
+  let disposed = false;
+  register(() => ({
+    plugins: [plugin("broken")],
+    dispose: () => {
+      throw new Error("dispose failed");
+    },
+  }));
+  register(() => ({ plugins: [plugin("fine")], dispose: () => (disposed = true) }));
+  const { stop } = mounted();
+  await tick();
+  stop();
+  expect(disposed).toBe(true);
+});
+
+test("a set that arrives after the workspace closed is disposed and never delivered", async () => {
   const late = Promise.withResolvers<{ plugins: EditorPlugin[]; dispose(): void }>();
   let disposed = false;
-  let calls = 0;
   register(() => late.promise);
-  const stop = mountEditorPlugins(host, () => (calls += 1));
+  const { deliveries, stop } = mounted();
   stop();
   late.resolve({ plugins: [plugin("late")], dispose: () => (disposed = true) });
   await tick();
   expect(disposed).toBe(true);
-  expect(calls).toBe(0);
+  expect(deliveries).toEqual([]);
 });

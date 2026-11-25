@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Documents } from "./documents";
+import { Documents, type SaveRequest } from "./documents";
 
 const never = () => {
   throw new Error("the text on screen should not have been read");
@@ -10,6 +10,18 @@ function shownWith(text: string) {
   documents.select("a.txt");
   documents.show("a.txt", text, never);
   return documents;
+}
+
+function saveRequest(documents: Documents): SaveRequest {
+  const request = documents.beginSave();
+  if (!request) throw new Error("nothing is on screen");
+  return request;
+}
+
+/** Shows `path` as the pane does: select it, then deliver its read. */
+function open(documents: Documents, path: string, diskText: string, leavingText: () => string = never) {
+  documents.select(path);
+  return documents.show(path, diskText, leavingText);
 }
 
 test("a save while the next file is still loading targets the file on screen", () => {
@@ -41,13 +53,11 @@ test("a read that finishes after the selection moved on is ignored", () => {
 test("unsaved text is kept when another file is shown, and comes back dirty", () => {
   const documents = shownWith("A");
   documents.edited("a.txt");
-  documents.select("b.txt");
-  expect(documents.show("b.txt", "B", () => "A edited")).toBe("B");
+  expect(open(documents, "b.txt", "B", () => "A edited")).toBe("B");
   expect(documents.dirty).toBe(false);
   expect(documents.hasUnsaved("a.txt")).toBe(true);
 
-  documents.select("a.txt");
-  expect(documents.show("a.txt", "A", never)).toBe("A edited");
+  expect(open(documents, "a.txt", "A")).toBe("A edited");
   expect(documents.dirty).toBe(true);
   expect(documents.beginSave()?.baseText).toBe("A");
 });
@@ -55,8 +65,7 @@ test("unsaved text is kept when another file is shown, and comes back dirty", ()
 test("an edit reported after its file left the screen does not mark the file now shown", () => {
   const documents = shownWith("A");
   documents.edited("a.txt");
-  documents.select("b.txt");
-  documents.show("b.txt", "B", () => "A edited");
+  open(documents, "b.txt", "B", () => "A edited");
   documents.edited("a.txt");
   expect(documents.dirty).toBe(false);
   expect(documents.hasUnsaved("a.txt")).toBe(true);
@@ -65,33 +74,49 @@ test("an edit reported after its file left the screen does not mark the file now
 test("a finished save clears dirty only for the edits it contained", () => {
   const documents = shownWith("A");
   documents.edited("a.txt");
-  const request = documents.beginSave();
+  const first = saveRequest(documents);
   documents.edited("a.txt");
-  if (request) documents.saved(request, "A1");
+  documents.saved(first, "A1");
   expect(documents.dirty).toBe(true);
 
-  const second = documents.beginSave();
-  if (second) documents.saved(second, "A2");
+  documents.saved(saveRequest(documents), "A2");
   expect(documents.dirty).toBe(false);
   expect(documents.beginSave()?.baseText).toBe("A2");
 });
 
-test("a save that finishes after its file left the screen settles that file's draft", () => {
+test("a save still pending across A, B, A cannot clear edits made after coming back", () => {
   const documents = shownWith("A");
   documents.edited("a.txt");
-  const request = documents.beginSave();
-  documents.select("b.txt");
-  documents.show("b.txt", "B", () => "A edited");
-  if (request) documents.saved(request, "A edited");
+  documents.edited("a.txt");
+  const pending = saveRequest(documents);
+
+  open(documents, "b.txt", "B", () => "A two edits");
+  expect(open(documents, "a.txt", "A", never)).toBe("A two edits");
+  documents.edited("a.txt");
+
+  // The save started before the switch contained two edits; there are three now.
+  documents.saved(pending, "A two edits");
+  expect(documents.dirty).toBe(true);
+
+  open(documents, "b.txt", "B", () => "A three edits");
+  expect(open(documents, "a.txt", "A two edits", never)).toBe("A three edits");
+});
+
+test("a save that finishes after its file left the screen leaves nothing unsaved", () => {
+  const documents = shownWith("A");
+  documents.edited("a.txt");
+  const request = saveRequest(documents);
+  open(documents, "b.txt", "B", () => "A edited");
+  documents.saved(request, "A edited");
   expect(documents.hasUnsaved("a.txt")).toBe(false);
+  expect(open(documents, "a.txt", "A edited", never)).toBe("A edited");
   expect(documents.dirty).toBe(false);
 });
 
 test("a refused save keeps the edits and offers both versions", () => {
   const documents = shownWith("A");
   documents.edited("a.txt");
-  const request = documents.beginSave();
-  if (request) documents.conflicted(request, "A from the shell");
+  documents.conflicted(saveRequest(documents), "A from the shell");
   expect(documents.conflict).toEqual({ path: "a.txt", diskText: "A from the shell" });
   expect(documents.dirty).toBe(true);
 
@@ -100,33 +125,80 @@ test("a refused save keeps the edits and offers both versions", () => {
   expect(documents.beginSave()?.baseText).toBe("A from the shell");
 });
 
+test("a conflict belongs to its document: it is not offered while another file is shown", () => {
+  const documents = shownWith("A");
+  documents.edited("a.txt");
+  const request = saveRequest(documents);
+  open(documents, "b.txt", "B", () => "A edited");
+  documents.conflicted(request, "A from the shell");
+
+  expect(documents.conflict).toBeUndefined();
+  documents.keepMine();
+  expect(documents.beginSave()).toEqual({ path: "b.txt", generation: 0, baseText: "B" });
+
+  open(documents, "a.txt", "A from the shell", never);
+  expect(documents.conflict).toEqual({ path: "a.txt", diskText: "A from the shell" });
+});
+
 test("taking the version on disk drops the edits", () => {
   const documents = shownWith("A");
   documents.edited("a.txt");
-  const request = documents.beginSave();
-  if (request) documents.conflicted(request, "A from the shell");
+  documents.conflicted(saveRequest(documents), "A from the shell");
   expect(documents.takeTheirs()).toBe("A from the shell");
   expect(documents.dirty).toBe(false);
   expect(documents.conflict).toBeUndefined();
+  expect(documents.unsaved(never).size).toBe(0);
 });
 
-test("text recovered from another tab is shown as unsaved", () => {
+test("a write acknowledged from memory stays recoverable until storage holds it", () => {
+  const documents = shownWith("A");
+  documents.edited("a.txt");
+  const request = saveRequest(documents);
+  documents.saved(request, "A saved");
+
+  // Not dirty any more, but the flush has not finished: losing storage now would lose it.
+  expect(documents.dirty).toBe(false);
+  expect(Object.fromEntries(documents.unsaved(() => "A saved"))).toEqual({
+    "a.txt": { text: "A saved", baseText: "A" },
+  });
+
+  documents.durable(request, "A saved");
+  expect(documents.unsaved(never).size).toBe(0);
+});
+
+test("an undurable write is still recoverable after its file left the screen", () => {
+  const documents = shownWith("A");
+  documents.edited("a.txt");
+  const request = saveRequest(documents);
+  documents.saved(request, "A saved");
+  open(documents, "b.txt", "B", () => "A saved");
+
+  expect(Object.fromEntries(documents.unsaved(() => "B"))).toEqual({
+    "a.txt": { text: "A saved", baseText: "A" },
+  });
+  documents.durable(request, "A saved");
+  expect(documents.unsaved(() => "B").size).toBe(0);
+});
+
+test("text recovered from another tab is shown as unsaved and stays recoverable", () => {
   const documents = new Documents((path) =>
     path === "a.txt" ? { text: "left behind", baseText: "A" } : undefined,
   );
-  documents.select("a.txt");
-  expect(documents.show("a.txt", "A", never)).toBe("left behind");
+  expect(open(documents, "a.txt", "A")).toBe("left behind");
   expect(documents.dirty).toBe(true);
+  expect(Object.fromEntries(documents.unsaved(() => "left behind"))).toEqual({
+    "a.txt": { text: "left behind", baseText: "A" },
+  });
 });
 
-test("unsaved() lists the text on screen and every draft", () => {
-  const documents = shownWith("A");
-  documents.edited("a.txt");
-  documents.select("b.txt");
-  documents.show("b.txt", "B", () => "A edited");
+test("unsaved() lists the text on screen and every kept text, for any file name", () => {
+  const documents = new Documents();
+  open(documents, "constructor", "C");
+  documents.edited("constructor");
+  open(documents, "b.txt", "B", () => "C edited");
   documents.edited("b.txt");
-  expect(documents.unsaved(() => "B edited")).toEqual({
-    "a.txt": { text: "A edited", baseText: "A" },
-    "b.txt": { text: "B edited", baseText: "B" },
-  });
+  expect(Array.from(documents.unsaved(() => "B edited"))).toEqual([
+    ["constructor", { text: "C edited", baseText: "C" }],
+    ["b.txt", { text: "B edited", baseText: "B" }],
+  ]);
 });

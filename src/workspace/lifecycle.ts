@@ -14,7 +14,11 @@ export interface Opening<T> {
 }
 
 export interface Turnstile {
-  open<T extends Disposable>(start: () => Promise<T>): Opening<T>;
+  /**
+   * `start` receives a signal that aborts when the workspace is closed. A start that can wait
+   * for a long time (for storage another tab holds) must give up on it.
+   */
+  open<T extends Disposable>(start: (signal: AbortSignal) => Promise<T>): Opening<T>;
   /** Resolves when the workspace opened last has been closed and torn down. */
   idle(): Promise<void>;
 }
@@ -24,13 +28,15 @@ export function createTurnstile(): Turnstile {
 
   return {
     idle: () => gone,
-    open<T extends Disposable>(start: () => Promise<T>): Opening<T> {
-      const session = gone.then(start);
+    open<T extends Disposable>(start: (signal: AbortSignal) => Promise<T>): Opening<T> {
+      const closed = new AbortController();
+      const session = gone.then(() => start(closed.signal));
       const torn = Promise.withResolvers<void>();
       gone = torn.promise;
       let closing: Promise<void> | undefined;
 
       async function tearDown(): Promise<void> {
+        closed.abort();
         try {
           // Waits for a start that is still running: its runtime exists and must be disposed.
           const opened = await session.catch(() => undefined);

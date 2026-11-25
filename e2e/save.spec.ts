@@ -52,6 +52,34 @@ test("unsaved text survives switching to another file and back", async ({ page }
   await expect.poll(() => terminalText(page)).toMatch(/^B\nA\nunsaved/m);
 });
 
+test("a plugin that arrives late keeps the text on screen, the unsaved state and undo", async ({
+  page,
+  browserName,
+}) => {
+  await newWorkspace(page);
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+  await writeFile(page, "notes.txt", "first line\n");
+  await openFile(page, "notes.txt");
+  await typeInEditor(page, "typed before the plugin");
+  await expect(page.getByTestId("editor-dirty")).toBeVisible();
+
+  // A language server loaded after the editor opened registers its plugins now.
+  const activated = await page.evaluate(
+    () =>
+      new Promise<boolean>((resolve) => {
+        globalThis.sprockt?.registerEditorPlugins(() => [{ name: "late", activate: () => resolve(true) }]);
+      }),
+  );
+  expect(activated).toBe(true);
+
+  expect(await editorText(page)).toBe("first line\ntyped before the plugin");
+  await expect(page.getByTestId("editor-dirty")).toBeVisible();
+  await page.getByTestId("editor").click();
+  // Playwright's WebKit reports a Mac, so the editor expects the Mac shortcut there.
+  await page.keyboard.press(browserName === "webkit" ? "Meta+z" : "Control+z");
+  await expect.poll(() => editorText(page)).not.toContain("typed before the plugin");
+});
+
 test("a save does not overwrite a change the shell made since the file was opened", async ({ page }) => {
   await newWorkspace(page);
   await expect(page.getByTestId("terminal-state")).toHaveText("ready");

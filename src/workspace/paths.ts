@@ -54,17 +54,6 @@ export function projectPath(path: string): string {
   return `${PROJECT_ROOT}/${path}`;
 }
 
-/** The absolute path a symbolic link at `link` points to, with `.` and `..` resolved. */
-export function linkTarget(link: string, target: string): string {
-  const base = target.startsWith("/") ? [] : link.split("/").slice(1, -1);
-  const resolved: string[] = [];
-  for (const segment of base.concat(target.split("/"))) {
-    if (segment === "..") resolved.pop();
-    else if (segment !== "" && segment !== ".") resolved.push(segment);
-  }
-  return `/${resolved.join("/")}`;
-}
-
 /** A project path as the explorer shows it: relative to the project root. */
 export function projectRelative(path: string): string | undefined {
   if (path === PROJECT_ROOT) return "";

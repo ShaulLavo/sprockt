@@ -35,6 +35,23 @@ test("a workspace closed while it is still starting is disposed when it arrives"
   expect(log).toEqual(["dispose first started", "dispose first finished"]);
 });
 
+test("closing aborts a start that is waiting, so the next workspace is not stuck behind it", async () => {
+  const turnstile = createTurnstile();
+  // A start that waits for storage another tab holds: it ends only when it is told to give up.
+  const waiting = turnstile.open<{ dispose(): Promise<void> }>(
+    (signal) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("gave up waiting")));
+      }),
+  );
+  waiting.session.catch(() => {});
+  await tick();
+  await waiting.close();
+
+  const next = turnstile.open(async () => ({ dispose: async () => {} }));
+  await expect(next.session).resolves.toBeDefined();
+});
+
 test("the next workspace starts only after the previous one is fully torn down", async () => {
   const log: string[] = [];
   const turnstile = createTurnstile();

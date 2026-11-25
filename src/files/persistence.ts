@@ -10,13 +10,19 @@ export interface Persistence {
   begin(): () => void;
   /** Something changed in memory and needs a flush. */
   touch(): void;
-  /** Resolves once everything changed so far is flushed. Rejects when a flush fails. */
+  /**
+   * Resolves once every change acknowledged before this call is flushed, however many changes
+   * follow: a caller waits for its own write, not for the workspace to go quiet. Rejects when
+   * a flush fails.
+   */
   settled(): Promise<void>;
   /** Storage is gone (another tab took the workspace): no more flushes, the state is `failed`. */
   stop(reason: Error): void;
 }
 
 interface Waiter {
+  /** The change count a flush has to cover before this waiter is done. */
+  readonly target: number;
   resolve(): void;
   reject(reason: unknown): void;
 }
@@ -39,14 +45,13 @@ export function createPersistence(
   }
 
   function publish(): void {
-    const state = current();
-    report(state);
-    if (state === "saving") return;
-    const settling = waiters;
+    report(current());
+    const waiting = waiters;
     waiters = [];
-    for (const waiter of settling) {
-      if (state === "saved") waiter.resolve();
-      else waiter.reject(failure);
+    for (const waiter of waiting) {
+      if (failure !== undefined) waiter.reject(failure);
+      else if (waiter.target <= flushed) waiter.resolve();
+      else waiters.push(waiter);
     }
   }
 
@@ -88,10 +93,10 @@ export function createPersistence(
       void pump();
     },
     settled() {
-      const state = current();
-      if (state === "saved") return Promise.resolve();
-      if (state === "failed") return Promise.reject(failure);
-      return new Promise<void>((resolve, reject) => waiters.push({ resolve, reject }));
+      if (failure !== undefined) return Promise.reject(failure);
+      const target = changes;
+      if (target <= flushed) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => waiters.push({ target, resolve, reject }));
     },
     stop(reason) {
       stopped = true;

@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import {
   isInsideProject,
   isWorkspaceId,
-  linkTarget,
   newWorkspaceId,
   projectPath,
   ProjectPathError,
@@ -43,14 +42,12 @@ test("a plain relative path maps into the project; anything else is refused", ()
   }
 });
 
-test("a link target is resolved against the link's directory", () => {
-  expect(linkTarget("/workspace/a/link", "file.txt")).toBe("/workspace/a/file.txt");
-  expect(linkTarget("/workspace/a/link", "../b/c")).toBe("/workspace/b/c");
-  expect(linkTarget("/workspace/link", "../../etc/passwd")).toBe("/etc/passwd");
-  expect(linkTarget("/workspace/link", "/home/guest")).toBe("/home/guest");
-  expect(isInsideProject(linkTarget("/workspace/link", ".."))).toBe(false);
-  expect(isInsideProject("/workspace-other")).toBe(false);
+test("inside the project means the project root or below it", () => {
+  expect(isInsideProject("/workspace")).toBe(true);
   expect(isInsideProject("/workspace/x")).toBe(true);
+  expect(isInsideProject("/workspace-other")).toBe(false);
+  expect(isInsideProject("/")).toBe(false);
+  expect(isInsideProject("/home/guest")).toBe(false);
 });
 
 test("only paths inside the project have a project-relative form", () => {

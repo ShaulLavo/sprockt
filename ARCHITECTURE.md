@@ -70,9 +70,13 @@ WorkspaceSession
   An editor buffer is a cache; saving goes through `FileService`.
 - **The project boundary is enforced at FileService.** Paths are plain project-relative names.
   An absolute path, an empty, `.` or `..` segment, or a NUL is refused with `ProjectPathError`
-  before anything is written; a bulk write with one bad path writes nothing. Symbolic links are
-  followed one component at a time, and a link whose target is outside `/workspace` is never
-  read or written through (a link itself can still be removed or moved).
+  before anything is written; a bulk write with one bad path writes nothing. For links, the
+  service asks Waffle to resolve the path right before each operation and works nothing out
+  itself: a path Waffle resolves to a place outside `/workspace` is refused, and a symbolic
+  link is never the entry that is read or written, nor the directory a new entry is created
+  in (a link itself can still be removed or moved). The check and the operation are two steps,
+  so a link swapped in between them is not caught; closing that needs Waffle to enforce a root
+  inside the operation (Known gaps, 5).
 - **One change signal.** `FileService.revision` moves when project files change, whatever the
   source: a page write, the shell, Bun, or another tab. It is fed by a recursive Waffle watch
   (`FilesystemClient.watch`) and coalesced over 50 ms. The explorer re-lists on it; clean
@@ -81,11 +85,17 @@ WorkspaceSession
   `files/persistence.ts` reports `saving` from the moment a write starts and `saved` only once
   a flush that started after the last change has finished. Every change counts, including the
   shell's and Bun's and those inside `node_modules`. A failed flush is `failed`.
-  `FileService.saved()` resolves when everything written so far is flushed.
+  `FileService.saved()` resolves when every change acknowledged before the call is flushed,
+  however many follow: a caller waits for its own write, not for the workspace to go quiet.
 - **The editor saves what it shows.** `editor/documents.ts` separates the selected file from
-  the one on screen. A save writes the document on screen under the path it was read from, and
-  clears "unsaved" only for the edits that save contained. Unsaved text is kept when another
-  file is shown and comes back with the file.
+  the one on screen and keeps, for every document, its own edit count for as long as the
+  workspace is open. A save writes the document on screen under the path it was read from. A
+  save that finishes late, even after switching away and back, clears "unsaved" only for the
+  edits it contained. Unsaved text is kept when another file is shown and comes back with the
+  file. A conflict belongs to its document and is offered only while that document is shown.
+- **Text is recoverable until storage holds it.** A save acknowledged from memory is not
+  durable yet. The editor keeps such text recoverable until the flush that covers it is done
+  (`FileService.saved()`), together with what storage held before it.
 - **A save never overwrites a change it has not seen.** The editor saves with
   `writeIfUnchanged(path, text, textItRead)`. If the shell or another tab changed the file, the
   save is refused and the person chooses: reload from disk, or keep the edits. The check and the
@@ -105,20 +115,29 @@ Waffle allows one live runtime per page. `workspace/lifecycle.ts` is the turnsti
 guarantees it. The workbench opens a workspace through it and closes it on the way out:
 
 - A workspace starts only after the previous one is fully torn down.
-- A workspace closed while it is still booting is disposed the moment its runtime arrives.
+- Closing a workspace aborts its boot, also while it waits for storage another tab holds, and
+  disposes its runtime.
 - Teardown runs every step (file service, preview transport, runtime) even if one fails.
 
-Opening a workspace that another tab has open would take it away from that tab, so the
-workbench asks first (`workspaceIsOpenElsewhere`). When a tab loses its workspace, its
-FileService refuses every write, the editor becomes read-only, the status shows `failed`, and
-its unsaved text is left in `localStorage` (`editor/recovery.ts`) for the tab that now owns the
-workspace, where it shows up as an unsaved edit when the file is opened.
+An ordinary open never takes a workspace from another tab. It asks Waffle for storage with
+`whenBusy: "wait"`, which queues behind the tab that has it, and the workbench then says the
+workspace is open elsewhere. Only when the person chooses "Open it here" is the workspace
+opened again with `whenBusy: "takeover"`. Two tabs opening the same workspace at the same
+moment therefore end with one owner and one tab that asks. A quick check before anything is
+started (`workspaceIsOpenElsewhere`) only decides what is shown first.
+
+When a tab loses its workspace, its FileService refuses every write, the editor becomes
+read-only and the status shows `failed`. Every text storage does not hold yet (unsaved edits,
+and saves whose flush never finished) is left in `localStorage` (`editor/recovery.ts`), one key
+per file, for the tab that now owns the workspace. There it shows up as an unsaved edit when
+the file is opened, and it stays stored until that tab has saved and flushed it, or the person
+takes the version on disk: opening the file, or reloading, does not use it up.
 
 ## Runtime boot
 
 `runtime/boot.ts`, in order:
 
-1. `createRuntime({ filesystem: { mode: "fast", name: "sprockt-<id>", workerURL, whenBusy: TAB_POLICY }, memoryGroups })`.
+1. `createRuntime({ filesystem: { mode: "fast", name: "sprockt-<id>", workerURL, whenBusy }, memoryGroups })`, with `whenBusy` `"wait"`, or `"takeover"` once the person confirmed it.
    The memory group limits are bun-wasm's (2 GiB per group, 1 GiB per member, 8 MiB stacks).
 2. `installBunSharedObjects`, then `installBunAdapters` with the browser engine and the pinned
    guest descriptor (URL, SHA-256, size). The guest is fetched and compiled on first `bun` use.
@@ -189,9 +208,11 @@ has to go through a page on our origin.
 **Language servers** (`editor/plugins.ts`). `registerEditorPlugins(provider)`: a provider gets
 `{ runtime, projectRoot, rootUri, signal }` and returns Singapore `EditorPlugin`s, or
 `{ plugins, dispose }`, synchronously or not. The editor never waits for a provider: it opens
-at once and is rebuilt, keeping its text, when a provider delivers. Each provider runs inside
-its own boundary, so one that throws or never answers only loses its own plugins. `signal`
-aborts and `dispose` runs when the workspace closes, including for a set that arrives late.
+at once, and a provider's plugins are added to the running editor (`editor.addPlugin`) when it
+delivers, so the text on screen and its undo history are untouched. A provider registered while
+a workspace is open reaches that workspace too. Each provider runs inside its own boundary, so
+one that throws or never answers only loses its own plugins. `signal` aborts and every
+`dispose` runs when the workspace closes, including for a set that arrives late.
 Document ids are absolute workspace paths, so a server sees `file:///workspace/src/main.ts`.
 The LSP lane adds `src/lsp/typescript.ts` (its stdio transport plus
 `createLanguageServerPlugin`) and one `registerEditorPlugins` call.
@@ -201,11 +222,11 @@ The LSP lane adds `src/lsp/typescript.ts` (its stdio transport plus
 The design is `whenBusy: "attach"`: the first tab hosts the filesystem; later tabs attach as
 peers and read, write and watch the same live tree. Host loss fails over inside Waffle.
 
-Today `TAB_POLICY` in `runtime/boot.ts` is `"takeover"`, because attach mode in Waffle 0.0.148
-loses file bytes for programs (Known gaps, 1). A second tab asks before it takes the workspace;
+Today `runtime/boot.ts` does not use attach, because attach mode in Waffle 0.0.148 loses file
+bytes for programs (Known gaps, 1). A second tab waits and asks before it takes the workspace;
 the older tab then stops writing and hands over its unsaved text ("Workspace lifetime").
-Everything below describes the attach design the slices build toward; flipping the constant
-and dropping the question are the only changes in this repository.
+Everything below describes the attach design the slices build toward; choosing `"attach"` in
+`createWorkspaceRuntime` and dropping the question are the only changes in this repository.
 
 - Shared across tabs: files, and through `FileService.revision`, the explorer and clean editor
   buffers.
@@ -293,7 +314,7 @@ where the bytes live.
    reads and writes are intact, and all of it works with `whenBusy: "takeover"`. In WebKit,
    attach mode also fails `bun` with "Permission denied" and a second tab reports
    `/workspace: No such file or directory`. The fix belongs in Waffle or bash-web. Until then
-   `TAB_POLICY` is `"takeover"` and the two-tab test in `e2e/boot.spec.ts` is `fixme`.
+   tabs do not share a workspace and the two-tab test in `e2e/boot.spec.ts` is `fixme`.
 2. **Bun traps in WebKit.** In Playwright's WebKit, `bun --version` ends in a WASM trap (a
    stack of `wasm-function[...]` frames) with the browser-engine guest, in takeover mode. The
    shell, coreutils, the editor and persistence pass there. iPhone needs bun-wasm's own memory
@@ -305,6 +326,11 @@ where the bytes live.
    in bun-wasm's `web/src` and `sandbox/src`. Slice 5 builds on Waffle's public
    `waffle/browser/preview` and ports the rest; an export from bun-wasm would replace the
    path imports.
+5. **Waffle has no conditional or confined file operation.** Two FileService rules are a check
+   followed by an operation, with a gap between them: `writeIfUnchanged` (read, compare,
+   write) and the project boundary (resolve, then read or write). Both need Waffle to do it
+   in one step: a write that fails unless the file still holds the expected bytes, and
+   operations that refuse to leave a given root. The fix belongs in Waffle.
 
 ## Parallel work map
 

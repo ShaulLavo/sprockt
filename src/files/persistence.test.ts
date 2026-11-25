@@ -74,6 +74,27 @@ test("settled() resolves with the flush that covers the change, not before", asy
   expect(settled).toBe(true);
 });
 
+test("settled() waits for its own change, not for later ones", async () => {
+  const storage = manualFlush();
+  const persistence = createPersistence(storage.flush, () => {});
+  persistence.touch();
+  let mine = false;
+  void persistence.settled().then(() => (mine = true));
+
+  // More changes keep arriving, as an install running in the terminal would produce.
+  persistence.touch();
+  await storage.finish(0);
+  expect(mine).toBe(true);
+  expect(persistence.state).toBe("saving");
+
+  let later = false;
+  void persistence.settled().then(() => (later = true));
+  await Promise.resolve();
+  expect(later).toBe(false);
+  await storage.finish(1);
+  expect(later).toBe(true);
+});
+
 test("a failed flush is `failed`, rejects settled(), and the next change tries again", async () => {
   const storage = manualFlush();
   const persistence = createPersistence(storage.flush, () => {});
