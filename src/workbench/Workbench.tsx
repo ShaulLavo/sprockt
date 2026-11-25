@@ -10,9 +10,10 @@ import { TerminalPane } from "../terminal/TerminalPane";
 import { openWorkspace, WorkspaceContext, type WorkspaceSession } from "../workspace/session";
 
 const STAGE_TEXT: Readonly<Record<BootStage, string>> = {
-  storage: "Opening your files…",
-  programs: "Installing Bun and the shell…",
+  storage: "Opening files",
+  programs: "Installing programs",
   ready: "Ready",
+  moved: "Open in another tab",
 };
 
 function Panes(props: { session: WorkspaceSession }) {

@@ -34,6 +34,17 @@ test("Bun runs in the shell and writes files the explorer picks up", async ({ pa
   await expect.poll(() => terminalText(page)).toMatch(/^written-by-bun$/m);
 });
 
+test("a second tab takes the workspace over and the first tab says so", async ({ page, context }) => {
+  const id = await newWorkspace(page);
+  await runInTerminal(page, "echo from-the-first-tab > first.txt");
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+
+  const second = await context.newPage();
+  await second.goto(`/w/${id}`);
+  await expect(second.getByTestId("file-tree")).toContainText("first.txt");
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "moved");
+});
+
 // Needs `whenBusy: "attach"` (TAB_POLICY in src/runtime/boot.ts). With it, Waffle 0.0.148 loses
 // file bytes for programs: `cat` prints nothing and a shell redirect leaves an empty file.
 // Remove `fixme` when the fix is pinned and the policy is back on "attach".

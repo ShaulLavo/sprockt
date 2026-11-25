@@ -7,7 +7,8 @@ import { installBase } from "waffle-base";
 import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import { runtimeAssets } from "./assets";
 
-export type BootStage = "storage" | "programs" | "ready";
+/** `moved`: another tab took this workspace over, so this tab's files are no longer live. */
+export type BootStage = "storage" | "programs" | "ready" | "moved";
 
 /**
  * How much shared memory Bun's process groups may use: 2 GiB per group, 1 GiB per member, 8 MiB
@@ -90,6 +91,7 @@ export async function bootWorkspace(
   let disposal: Promise<void> | undefined;
   const dispose = () => (disposal ??= runtime.dispose());
   try {
+    runtime.filesystem.onOwnershipLost = () => onStage("moved");
     onStage("storage");
     await runtime.filesystem.mkdirp(PROJECT_ROOT);
     onStage("programs");
