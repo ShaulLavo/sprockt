@@ -2,7 +2,8 @@
 // what they need from here through WorkspaceContext; they never reach into each other.
 import { createContext, useContext } from "solid-js";
 import { createFileService, type FileService } from "../files/service";
-import { createInactivePreviewTransport, type PreviewTransport } from "../preview/transport";
+import { createPreviewTransport } from "../preview";
+import type { PreviewTransport } from "../preview/transport";
 import { bootWorkspace, type BootOptions, type BootStage, type WorkspaceRuntime } from "../runtime/boot";
 import { createTerminalStore, type TerminalStore } from "../terminal/store";
 import { createCommands, createStatusItems, type Commands, type StatusItems } from "../workbench/slots";
@@ -28,6 +29,7 @@ export async function openWorkspace(
 ): Promise<WorkspaceSession> {
   let moved = false;
   let revoke = (): void => void (moved = true);
+  const preview = createPreviewTransport(id);
   const booted = await bootWorkspace(
     id,
     (stage) => {
@@ -35,9 +37,18 @@ export async function openWorkspace(
       if (stage === "moved") revoke();
       onStage?.(stage);
     },
-    options,
-  );
-  const preview = createInactivePreviewTransport();
+    {
+      ...options,
+      // The transport learns about every port a Bun process listens on.
+      ports: {
+        listening: (port, backend) => preview.register(port, backend),
+        stopped: (port, backend) => preview.unregister(port, backend),
+      },
+    },
+  ).catch(async (error: unknown) => {
+    await preview.dispose();
+    throw error;
+  });
   const files = createFileService(booted.runtime, booted.id);
   const terminals = createTerminalStore();
   // Revoking saves first leaves the editor's unsaved text for the new owner; then this tab's

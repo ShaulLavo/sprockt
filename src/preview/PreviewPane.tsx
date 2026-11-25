@@ -1,30 +1,290 @@
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, For, on, onCleanup, Show, type JSX } from "solid-js";
+import { createDevServer } from "../tasks/dev-server";
 import { useWorkspace } from "../workspace/session";
+import { frameCommand, isFrameMessage, type FrameMessage } from "./bridge";
+import { canGoBack, canGoForward, currentPath, emptyHistory, stepped, visited } from "./history";
+import {
+  AlertIcon,
+  BackIcon,
+  DesktopIcon,
+  ExternalIcon,
+  ForwardIcon,
+  GlobeIcon,
+  PhoneIcon,
+  PlayIcon,
+  ReloadIcon,
+  StopIcon,
+  TabletIcon,
+} from "./icons";
+import { normalizePreviewPath } from "./paths";
+import "./preview.css";
 import type { PreviewServer } from "./transport";
 
+type Viewport = "desktop" | "tablet" | "phone";
+
+const VIEWPORTS: readonly { id: Viewport; label: string; icon: () => JSX.Element }[] = [
+  { id: "desktop", label: "Desktop viewport", icon: DesktopIcon },
+  { id: "tablet", label: "Tablet viewport", icon: TabletIcon },
+  { id: "phone", label: "Phone viewport", icon: PhoneIcon },
+];
+
+/** How many error messages of a page are kept for the list. */
+const ERROR_LIMIT = 50;
+
 export function PreviewPane() {
-  const { preview } = useWorkspace();
+  const workspace = useWorkspace();
+  const { preview } = workspace;
+  const devServer = createDevServer(workspace);
+  // Plain signals, not a resource: a loading resource would suspend the whole workbench.
+  const [usable, setUsable] = createSignal(false);
+  const [unavailable, setUnavailable] = createSignal(false);
+  preview.whenReady().then(
+    () => setUsable(true),
+    () => setUnavailable(true),
+  );
   const [servers, setServers] = createSignal<readonly PreviewServer[]>(preview.servers());
+  const [selected, setSelected] = createSignal<number>();
+  const [history, setHistory] = createSignal(emptyHistory);
+  const [draft, setDraft] = createSignal<string>();
+  const [errors, setErrors] = createSignal<readonly string[]>([]);
+  const [showErrors, setShowErrors] = createSignal(false);
+  const [viewport, setViewport] = createSignal<Viewport>("desktop");
+  const [noScript, setNoScript] = createSignal(false);
+  const [frame, setFrame] = createSignal<HTMLIFrameElement>();
+  /** Whether the document in the frame runs our client script and so understands commands. */
+  let bridged = false;
+  /** Whether the document that is loading has announced itself yet. */
+  let announced = false;
+
+  // A document that finished loading without a word from our script (an image, a download, a
+  // page of another charset) cannot take commands: the frame is steered by its `src` again.
+  function onFrameLoad(): void {
+    if (!announced) bridged = false;
+    announced = false;
+  }
+
   onCleanup(preview.subscribe(setServers));
-  const first = () => servers()[0];
+  onCleanup(() => void devServer.dispose());
+
+  /** The server being shown: the picked one while it listens, otherwise the first one. */
+  const port = () => {
+    const picked = selected();
+    const listening = servers();
+    return listening.some((server) => server.port === picked) ? picked : listening[0]?.port;
+  };
+  const path = () => currentPath(history()) ?? "/";
+
+  /** Points the frame at a path of the current server, whether or not the page has a bridge. */
+  function load(target: string): void {
+    const active = port();
+    const element = frame();
+    if (active === undefined || !element) return;
+    const href = preview.frameUrl(active, target);
+    if (bridged)
+      element.contentWindow?.postMessage(frameCommand({ command: "navigate", href }), new URL(href).origin);
+    else element.src = href;
+  }
+
+  // A server appeared, was picked, or came back: start over at its root.
+  createEffect(
+    on([port, frame, usable], ([active, element, canLoad]) => {
+      bridged = false;
+      setHistory(emptyHistory);
+      setErrors([]);
+      setDraft(undefined);
+      if (active !== undefined && element && canLoad) element.src = preview.frameUrl(active, "/");
+    }),
+  );
+
+  function onFrameMessage(message: FrameMessage): void {
+    if (message.type === "error") {
+      setErrors((list) => list.concat([message.message]).slice(-ERROR_LIMIT));
+      return;
+    }
+    const place = preview.locate(message.href);
+    if (!place || place.port !== port()) return;
+    bridged = true;
+    announced = true;
+    if (message.type === "started") setErrors([]);
+    setHistory((current) => visited(current, place.path));
+    setDraft(undefined);
+  }
+
+  function onMessage(event: MessageEvent<unknown>): void {
+    const active = port();
+    if (active === undefined || event.source !== frame()?.contentWindow) return;
+    if (!preview.ownsOrigin(event.origin, active) || !isFrameMessage(event.data)) return;
+    onFrameMessage(event.data);
+  }
+  addEventListener("message", onMessage);
+  onCleanup(() => removeEventListener("message", onMessage));
+
+  function step(delta: -1 | 1): void {
+    const next = stepped(history(), delta);
+    const target = currentPath(next);
+    if (next === history() || target === undefined) return;
+    setHistory(next);
+    load(target);
+  }
+
+  function reload(): void {
+    const element = frame();
+    const active = port();
+    if (!element || active === undefined) return;
+    const href = preview.frameUrl(active, path());
+    if (bridged)
+      element.contentWindow?.postMessage(frameCommand({ command: "reload" }), new URL(href).origin);
+    else element.src = href;
+  }
+
+  function submitUrl(event: SubmitEvent): void {
+    event.preventDefault();
+    const target = normalizePreviewPath(draft() ?? path());
+    setDraft(undefined);
+    load(target);
+  }
+
+  function openInNewTab(): void {
+    const active = port();
+    if (active !== undefined) window.open(preview.tabUrl(active, path()), "_blank", "noopener");
+  }
+
+  async function toggleDevServer(): Promise<void> {
+    if (devServer.status() !== "stopped") return devServer.stop();
+    setNoScript(!(await devServer.start()));
+  }
 
   return (
     <section class="pane preview-pane" aria-label="Preview">
-      <header class="pane-header">
-        <span>Preview</span>
-      </header>
-      <Show
-        when={first()}
-        fallback={
-          <p class="pane-empty">
-            No dev server is running yet. Start one in the terminal to preview it here.
-          </p>
-        }
-      >
-        {(server) => (
-          <iframe class="preview-frame" title="Preview" src={preview.frameUrl(server().port, "/")} />
-        )}
+      <form class="preview-bar" onSubmit={submitUrl} data-testid="preview-bar">
+        <span class="preview-nav">
+          <button type="button" aria-label="Back" disabled={!canGoBack(history())} onClick={() => step(-1)}>
+            <BackIcon />
+          </button>
+          <button
+            type="button"
+            aria-label="Forward"
+            disabled={!canGoForward(history())}
+            onClick={() => step(1)}
+          >
+            <ForwardIcon />
+          </button>
+          <button type="button" aria-label="Reload preview" disabled={port() === undefined} onClick={reload}>
+            <ReloadIcon />
+          </button>
+        </span>
+        <label class="preview-url">
+          <GlobeIcon />
+          <input
+            type="text"
+            aria-label="Preview URL"
+            data-testid="preview-url"
+            spellcheck={false}
+            autocomplete="off"
+            disabled={port() === undefined}
+            value={draft() ?? (port() === undefined ? "" : path())}
+            onInput={(event) => setDraft(event.currentTarget.value)}
+          />
+        </label>
+        <select
+          class="preview-port"
+          aria-label="Switch preview port"
+          data-testid="preview-port"
+          disabled={servers().length === 0}
+          value={port() ?? ""}
+          onChange={(event) => setSelected(Number(event.currentTarget.value))}
+        >
+          <For each={servers()} fallback={<option value="">No open ports</option>}>
+            {(server) => <option value={server.port}>{server.port}</option>}
+          </For>
+        </select>
+        <span class="preview-viewports" role="group" aria-label="Viewport">
+          <For each={VIEWPORTS}>
+            {(option) => (
+              <button
+                type="button"
+                aria-label={option.label}
+                aria-pressed={viewport() === option.id}
+                classList={{ "is-on": viewport() === option.id }}
+                onClick={() => setViewport(option.id)}
+              >
+                {option.icon()}
+              </button>
+            )}
+          </For>
+        </span>
+        <Show when={errors().length > 0}>
+          <button
+            type="button"
+            class="preview-errors-toggle"
+            data-testid="preview-errors"
+            aria-expanded={showErrors()}
+            aria-label={`Errors in the preview: ${errors().length}`}
+            onClick={() => setShowErrors((shown) => !shown)}
+          >
+            <AlertIcon />
+            <span>{errors().length}</span>
+          </button>
+        </Show>
+        <button
+          type="button"
+          class="preview-task"
+          data-testid="dev-server"
+          data-status={devServer.status()}
+          aria-label={
+            devServer.status() === "stopped"
+              ? "Start dev server"
+              : `Dev server running on port ${port() ?? "…"}. Click to stop.`
+          }
+          onClick={() => void toggleDevServer()}
+        >
+          <Show when={devServer.status() === "stopped"} fallback={<StopIcon />}>
+            <PlayIcon />
+          </Show>
+        </button>
+        <button
+          type="button"
+          aria-label="Open preview in new tab"
+          data-testid="preview-open"
+          disabled={port() === undefined}
+          onClick={openInNewTab}
+        >
+          <ExternalIcon />
+        </button>
+      </form>
+      <Show when={showErrors() && errors().length > 0}>
+        <ul class="preview-error-list" data-testid="preview-error-list">
+          <For each={errors()}>{(message) => <li>{message}</li>}</For>
+        </ul>
       </Show>
+      <div class="preview-stage" data-viewport={viewport()}>
+        <Show when={unavailable()}>
+          <p class="pane-error">Previews are not available in this browser.</p>
+        </Show>
+        <Show when={port() === undefined && !unavailable()}>
+          <div class="preview-empty" data-testid="preview-empty">
+            <p>
+              {devServer.status() === "starting"
+                ? "Starting the dev server. The preview will load once a port opens."
+                : "No dev server is running yet. Start one in the terminal to preview it here."}
+            </p>
+            <Show when={noScript()}>
+              <p>Nothing to start in this project.</p>
+            </Show>
+            <Show when={devServer.status() === "starting" && devServer.output()}>
+              <pre class="preview-task-output">{devServer.output().slice(-2000)}</pre>
+            </Show>
+          </div>
+        </Show>
+        <iframe
+          class="preview-frame"
+          classList={{ hidden: port() === undefined }}
+          title="Preview"
+          data-testid="preview-frame"
+          onLoad={onFrameLoad}
+          ref={setFrame}
+        />
+      </div>
     </section>
   );
 }

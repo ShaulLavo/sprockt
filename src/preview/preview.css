@@ -1,0 +1,221 @@
+/* Preview pane. Colors and sizes come from the design tokens (Circuit names); each falls back
+   to the foundation's token of the same role until the token sheet lands. */
+.preview-pane {
+  --p-line: var(--line, var(--border));
+  --p-fg: var(--fg, var(--text));
+  --p-fg-muted: var(--fg-muted, var(--text-muted));
+  --p-fg-subtle: var(--fg-subtle, var(--text-muted));
+  --p-input: var(--bg-input, var(--surface));
+  --p-hover: var(--bg-hover, var(--border));
+  --p-active: var(--bg-active, var(--border));
+  --p-stage: var(--bg-stage, var(--surface));
+  --p-focus: var(--focus, var(--accent));
+  --p-danger: var(--danger, #ff6b6b);
+  --p-radius: var(--radius-sm, 6px);
+  --p-control: calc(var(--control-h, 28px) - 2px);
+  --p-mono: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1, 4px);
+  min-height: var(--tab-h, 36px);
+  padding: 0 var(--space-1_5, 6px);
+  border-bottom: 1px solid var(--p-line);
+}
+
+.preview-icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.preview-bar button {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-xs, 4px);
+  color: var(--p-fg-muted);
+}
+
+.preview-bar button:hover:not(:disabled) {
+  background: var(--p-hover);
+  color: var(--p-fg);
+}
+
+.preview-bar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.preview-bar :focus-visible {
+  outline: 2px solid var(--p-focus);
+  outline-offset: 1px;
+}
+
+.preview-nav {
+  display: inline-flex;
+  gap: 1px;
+}
+
+.preview-url {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1_5, 6px);
+  height: var(--p-control);
+  padding: 0 var(--space-2, 8px);
+  background: var(--p-input);
+  border: 1px solid var(--p-line);
+  border-radius: var(--p-radius);
+  color: var(--p-fg-subtle);
+}
+
+.preview-url:focus-within {
+  border-color: var(--p-focus);
+}
+
+.preview-url .preview-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.preview-url input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--p-fg);
+  font: var(--text-xs, 12px) / 1 var(--p-mono);
+}
+
+.preview-port {
+  height: var(--p-control);
+  padding: 0 var(--space-1_5, 6px);
+  background: none;
+  border: 1px solid var(--p-line);
+  border-radius: var(--p-radius);
+  color: var(--p-fg);
+  font: 500 var(--text-xs, 12px) / 1 var(--p-mono);
+}
+
+.preview-viewports {
+  display: inline-flex;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--p-line);
+  border-radius: var(--p-radius);
+}
+
+.preview-bar .preview-viewports button {
+  width: 24px;
+  height: calc(var(--p-control) - 6px);
+}
+
+.preview-bar .preview-viewports button.is-on {
+  background: var(--p-active);
+  color: var(--p-fg);
+}
+
+.preview-bar .preview-errors-toggle {
+  display: inline-flex;
+  gap: 3px;
+  width: auto;
+  padding: 0 6px;
+  color: var(--p-danger);
+  font: 500 var(--text-xs, 12px) / 1 var(--p-mono);
+}
+
+.preview-bar .preview-task[data-status="running"] {
+  color: var(--ok, #4cd08c);
+}
+
+.preview-error-list {
+  flex: none;
+  max-height: 96px;
+  margin: 0;
+  padding: var(--space-1_5, 6px) var(--space-2_5, 10px);
+  overflow: auto;
+  list-style: none;
+  border-bottom: 1px solid var(--p-line);
+  color: var(--p-danger);
+  font: var(--text-xs, 12px) / 1.5 var(--p-mono);
+  white-space: pre-wrap;
+}
+
+.preview-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  overflow: auto;
+  background: var(--p-stage);
+}
+
+.preview-frame {
+  flex: none;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.preview-frame.hidden {
+  display: none;
+}
+
+.preview-stage[data-viewport="tablet"] .preview-frame {
+  width: 768px;
+  height: 1024px;
+}
+
+.preview-stage[data-viewport="phone"] .preview-frame {
+  width: 390px;
+  height: 844px;
+}
+
+.preview-stage:not([data-viewport="desktop"]) .preview-frame {
+  margin: var(--space-3, 12px);
+  border: 1px solid var(--p-line);
+  border-radius: var(--radius-md, 8px);
+}
+
+.preview-empty {
+  align-self: center;
+  max-width: 44ch;
+  padding: var(--space-4, 16px);
+  color: var(--p-fg-muted);
+  text-align: center;
+}
+
+.preview-task-output {
+  max-height: 160px;
+  margin: 0;
+  overflow: auto;
+  color: var(--p-fg-subtle);
+  font: var(--text-2xs, 11px) / 1.5 var(--p-mono);
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  .preview-bar {
+    min-height: 48px;
+  }
+
+  .preview-bar button {
+    width: 36px;
+    height: 36px;
+  }
+
+  .preview-bar .preview-viewports {
+    display: none;
+  }
+}

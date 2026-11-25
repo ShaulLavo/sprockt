@@ -35,10 +35,11 @@ src/
   editor/             EditorPane, tabs, EditorStore, file buffers, theme, plugin mount hook
   search/             quick open (fuzzy file finder) and project search, run in the page
   terminal/           TerminalPane, Ghostty + bash-web session
-  preview/            PreviewTransport seam, PreviewPane
+  preview/            PreviewTransport seam, mounted transport and its service worker, the client
+                      script for previewed pages, PreviewPane and its toolbar
   templates/          (slice 1) starter catalog and file sets
   importer/           (slice 4) GitHub import, install and dev-script detection, share links
-  tasks/              (slice 5) dev-server detection and the cross-tab dev-server owner
+  tasks/              the dev-server task and dev-script detection; (slice 7) its cross-tab owner
 e2e/                  Playwright specs; helpers.ts is the shared fixture
 scripts/              fetch-guests, check-javascript
 ```
@@ -195,25 +196,68 @@ caching and `Access-Control-Allow-Origin: *`. The packages do not name them yet:
 
 ## Seams for the sibling lanes
 
-**Preview** (`preview/transport.ts`). The pane asks a `PreviewTransport` for everything:
-`servers()`, `subscribe()`, `frameUrl(port, path)`, `tabUrl(port, path)`, `onReloadNeeded()`.
-A transport belongs to one workspace, and the workspace id is part of every route it builds:
-two workspaces that both run a server on port 5173 never see each other's HTTP or WebSocket
-traffic. Milestone 1 ships an inactive transport. There are two real ones:
+**Preview** (`preview/transport.ts`). The pane asks a `PreviewTransport` for everything. The
+runtime reports listening ports to it (`register`, `unregister`; boot passes them from
+bun-wasm's `network.listening` hook). The pane reads `servers()` and `subscribe()`, builds
+URLs with `frameUrl(port, path)` and `tabUrl(port, path)`, and turns what a frame reports back
+into a place with `locate(href)` and `ownsOrigin(origin, port)`. A transport belongs to one
+workspace, and the workspace id is part of every route it builds: two workspaces that both run
+a server on port 5173 never see each other's HTTP or WebSocket traffic.
+`createPreviewTransport(workspace)` in `preview/index.ts` picks one:
 
-- `mounted` (slice 5): Waffle's `PreviewRouter` plus `waffle/browser/service-worker`, serving
-  `/__preview/<workspace>/<port>/` on the IDE's own origin. The service worker asks only the
-  tabs that have that workspace open. A mounted preview shares the IDE's origin, so the
-  previewed code can reach the workbench and its IndexedDB. **It is a development stopgap for
-  trusted, local projects only.** It is selected by a build-time setting that production
-  builds do not set, and it must not serve an imported project.
+- `mounted` (`preview/mounted.ts`, `preview/sw.ts`): Waffle's `PreviewRouter` plus
+  `waffle/browser/service-worker`, serving `/__preview/<workspace>/<port>/` on the IDE's own
+  origin. A mounted preview shares the IDE's origin, so the previewed code can reach the
+  workbench and its IndexedDB. **It is a development stopgap for trusted, local projects
+  only.** It exists under `vite dev` and in a build made with `VITE_SPROCKT_PREVIEWS=mounted`
+  (the test build in CI). A public build does not set that and gets the inactive transport.
 - `isolated` (preview-origins lane): bun-wasm's planned `RootPreviews`, whose `url(port, path)`
   returns `https://<id>-<port>-pv.sprockt.dev/…`, where `<id>` is derived from the workspace.
   Each server gets its own origin, which is what keeps a previewed project away from the IDE.
   **Isolated origins are required before any public deploy** (see "Before public deploy").
+  It needs a `createIsolatedPreviewTransport` beside the mounted one and a branch in
+  `createPreviewTransport`; the pane does not change.
 
 `tabUrl` exists because an isolated preview opened directly in Safari cannot reach the IDE and
 has to go through a page on our origin.
+
+How the mounted transport works:
+
+- **Routing by workspace.** One service worker is registered for `/__preview/`. It keeps one
+  Waffle router per workspace and tags every request it passes to a tab with the workspace
+  (`preview/host-protocol.ts`). A tab answers only for the workspace it has open and declines
+  anything else at once. Tabs also tell the worker which workspace they host, so it asks the
+  right tab first; that list only orders the asking and is rebuilt when the worker restarts.
+- **Requests outside the mount.** A previewed page asks for `/src/main.tsx` or `/@vite/client`
+  at the root of our origin. The worker sees which page asked and sends the request to that
+  page's server.
+- **The client script.** The worker adds `/preview-client.js` to every HTML response, right
+  after `<head>` (`preview/html.ts`). It gives the page a `WebSocket` that reaches its own
+  server: the worker hands it a byte channel, and `preview/websocket-frames.ts` speaks the
+  WebSocket protocol over it. That is what makes hot reload work. It also reports the page's
+  location and errors to the pane and takes "reload" and "go to" from it (`preview/bridge.ts`,
+  `window.postMessage`, the same for an isolated origin), and keeps links and redirects to
+  `/path` inside the mount.
+- **The pane** (`preview/PreviewPane.tsx`) keeps its own back and forward list
+  (`preview/history.ts`). A frame's browser history is shared with the IDE page, so stepping
+  through it could walk the IDE itself back.
+- **The two scripts** (`/preview-sw.js`, `/preview-client.js`) are built as classic scripts by
+  `preview/vite-plugin.ts`: a service worker has to sit at a fixed path above its scope, and
+  module service workers are not available in every browser we support.
+
+What a mounted preview cannot do, and an isolated origin can: run an app whose client router
+owns `/` (the page lives under `/__preview/…`), load cross-origin files that send no CORP or
+CORS header (the IDE is cross-origin isolated and its frames have to be too), and keep cookies
+and storage apart from the IDE's.
+
+**Dev server task** (`tasks/dev-server.ts`). The pane's start button asks the importer's
+project detection (`importer/detect`, through `tasks/detect.ts`) what starts this project: a
+`dev`, `start` or `serve` script, or a server entry file. It runs `bun install` first when the
+project has a `package.json` and no `node_modules`, then the command, in its own shell on the
+workspace's runtime. It is `running` once a port listens. Terminals are separate shells, so
+stopping the task never touches what was started by hand. The task runs in the tab that
+started it; standing in line for it through `workspace/coordinator.ts`, so that one tab of
+several owns the server, is the next step once tabs share a workspace.
 
 **Language servers** (`editor/plugins.ts`). `registerEditorPlugins(provider)`: a provider gets
 `{ runtime, projectRoot, rootUri, signal, openFile }` and returns Singapore `EditorPlugin`s, or
@@ -322,7 +366,10 @@ where the bytes live.
   flow on the iPhone simulator on the M1 Mac (slice 7).
 - **CI**: two jobs. `check` runs format, lint, the JavaScript rule, types and unit tests.
   `browser` builds once and runs the three-browser suite. Caches: Bun's install cache, the
-  guests (keyed on `guests.lock.json`) and Playwright's browsers.
+  guests (keyed on `guests.lock.json`) and Playwright's browsers. The browser job builds with
+  `VITE_SPROCKT_PREVIEWS=mounted`, so `e2e/preview.spec.ts` and `e2e/hmr.spec.ts` have a
+  transport; run them locally the same way. The hot-reload test installs React and Vite from
+  the npm registry inside the browser, so it needs the network.
 
 ## Known gaps
 
@@ -368,6 +415,11 @@ where the bytes live.
    - Waffle returns a failed change to its caller and keeps the same error to throw at the next
      flush. FileService retries a flush that throws an error its own operation already reported,
      and lets any other error fail the save state; Waffle should report a failure once.
+6. **Only Bun's listeners are previewed, and only in the tab that runs them.** Ports are
+   reported by bun-wasm's adapter, so a server started by another kind of program would not
+   appear. A dev server belongs to the tab that started it; while tabs do not share a
+   workspace (gap 1) there is no second tab to share it with, and the cross-tab owner
+   (slice 7) is not built.
 
 6. **A save is unsaved until storage holds it.** Waffle acknowledges a write from memory. If its
    flush fails, or the files come back from storage (a hosting tab closed) without it, the

@@ -1,6 +1,26 @@
 import { expect, test as base, type Page } from "@playwright/test";
 
 /**
+ * Where the workbench stood when a test failed: a test that times out while waiting says
+ * nothing about why, and "still booting", "boot failed" and "open elsewhere" look the same.
+ */
+async function workbenchState(page: Page): Promise<string> {
+  const read = page.evaluate(() => {
+    const parts = [
+      `path=${location.pathname}`,
+      `stage=${document.querySelector("[data-testid=workbench]")?.getAttribute("data-stage")}`,
+      `workspace=${globalThis.sprockt?.workspace !== undefined}`,
+      `terminal=${document.querySelector("[data-testid=terminal-state]")?.textContent}`,
+      `boot-error=${document.querySelector("[data-testid=boot-error]")?.textContent}`,
+      `asks=${document.querySelector("[data-testid=workspace-busy]") !== null}`,
+    ];
+    return parts.join(" ");
+  });
+  const silent = new Promise<string>((resolve) => setTimeout(resolve, 5000, "the page did not answer"));
+  return Promise.race([read, silent]).catch((error: Error) => `the page could not be read: ${error.message}`);
+}
+
+/**
  * Every spec imports `test` from here. When a test fails, the page's errors are attached to the
  * report, because a boot failure in a worker is otherwise invisible.
  */
@@ -13,7 +33,9 @@ export const test = base.extend<{ pageErrors: string[] }>({
         if (message.type() === "error") errors.push(`console: ${message.text()}`);
       });
       await use(errors);
-      if (testInfo.status === testInfo.expectedStatus || errors.length === 0) return;
+      if (testInfo.status === testInfo.expectedStatus) return;
+      console.error(`[${testInfo.project.name}] ${testInfo.title}: ${await workbenchState(page)}`);
+      if (errors.length === 0) return;
       await testInfo.attach("page-errors", { body: errors.join("\n"), contentType: "text/plain" });
       console.error(`[${testInfo.project.name}] page errors:\n${errors.join("\n")}`);
     },
