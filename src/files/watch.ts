@@ -2,33 +2,19 @@
 // by Bun, or by another tab attached to the same workspace.
 import type { Runtime } from "waffle";
 import { FilesystemClient } from "waffle/fs/client";
-import type { FilesystemWatch } from "waffle/fs/watch";
 
 type OnChange = (names: readonly (string | null)[]) => void;
 
-/** Reports one watch's batches until it ends, and says how it ended. */
-async function drain(watch: FilesystemWatch, onChange: OnChange): Promise<"overflow" | "closed"> {
+async function pump(client: FilesystemClient, signal: AbortSignal, onChange: OnChange): Promise<void> {
+  const root = await client.asyncCall("preopen", ["/"]);
+  const watch = await client.watch(root, { recursive: true, signal });
   for (;;) {
     // Batches arrive one after another; there is nothing to run in parallel.
     // oxlint-disable-next-line no-await-in-loop
     const batch = await watch.next();
-    if (batch.kind === "events") onChange(batch.events.map((event) => event.name));
-    else return batch.kind;
-  }
-}
-
-async function pump(client: FilesystemClient, signal: AbortSignal, onChange: OnChange): Promise<void> {
-  const root = await client.asyncCall("preopen", ["/"]);
-  while (!signal.aborted) {
-    // oxlint-disable-next-line no-await-in-loop
-    const watch = await client.watch(root, { recursive: true, signal });
-    // oxlint-disable-next-line no-await-in-loop
-    if ((await drain(watch, onChange)) === "closed") return;
-    // An overflow ends a watch (Waffle host ABI): some events were lost, which null stands for,
-    // and a new watch takes over. A tab that hosted the files closing causes one.
-    onChange([null]);
-    // oxlint-disable-next-line no-await-in-loop
-    await watch.close();
+    if (batch.kind === "closed") return;
+    // After an overflow some events are lost: null stands for "something, anywhere".
+    onChange(batch.kind === "overflow" ? [null] : batch.events.map((event) => event.name));
   }
 }
 
