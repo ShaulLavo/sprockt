@@ -5,6 +5,7 @@ import {
   normalizeWorkspaceName,
   parseWorkspaceMeta,
   serializeWorkspaceMeta,
+  updateWorkspaceMetaName,
 } from "./workspace-meta";
 
 describe("workspace metadata", () => {
@@ -44,5 +45,37 @@ describe("workspace metadata", () => {
     expect(formatRelativeTime("2026-11-22T12:00:00.000Z", now)).toBe("3 d ago");
     expect(formatRelativeTime("2026-11-10T12:00:00.000Z", now)).toBe("Nov 10");
     expect(formatRelativeTime("not-a-date", now)).toBe("");
+  });
+
+  test("parses incomplete state, createdAt fallback, and preserves extra fields on rename", () => {
+    const imported = parseWorkspaceMeta(
+      JSON.stringify({
+        name: "bash-web",
+        createdAt: "2026-11-25T18:00:00.000Z",
+        state: "importing",
+        source: { kind: "github", owner: "ShaulLavo", repo: "bash-web", ref: "main" },
+      }),
+    );
+    expect(imported).toEqual({
+      name: "bash-web",
+      template: "github",
+      created: "2026-11-25T18:00:00.000Z",
+      lastOpened: "2026-11-25T18:00:00.000Z",
+      state: "importing",
+      source: { kind: "github", owner: "ShaulLavo", repo: "bash-web", ref: "main", subdir: "" },
+    });
+
+    const renamed = updateWorkspaceMetaName(
+      JSON.stringify({
+        name: "old",
+        template: "github",
+        created: "2026-11-25T18:00:00.000Z",
+        lastOpened: "2026-11-25T18:00:00.000Z",
+        detected: { framework: "vite" },
+      }),
+      "new-name",
+    );
+    expect(renamed.meta.name).toBe("new-name");
+    expect(JSON.parse(renamed.json)).toMatchObject({ name: "new-name", detected: { framework: "vite" } });
   });
 });

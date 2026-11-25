@@ -152,10 +152,10 @@ const NEXT_APP_FILES: Readonly<Record<string, string>> = {
     "start": "NEXT_TELEMETRY_DISABLED=1 next start --hostname 127.0.0.1 --port 5173"
   },
   "dependencies": {
-    "@next/swc-wasm-nodejs": "15.5.6",
-    "next": "15.5.6",
-    "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "@next/swc-wasm-nodejs": "15.5.29",
+    "next": "15.5.29",
+    "react": "19.1.10",
+    "react-dom": "19.1.10"
   },
   "devDependencies": {
     "@types/node": "22.18.11",

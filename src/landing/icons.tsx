@@ -41,7 +41,8 @@ export type IconName =
   | "tabs"
   | "cpu"
   | "x-circle"
-  | "code";
+  | "code"
+  | "menu";
 
 function iconBody(name: IconName): JSX.Element {
   switch (name) {
@@ -262,6 +263,8 @@ function iconBody(name: IconName): JSX.Element {
       );
     case "code":
       return <path d="m8.5 7-5 5 5 5M15.5 7l5 5-5 5" />;
+    case "menu":
+      return <path d="M4 7h16M4 12h16M4 17h16" />;
   }
 }
 

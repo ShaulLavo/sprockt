@@ -10,6 +10,27 @@ function stripGitSuffix(repo: string): string {
   return repo.endsWith(".git") && repo.length > 4 ? repo.slice(0, -4) : repo;
 }
 
+function decodeSegment(raw: string): string | undefined {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return undefined;
+  }
+  if (!decoded || decoded === "." || decoded === ".." || decoded.includes("\0")) return undefined;
+  return decoded;
+}
+
+function decodeSegments(parts: readonly string[]): string[] | undefined {
+  const decoded: string[] = [];
+  for (const part of parts) {
+    const value = decodeSegment(part);
+    if (!value) return undefined;
+    decoded.push(value);
+  }
+  return decoded;
+}
+
 function extractPathSegments(raw: string): string[] | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
@@ -24,15 +45,31 @@ function extractPathSegments(raw: string): string[] | undefined {
       return undefined;
     }
     if (!GITHUB_HOSTS.has(url.hostname.toLowerCase())) return undefined;
-    return url.pathname.split("/").filter(Boolean);
+    // Decode the raw path before URL dot-segment normalization collapses `/..` or `/%2e%2e`.
+    const withoutAuthority = (hasScheme ? trimmed : `https://${trimmed}`).replace(/^https?:\/\/[^/?#]+/i, "");
+    const rawPathname = withoutAuthority.split(/[?#]/, 1)[0] ?? "";
+    return decodeSegments(rawPathname.split("/").filter(Boolean));
   }
 
   if (trimmed.includes("://") || trimmed.includes(" ")) return undefined;
   const clean = trimmed.split(/[?#]/, 1)[0] ?? "";
-  return clean
-    .replace(/^\/+|\/+$/g, "")
-    .split("/")
-    .filter(Boolean);
+  return decodeSegments(
+    clean
+      .replace(/^\/+|\/+$/g, "")
+      .split("/")
+      .filter(Boolean),
+  );
+}
+
+function buildTreeRoute(
+  owner: string,
+  repo: string,
+  branch: string,
+  subdirParts: readonly string[],
+): GithubRoute | undefined {
+  if (subdirParts.some((part) => part.includes("/"))) return undefined;
+  const subdir = subdirParts.join("/");
+  return subdir ? { kind: "github", owner, repo, branch, subdir } : { kind: "github", owner, repo, branch };
 }
 
 export function parseGithubInput(raw: string): GithubRoute | undefined {
@@ -42,25 +79,16 @@ export function parseGithubInput(raw: string): GithubRoute | undefined {
   const [owner, rawRepo, marker, branch] = segments;
   if (!owner || !rawRepo) return undefined;
   const repo = stripGitSuffix(rawRepo);
+  if (!repo || repo === "." || repo === "..") return undefined;
 
-  const candidate: GithubRoute =
+  const candidate =
     segments.length === 2
-      ? { kind: "github", owner, repo }
+      ? ({ kind: "github", owner, repo } satisfies GithubRoute)
       : marker === "tree" && branch
         ? buildTreeRoute(owner, repo, branch, segments.slice(4))
-        : (undefined as never);
+        : undefined;
 
   if (!candidate) return undefined;
   const parsed = parseRoute(routePath(candidate));
   return parsed.kind === "github" ? parsed : undefined;
-}
-
-function buildTreeRoute(
-  owner: string,
-  repo: string,
-  branch: string,
-  subdirParts: readonly string[],
-): GithubRoute {
-  const subdir = subdirParts.join("/");
-  return subdir ? { kind: "github", owner, repo, branch, subdir } : { kind: "github", owner, repo, branch };
 }

@@ -52,6 +52,21 @@ describe("template catalog", () => {
     expect(sqlite?.files["server.ts"]).toContain("Bun.serve");
   });
 
+  test("next-app template pins a Next.js 15.5 release patched for CVE-2025-66478 with matching swc-wasm", () => {
+    const nextApp = findTemplate("next-app");
+    expect(nextApp).toBeDefined();
+    const pkg = JSON.parse(nextApp?.files["package.json"] ?? "{}") as {
+      dependencies?: Record<string, string>;
+    };
+    const nextVersion = pkg.dependencies?.next ?? "";
+    const swcVersion = pkg.dependencies?.["@next/swc-wasm-nodejs"] ?? "";
+    const [major, minor, patch] = nextVersion.split(".").map(Number);
+    expect(major).toBe(15);
+    expect(minor).toBe(5);
+    expect(patch).toBeGreaterThanOrEqual(7);
+    expect(swcVersion).toBe(nextVersion);
+  });
+
   test("blank template starts with no files", () => {
     expect(Object.keys(BLANK_TEMPLATE.files)).toEqual([]);
   });

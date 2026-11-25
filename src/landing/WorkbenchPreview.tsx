@@ -1,13 +1,13 @@
 // Lightweight static+interactive Circuit workbench showcase for the landing hero.
-// Renders the actual Vite + React starter template source and output with zero runtime JS.
+// Renders the real Vite + React starter template source and output with zero runtime JS.
 import { createSignal } from "solid-js";
 import { Icon } from "./icons";
-import { LOGOS } from "./logos";
+import { ReactMark } from "./logos";
 
-type PhonePane = "files" | "code" | "preview" | "terminal";
+type PhonePane = "app" | "files" | "code" | "terminal";
 
 export function WorkbenchPreview() {
-  const [pane, setPane] = createSignal<PhonePane>("code");
+  const [pane, setPane] = createSignal<PhonePane>("app");
   const [count, setCount] = createSignal(3);
 
   return (
@@ -47,7 +47,7 @@ export function WorkbenchPreview() {
           </div>
         </div>
 
-        {/* Activity bar */}
+        {/* Activity bar: badge 2 matches the 2 changed files (Counter.tsx U + App.tsx M) */}
         <div class="lp-wb-activitybar" aria-hidden="true">
           <span class="lp-wb-act is-active">
             <Icon name="files" />
@@ -98,6 +98,11 @@ export function WorkbenchPreview() {
               <span class="lp-wb-name">node_modules</span>
             </li>
             <li class="lp-wb-row is-dir" style={{ "--depth": 0 }}>
+              <Icon name="chev-r" class="lp-wb-chev" />
+              <Icon name="folder" class="lp-wb-ft" />
+              <span class="lp-wb-name">public</span>
+            </li>
+            <li class="lp-wb-row is-dir" style={{ "--depth": 0 }}>
               <Icon name="chev-d" class="lp-wb-chev" />
               <Icon name="folder" class="lp-wb-ft" />
               <span class="lp-wb-name">src</span>
@@ -111,6 +116,12 @@ export function WorkbenchPreview() {
             </li>
             <li class="lp-wb-row" style={{ "--depth": 1 }}>
               <span class="lp-wb-chev-space" />
+              <span class="lp-wb-badge-ft lp-ft-tsx">TX</span>
+              <span class="lp-wb-name">Counter.tsx</span>
+              <span class="lp-wb-git lp-git-u">U</span>
+            </li>
+            <li class="lp-wb-row" style={{ "--depth": 1 }}>
+              <span class="lp-wb-chev-space" />
               <span class="lp-wb-badge-ft lp-ft-css">#</span>
               <span class="lp-wb-name">App.css</span>
             </li>
@@ -121,6 +132,11 @@ export function WorkbenchPreview() {
             </li>
             <li class="lp-wb-row" style={{ "--depth": 0 }}>
               <span class="lp-wb-chev-space" />
+              <span class="lp-wb-badge-ft lp-ft-ts">lk</span>
+              <span class="lp-wb-name">bun.lock</span>
+            </li>
+            <li class="lp-wb-row" style={{ "--depth": 0 }}>
+              <span class="lp-wb-chev-space" />
               <span class="lp-wb-badge-ft lp-ft-html">&lt;&gt;</span>
               <span class="lp-wb-name">index.html</span>
             </li>
@@ -128,6 +144,11 @@ export function WorkbenchPreview() {
               <span class="lp-wb-chev-space" />
               <span class="lp-wb-badge-ft lp-ft-json">{"{}"}</span>
               <span class="lp-wb-name">package.json</span>
+            </li>
+            <li class="lp-wb-row" style={{ "--depth": 0 }}>
+              <span class="lp-wb-chev-space" />
+              <span class="lp-wb-badge-ft lp-ft-json">{"{}"}</span>
+              <span class="lp-wb-name">tsconfig.json</span>
             </li>
             <li class="lp-wb-row" style={{ "--depth": 0 }}>
               <span class="lp-wb-chev-space" />
@@ -143,7 +164,7 @@ export function WorkbenchPreview() {
           </div>
         </div>
 
-        {/* Editor: exact lines from the Vite + React starter template, zero clipping */}
+        {/* Editor */}
         <div class="lp-wb-pane lp-wb-editor">
           <div class="lp-wb-tabs" aria-hidden="true">
             <span class="lp-wb-tab is-active">
@@ -154,8 +175,8 @@ export function WorkbenchPreview() {
               </span>
             </span>
             <span class="lp-wb-tab">
-              <span class="lp-wb-badge-ft lp-ft-css">#</span>
-              <span>App.css</span>
+              <span class="lp-wb-badge-ft lp-ft-tsx">TX</span>
+              <span>Counter.tsx</span>
             </span>
             <span class="lp-wb-tab">
               <span class="lp-wb-badge-ft lp-ft-ts">TS</span>
@@ -219,17 +240,13 @@ export function WorkbenchPreview() {
               </li>
               <li class="lp-wb-line">
                 <span class="lp-wb-ln">6</span>
-                <code class="lp-wb-lc" />
-              </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">7</span>
                 <code class="lp-wb-lc">
                   {"  "}
                   <span class="sk">return</span> <span class="sp">(</span>
                 </code>
               </li>
               <li class="lp-wb-line">
-                <span class="lp-wb-ln">8</span>
+                <span class="lp-wb-ln">7</span>
                 <code class="lp-wb-lc">
                   {"    "}
                   <span class="sp">&lt;</span>
@@ -240,7 +257,7 @@ export function WorkbenchPreview() {
                 </code>
               </li>
               <li class="lp-wb-line">
-                <span class="lp-wb-ln">9</span>
+                <span class="lp-wb-ln">8</span>
                 <code class="lp-wb-lc">
                   {"      "}
                   <span class="sp">&lt;</span>
@@ -251,7 +268,7 @@ export function WorkbenchPreview() {
                 </code>
               </li>
               <li class="lp-wb-line is-current">
-                <span class="lp-wb-ln">10</span>
+                <span class="lp-wb-ln">9</span>
                 <code class="lp-wb-lc">
                   {"      "}
                   <span class="sp">&lt;</span>
@@ -262,7 +279,7 @@ export function WorkbenchPreview() {
                 </code>
               </li>
               <li class="lp-wb-line is-added">
-                <span class="lp-wb-ln">11</span>
+                <span class="lp-wb-ln">10</span>
                 <code class="lp-wb-lc">
                   {"        "}
                   <span class="sa">onClick</span>
@@ -276,16 +293,16 @@ export function WorkbenchPreview() {
                   <span class="sp">&gt;</span>
                 </code>
               </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">12</span>
+              <li class="lp-wb-line lp-wb-line-extra">
+                <span class="lp-wb-ln">11</span>
                 <code class="lp-wb-lc">
                   {"        "}count is <span class="sp">{"{"}</span>
                   <span class="sv">n</span>
                   <span class="sp">{"}"}</span>
                 </code>
               </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">13</span>
+              <li class="lp-wb-line lp-wb-line-extra">
+                <span class="lp-wb-ln">12</span>
                 <code class="lp-wb-lc">
                   {"      "}
                   <span class="sp">&lt;/</span>
@@ -293,8 +310,8 @@ export function WorkbenchPreview() {
                   <span class="sp">&gt;</span>
                 </code>
               </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">14</span>
+              <li class="lp-wb-line lp-wb-line-extra">
+                <span class="lp-wb-ln">13</span>
                 <code class="lp-wb-lc">
                   {"    "}
                   <span class="sp">&lt;/</span>
@@ -302,15 +319,15 @@ export function WorkbenchPreview() {
                   <span class="sp">&gt;</span>
                 </code>
               </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">15</span>
+              <li class="lp-wb-line lp-wb-line-extra">
+                <span class="lp-wb-ln">14</span>
                 <code class="lp-wb-lc">
                   {"  "}
                   <span class="sp">);</span>
                 </code>
               </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">16</span>
+              <li class="lp-wb-line lp-wb-line-extra">
+                <span class="lp-wb-ln">15</span>
                 <code class="lp-wb-lc">
                   <span class="sp">{"}"}</span>
                 </code>
@@ -319,7 +336,7 @@ export function WorkbenchPreview() {
           </div>
         </div>
 
-        {/* Preview: matches the real Vite + React starter template */}
+        {/* Preview: real Vite + React starter output (no repeated Bun mascot) */}
         <div class="lp-wb-pane lp-wb-preview">
           <div class="lp-wb-preview-bar" aria-hidden="true">
             <span class="lp-wb-nav-btns">
@@ -348,11 +365,7 @@ export function WorkbenchPreview() {
           <div class="lp-wb-preview-stage">
             <div class="lp-wb-demo">
               <div class="lp-wb-demo-brand">
-                <img src={LOGOS.react} alt="" width="34" height="30" />
-                <span class="lp-wb-demo-plus" aria-hidden="true">
-                  +
-                </span>
-                <img src={LOGOS.bun} alt="" width="32" height="28" />
+                <ReactMark class="lp-wb-demo-react" />
               </div>
               <div class="lp-wb-demo-title">Hello from bun.wasm</div>
               <p class="lp-wb-demo-tagline">
@@ -368,7 +381,7 @@ export function WorkbenchPreview() {
           </div>
         </div>
 
-        {/* Terminal */}
+        {/* Terminal: bun install followed by dev server on http://localhost:5173/ */}
         <div class="lp-wb-pane lp-wb-terminal">
           <div class="lp-wb-term-tabs" aria-hidden="true">
             <span class="lp-wb-ttab">
@@ -398,16 +411,20 @@ export function WorkbenchPreview() {
           </div>
           <div class="lp-wb-term-scroll">
             <pre class="lp-wb-term-out">
-              <span class="a-prompt">~/vite-react</span> <span class="a-dim">$</span> bun run dev
+              <span class="a-prompt">~/vite-react</span> <span class="a-dim">$</span> bun install
               {"\n"}
-              <span class="a-m">$</span> <span class="a-dim">vite --host 127.0.0.1 --port 5173</span>
-              {"\n\n  "}
+              <span class="a-g">+</span> react@19.3.1{"  "}
+              <span class="a-g">+</span> vite@8.3.5{"  "}
+              <span class="a-g">+</span> @vitejs/plugin-react@6.1.2
+              {"\n"}
+              <span class="a-prompt">~/vite-react</span> <span class="a-dim">$</span> bun run dev
+              {"\n  "}
               <span class="a-g a-b">VITE</span> <span class="a-g">v8.3.5</span>{" "}
               <span class="a-dim">ready</span>
-              {"\n\n  "}
+              {"   "}
               <span class="a-g">➜</span> <span class="a-b">Local</span>:{" "}
               <span class="a-c">
-                http://127.0.0.1:<span class="a-b">5173</span>/
+                http://localhost:<span class="a-b">5173</span>/
               </span>
               {"\n"}
               <span class="a-dim">10:42:18</span> <span class="a-c a-b">[vite]</span>{" "}
@@ -426,10 +443,10 @@ export function WorkbenchPreview() {
           </span>
           <span class="lp-wb-sb-item">
             <Icon name="cpu" />
-            Bun 1.4.4 in WebAssembly
+            Bun in WebAssembly
           </span>
           <span class="lp-wb-sb-fill" />
-          <span class="lp-wb-sb-item">Ln 10, Col 34</span>
+          <span class="lp-wb-sb-item">Ln 9, Col 34</span>
           <span class="lp-wb-sb-item">UTF-8</span>
           <span class="lp-wb-sb-item">TypeScript JSX</span>
           <span class="lp-wb-sb-item lp-wb-sb-live">
@@ -437,17 +454,17 @@ export function WorkbenchPreview() {
           </span>
         </div>
 
-        {/* Phone pane switcher */}
+        {/* Phone pane switcher: default "App" stacks running preview above 8 lines of code */}
         <div class="lp-wb-pane-switch" role="tablist" aria-label="Preview panes">
           <button
             type="button"
             role="tab"
-            aria-selected={pane() === "files"}
-            class={pane() === "files" ? "is-active" : undefined}
-            onClick={() => setPane("files")}
+            aria-selected={pane() === "app"}
+            class={pane() === "app" ? "is-active" : undefined}
+            onClick={() => setPane("app")}
           >
-            <Icon name="files" />
-            <span>Files</span>
+            <Icon name="globe" />
+            <span>Preview</span>
           </button>
           <button
             type="button"
@@ -462,12 +479,12 @@ export function WorkbenchPreview() {
           <button
             type="button"
             role="tab"
-            aria-selected={pane() === "preview"}
-            class={pane() === "preview" ? "is-active" : undefined}
-            onClick={() => setPane("preview")}
+            aria-selected={pane() === "files"}
+            class={pane() === "files" ? "is-active" : undefined}
+            onClick={() => setPane("files")}
           >
-            <Icon name="globe" />
-            <span>Preview</span>
+            <Icon name="files" />
+            <span>Files</span>
           </button>
           <button
             type="button"
