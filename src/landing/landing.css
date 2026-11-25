@@ -1,16 +1,20 @@
-/* The landing page. Built on the tokens in src/styles.css: enamel grounds, ink-and-paper
-   actions, the lamp color for what is live, and tabs drawn as teeth. Every section is one
-   screen: its heading first, then one thing to look at or do. */
+/* The landing page. Built on the tokens in src/styles.css: two enamel grounds a clear step
+   apart, the lamp green for the one primary action on each screen and for what is live, and
+   tabs drawn as teeth. The product itself sits directly under the headline. */
 
 .landing-page {
   --lp-wrap: 1200px;
   --lp-gutter: 48px;
   --lp-nav-h: 64px;
-  --lp-padt: 120px;
-  --lp-padb: 72px;
-  --lp-frame-shadow: light-dark(0 28px 60px -32px rgb(13 24 19 / 0.35), 0 28px 60px -28px rgb(0 0 0 / 0.7));
+  --lp-pad: 104px;
+  /* A raised surface on either ground: cards, fields, the specimens. */
+  --lp-card: light-dark(#ffffff, #14201b);
+  --lp-frame-shadow: light-dark(0 28px 60px -32px rgb(13 24 19 / 0.32), 0 28px 60px -28px rgb(0 0 0 / 0.7));
   min-height: 100%;
   font-size: var(--text-md);
+  /* Running text and buttons use a slightly wide cut of the face, so they read as the same
+     family as the expanded headlines and never as a system grotesque. */
+  font-stretch: 108%;
 }
 
 html:has(.landing-page),
@@ -21,7 +25,7 @@ body:has(.landing-page),
 }
 
 html:has(.landing-page) {
-  scroll-padding-top: 0;
+  scroll-padding-top: var(--lp-nav-h, 64px);
   overscroll-behavior: auto;
 }
 
@@ -93,7 +97,7 @@ body:has(.landing-page) {
   margin: 0 auto;
 }
 
-/* The lamp: a lit dot for anything running or shared right now. */
+/* The lamp: a lit dot for anything running right now. */
 .lp-lamp,
 .lp-wb-lamp {
   flex: none;
@@ -104,7 +108,12 @@ body:has(.landing-page) {
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
 }
 
-/* ───────────── Buttons ───────────── */
+.lp-phone-only {
+  display: none;
+}
+
+/* ───────────── Buttons ───────────── One radius, one face, three weights of presence:
+   the solid lamp-green primary (one per screen), the outline, the quiet. */
 
 .lp-btn {
   display: inline-flex;
@@ -131,9 +140,9 @@ body:has(.landing-page) {
 }
 
 .lp-btn-lg {
-  height: 48px;
-  padding: 0 var(--space-6);
-  font-size: var(--text-md);
+  height: 52px;
+  padding: 0 var(--space-5);
+  font-size: 16px;
 }
 
 .lp-btn-primary {
@@ -210,6 +219,7 @@ body:has(.landing-page) {
   font-weight: var(--weight-display);
   font-stretch: var(--display-stretch);
   letter-spacing: -0.02em;
+  white-space: nowrap;
 }
 
 /* The mark turns one tooth for each step of the boot that plays in the hero. */
@@ -226,18 +236,7 @@ body:has(.landing-page) {
   color: var(--fg-muted);
   font-size: 14px;
   font-weight: var(--weight-medium);
-}
-
-.lp-nav-links a,
-.lp-brand {
   white-space: nowrap;
-}
-
-/* The narrowest phones keep the mark and drop the word beside it. */
-@media (max-width: 359px) {
-  .lp-brand > span {
-    display: none;
-  }
 }
 
 .lp-nav-links a {
@@ -272,8 +271,7 @@ body:has(.landing-page) {
   height: 20px;
 }
 
-.lp-nav-menu,
-.lp-phone-only {
+.lp-nav-menu {
   display: none;
 }
 
@@ -292,7 +290,7 @@ body:has(.landing-page) {
   width: 32px;
   height: 32px;
   border-radius: var(--radius-xs);
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
   transition:
     color var(--dur-fast) var(--ease-out),
     background-color var(--dur-fast) var(--ease-out);
@@ -317,15 +315,13 @@ body:has(.landing-page) {
 /* ───────────── Sections ───────────── */
 
 .landing-page main > section {
-  display: flex;
-  min-height: 100svh;
-  padding: var(--lp-padt) 0 var(--lp-padb);
+  padding: var(--lp-pad) 0;
 }
 
 .lp-sec-head {
   display: grid;
   gap: var(--space-3);
-  margin-bottom: var(--space-8);
+  margin-bottom: var(--space-10);
 }
 
 .lp-sec-head h2,
@@ -336,6 +332,7 @@ body:has(.landing-page) {
   font-weight: var(--weight-display);
   letter-spacing: var(--tracking-display);
   line-height: var(--leading-tight);
+  text-wrap: balance;
 }
 
 .lp-sec-head h2 {
@@ -343,31 +340,29 @@ body:has(.landing-page) {
 }
 
 .lp-sec-head p {
-  max-width: 62ch;
+  max-width: 60ch;
   color: var(--fg-muted);
   font-size: var(--text-lg);
   line-height: 1.5;
 }
 
-/* ───────────── Hero ───────────── */
+/* ───────────── Hero: the claim, the controls, then the product ───────────── */
+
+.landing-page main > .lp-hero {
+  --lp-h1: clamp(40px, 5.95vw, 86px);
+  padding-top: calc(var(--lp-nav-h) + var(--space-10));
+}
 
 .lp-hero > .lp-wrap {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  gap: var(--space-16);
-  align-items: stretch;
+  gap: var(--space-10);
 }
 
-/* The words stand at the top of the screen and the repo bar on its floor, level with the foot
-   of the tab beside them. */
 .lp-hero-text {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.lp-hero {
-  --lp-h1: clamp(42px, 6.95vw, 104px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+  gap: var(--space-8) var(--space-12);
+  align-items: end;
 }
 
 .lp-hero h1 {
@@ -375,37 +370,45 @@ body:has(.landing-page) {
   line-height: 0.98;
 }
 
+/* The headline's full stop is the page's one lit tooth. */
+.lp-stop {
+  color: var(--accent);
+}
+
 .lp-lede {
-  max-width: 47ch;
-  margin-top: var(--space-6);
+  padding-bottom: 0.35em;
   color: var(--fg-muted);
-  font-size: 19px;
+  font-size: 18px;
   line-height: 1.5;
+}
+
+/* One rail: start, browse, or open a repo. */
+.lp-hero-controls {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3) var(--space-6);
 }
 
 .lp-hero-actions {
   display: flex;
-  flex-wrap: wrap;
   gap: var(--space-3);
-  margin-top: var(--space-8);
 }
 
-/* The repo bar: the second way in. Its button turns into a primary once there is a repo. */
 .lp-open {
-  width: 100%;
-  max-width: 600px;
-  margin-top: auto;
-  padding-top: var(--space-10);
+  position: relative;
+  min-width: 0;
 }
 
 .lp-open-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 56px;
+  height: 52px;
   padding: 0 var(--space-1_5) 0 var(--space-4);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--bg-input);
   transition:
     border-color var(--dur-fast) var(--ease-out),
@@ -451,8 +454,8 @@ body:has(.landing-page) {
   color: var(--fg-subtle);
 }
 
+/* Quiet until there is a repo to open; then it is the action. */
 .lp-open-submit {
-  height: 44px;
   border-color: var(--line-strong);
   color: var(--fg);
 }
@@ -475,7 +478,9 @@ body:has(.landing-page) {
 }
 
 .lp-open-error {
-  margin-top: var(--space-2);
+  position: absolute;
+  top: calc(100% + var(--space-1_5));
+  left: 0;
   color: var(--danger);
   font-size: 14px;
 }
@@ -484,10 +489,10 @@ body:has(.landing-page) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2) var(--space-6);
-  margin-top: var(--space-3);
+  gap: var(--space-1) var(--space-5);
   color: var(--fg-muted);
   font-size: 14px;
+  white-space: nowrap;
 }
 
 .lp-open-foot .lp-link {
@@ -511,12 +516,6 @@ body:has(.landing-page) {
   min-height: 36px;
 }
 
-.lp-tab-teeth {
-  display: flex;
-  align-items: flex-end;
-  min-width: 0;
-}
-
 .lp-tab-tooth {
   --tooth-bg: var(--bg-chrome);
   position: relative;
@@ -530,9 +529,9 @@ body:has(.landing-page) {
   padding: 0 calc(var(--tooth-flank) + var(--space-3));
   color: var(--fg-muted);
   font-size: var(--text-sm);
+  font-stretch: 100%;
   font-weight: var(--weight-semibold);
   white-space: nowrap;
-  transition: color var(--dur-fast) var(--ease-out);
 }
 
 .lp-tab-tooth::before,
@@ -542,26 +541,27 @@ body:has(.landing-page) {
   z-index: -1;
   inset: 0;
   clip-path: var(--tooth-shape);
-  opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease-out);
 }
 
 .lp-tab-tooth::before {
-  background: var(--line-strong);
+  background: var(--line);
 }
 
 .lp-tab-tooth::after {
   inset: 1px 1px 0;
-  background: var(--tooth-bg);
+  background: var(--bg-tabstrip);
 }
 
 .lp-tab-tooth.is-active {
   color: var(--fg);
 }
 
-.lp-tab-tooth.is-active::before,
+.lp-tab-tooth.is-active::before {
+  background: var(--line-strong);
+}
+
 .lp-tab-tooth.is-active::after {
-  opacity: 1;
+  background: var(--tooth-bg);
 }
 
 .lp-tab-tooth .lp-ico {
@@ -580,12 +580,6 @@ body:has(.landing-page) {
   display: block;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  button.lp-tab-tooth:hover {
-    color: var(--fg);
-  }
-}
-
 .lp-tab-add {
   display: grid;
   place-items: center;
@@ -599,11 +593,18 @@ body:has(.landing-page) {
   height: 14px;
 }
 
+.lp-tab-note {
+  align-self: center;
+  margin-left: auto;
+  color: var(--fg-muted);
+  font: var(--text-xs) / 1 var(--font-mono);
+}
+
 /* The frame under the strip: the square corner is where the first tooth stands. */
 .lp-wb-frame {
   position: relative;
   width: 100%;
-  height: var(--lp-wb-h, 560px);
+  height: var(--lp-wb-h, 600px);
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: 0 var(--radius-lg) var(--radius-lg) var(--radius-lg);
@@ -611,83 +612,58 @@ body:has(.landing-page) {
   container: wb / inline-size;
 }
 
-/* The tab's top edge sits on the cap line of the headline beside it, not on its line box. */
 .lp-hero-tab {
-  --lp-cap: calc(0.138 * var(--lp-h1));
-  --lp-wb-h: clamp(520px, calc(100svh - var(--lp-padt) - var(--lp-padb) - 37px - var(--lp-cap)), 652px);
-  margin-top: var(--lp-cap);
+  --lp-wb-h: 620px;
 }
 
-/* ───────────── The workbench section ───────────── */
+/* ───────────── Any browser: the same workspace, in the phone layout ───────────── */
 
-.lp-bench {
-  background: var(--bg-stage);
+.lp-any {
+  background: var(--bg-band);
 }
 
-.lp-bench .lp-tab-tooth {
-  height: 40px;
+.lp-any > .lp-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: var(--space-16);
+  align-items: center;
 }
 
-/* The browser that is selected is engaged: lamp color along the top of its tooth. */
-.lp-bench .lp-tab-tooth.is-active::before {
-  background:
-    linear-gradient(var(--accent), var(--accent)) top / 100% 2px no-repeat,
-    var(--line-strong);
+.lp-any .lp-sec-head {
+  margin-bottom: var(--space-8);
 }
 
-.lp-bench .lp-tab-tooth.is-active::after {
-  inset: 2px 1px 0;
+.lp-any-tab {
+  --lp-wb-h: 500px;
 }
 
-.lp-tab-drive {
-  display: inline-flex;
+.lp-any-tab .lp-tab-tooth {
+  --tooth-bg: var(--bg-chrome);
+}
+
+.lp-browsers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 var(--space-10);
+  max-width: 560px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.lp-browsers li {
+  display: flex;
   align-items: center;
   gap: var(--space-3);
-  height: 40px;
-  margin-left: auto;
-  color: var(--fg-muted);
-  font: var(--text-xs) / 1 var(--font-mono);
+  height: 64px;
+  border-bottom: 1px solid var(--line-strong);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
 }
 
-/* The sprocket that drives the strip: it indexes one tooth per boot step and per browser. */
-.lp-tab-sprocket {
-  width: 30px;
-  height: 30px;
-  color: var(--fg);
-  transform: rotate(calc(var(--turns, 0) * 40deg));
-  transition: transform 420ms var(--ease-detent);
+.lp-browsers img {
+  display: block;
 }
 
-/* The frame takes whatever the screen has left under the heading and the strip. */
-.lp-bench > .lp-wrap,
-.lp-bench-tab {
-  display: flex;
-  flex-direction: column;
-}
-
-.lp-bench-tab,
-.lp-bench-stage {
-  flex: 1;
-  min-height: 0;
-}
-
-.lp-bench-stage {
-  position: relative;
-  min-height: 480px;
-}
-
-.lp-bench-stage > .lp-wb-frame {
-  position: absolute;
-  inset: 0;
-  height: auto;
-}
-
-.lp-bench-tab[data-browser="iphone"] .lp-wb-frame {
-  right: auto;
-  width: min(390px, 100%);
-}
-
-/* ───────────── The workbench render ───────────── */
+/* ───────────── The workbench render ───────────── Product UI: the regular cut of the face. */
 
 .lp-wb {
   display: grid;
@@ -696,9 +672,10 @@ body:has(.landing-page) {
   background: var(--line);
   color: var(--fg);
   font: var(--text-xs) / 1.4 var(--font-ui);
+  font-stretch: 100%;
   text-align: left;
-  grid-template-columns: 44px 196px 1px minmax(0, 1fr) 1px minmax(260px, 34%);
-  grid-template-rows: 40px minmax(0, 1fr) 1px 176px 24px;
+  grid-template-columns: 44px 172px 1px minmax(0, 1fr) 1px minmax(260px, 28%);
+  grid-template-rows: 40px minmax(0, 1fr) 1px 184px 24px;
   grid-template-areas:
     "title title title title title title"
     "act files sx code sp preview"
@@ -749,13 +726,13 @@ body:has(.landing-page) {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  width: min(340px, 34%);
+  width: min(360px, 34%);
   height: 26px;
   margin: 0 auto;
   padding: 0 var(--space-1) 0 var(--space-2);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  background: var(--bg-panel);
+  background: var(--bg-input);
   color: var(--fg-muted);
   white-space: nowrap;
 }
@@ -777,9 +754,9 @@ body:has(.landing-page) {
   display: flex;
   flex: none;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-2);
   min-width: 96px;
-  justify-content: flex-end;
 }
 
 .lp-wb-run {
@@ -823,6 +800,7 @@ body:has(.landing-page) {
 
 .lp-wb-act {
   position: relative;
+  z-index: 0;
   display: grid;
   place-items: center;
   height: 44px;
@@ -840,10 +818,23 @@ body:has(.landing-page) {
   top: 50%;
   left: 0;
   width: 3px;
-  height: 20px;
+  height: 24px;
   background: var(--accent);
   clip-path: polygon(0 0, 100% 3px, 100% calc(100% - 3px), 0 100%);
   transform: translateY(-50%);
+}
+
+.lp-wb-act.is-on::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  left: 50%;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-active);
+  transform: translate(-50%, -50%);
 }
 
 .lp-wb-pane {
@@ -875,17 +866,35 @@ body:has(.landing-page) {
   grid-area: term;
 }
 
-/* A pane's tab strip, and its teeth. */
+/* A plain header for the panes that are not tabs. */
+.lp-wb-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  height: 34px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-muted);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+/* A tab strip, and its teeth. The open tab's flat top carries a bar: quiet, or the lamp color
+   in the pane that has the keyboard. The bar spans exactly the flat. */
 .lp-wb-strip {
   display: flex;
   flex: none;
   align-items: flex-end;
   height: 34px;
+  padding-left: var(--space-2);
   border-bottom: 1px solid var(--line);
   background: var(--bg-tabstrip);
 }
 
 .lp-wb-tooth {
+  --tooth-bar: var(--fg-subtle);
   position: relative;
   z-index: 0;
   display: inline-flex;
@@ -904,6 +913,10 @@ body:has(.landing-page) {
   font-weight: var(--weight-semibold);
 }
 
+.lp-wb-tooth.is-lit {
+  --tooth-bar: var(--accent);
+}
+
 .lp-wb-tooth.is-active::before,
 .lp-wb-tooth.is-active::after {
   content: "";
@@ -918,18 +931,11 @@ body:has(.landing-page) {
 }
 
 .lp-wb-tooth.is-active::after {
-  inset: 1px 1px 0;
-  background: var(--pane-bg);
-}
-
-.lp-wb-tooth.is-lit::before {
+  inset: 0 1px;
   background:
-    linear-gradient(var(--accent), var(--accent)) top / 100% 2px no-repeat,
-    var(--line-strong);
-}
-
-.lp-wb-tooth.is-lit::after {
-  inset: 2px 1px 0;
+    linear-gradient(var(--tooth-bar), var(--tooth-bar)) top center / calc(100% - 2 * var(--tooth-flank) + 2px)
+      2px no-repeat,
+    linear-gradient(var(--pane-bg), var(--pane-bg)) 0 1px / 100% 100% no-repeat;
 }
 
 .lp-wb .lp-wb-tooth-x {
@@ -958,12 +964,10 @@ body:has(.landing-page) {
 
 .lp-wb-url {
   display: flex;
-  align-self: center;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
   height: 24px;
-  margin: 0 var(--space-2) 0 auto;
   padding: 0 var(--space-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -1047,7 +1051,8 @@ body:has(.landing-page) {
   color: var(--fg-subtle);
 }
 
-/* Editor: the starter's real source, soft-wrapped like the editor wraps it on a phone. */
+/* Editor: the starter's real source. No line is wider than the pane, so none wraps or is cut;
+   the file simply runs on under the terminal, fading out. */
 .lp-wb-code {
   flex: 1;
   min-height: 0;
@@ -1056,9 +1061,8 @@ body:has(.landing-page) {
   color: var(--syn-text);
   font: 12.5px / 19px var(--font-mono);
   font-feature-settings: var(--code-features);
-  /* The file runs on past the pane: its last lines fade instead of being sliced. */
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
 }
 
 .lp-wb-code li {
@@ -1083,11 +1087,9 @@ body:has(.landing-page) {
 }
 
 .lp-wb-code code {
-  padding: 0 var(--space-3) 0 calc(var(--indent) * 1ch);
+  padding-right: var(--space-2);
   font: inherit;
-  text-indent: calc(var(--indent) * -1ch);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: pre;
 }
 
 .lp-wb-code .sk,
@@ -1111,21 +1113,12 @@ body:has(.landing-page) {
   color: var(--syn-attr);
 }
 
-.lp-wb-code .sp,
-.lp-wb-code .so {
+.lp-wb-code .sp {
   color: var(--syn-punct);
 }
 
-.lp-wb-caret {
-  display: inline-block;
-  width: 2px;
-  height: 16px;
-  margin-left: 1px;
-  background: var(--caret);
-  vertical-align: text-bottom;
-}
-
-/* Preview: the starter's own page, in its own colors (src/templates/catalog.ts, App.css). */
+/* Preview: the starter's own page. Like the starter, it follows the theme (its App.css in
+   src/templates/catalog.ts uses the same colors). */
 .lp-wb-empty {
   padding: var(--space-4);
   color: var(--fg-muted);
@@ -1140,8 +1133,8 @@ body:has(.landing-page) {
   justify-items: center;
   gap: 10px;
   padding: var(--space-6);
-  background: #1b1c22;
-  color: #f3f1ea;
+  background: light-dark(#ffffff, #111b17);
+  color: light-dark(#0d1813, #e9f0ea);
   font:
     13px / 1.45 system-ui,
     -apple-system,
@@ -1153,23 +1146,23 @@ body:has(.landing-page) {
 }
 
 .lp-wb-app-title {
-  color: #fbf0df;
   font-size: 26px;
   font-weight: 700;
   line-height: 1.2;
 }
 
 .lp-wb-app-tagline {
-  color: #b7b4ad;
+  max-width: 34ch;
+  color: light-dark(#34423a, #b0bfb6);
 }
 
 .lp-wb-app-counter {
   min-height: 44px;
   margin-top: var(--space-3);
   padding: 0 22px;
-  border-radius: 999px;
-  background: #fbf0df;
-  color: #1b1c22;
+  border: 1px solid light-dark(#b6c2b8, #3b5247);
+  border-radius: 6px;
+  background: light-dark(#f4f7f2, #18251f);
   font-weight: 600;
   transition: transform var(--dur-fast) var(--ease-out);
 }
@@ -1178,23 +1171,19 @@ body:has(.landing-page) {
   transform: scale(0.97);
 }
 
-.landing-page .lp-wb-app-counter:focus-visible {
-  outline-color: #fbf0df;
-  outline-offset: 3px;
-  border-radius: 999px;
-}
-
 .lp-wb-app-hint {
-  color: #a3a09a;
+  max-width: 36ch;
+  color: light-dark(#56675e, #8a9c93);
   font-size: 12px;
 }
 
 .lp-wb-app-hint code {
-  color: #f472b6;
+  color: light-dark(#0a6b4f, #78e2be);
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
-/* Terminal: the real output of the starter's install and dev commands. */
+/* Terminal: the real output of the starter's install and dev commands. The pane is a whole
+   number of lines tall, so the scrolled-off lines above are never sliced. */
 .lp-wb-term {
   display: flex;
   flex: 1;
@@ -1209,18 +1198,21 @@ body:has(.landing-page) {
   color: var(--ansi-fg);
   font: 12.5px / 19px var(--font-mono);
   font-feature-settings: var(--code-features);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: pre;
 }
 
 .lp-wb-tline {
   display: block;
-  min-height: 19px;
+  height: 19px;
 }
 
 .lp-wb-term .a-path {
   color: var(--ansi-blue);
   font-weight: 600;
+}
+
+.lp-wb-term .a-prompt {
+  color: var(--accent-text);
 }
 
 .lp-wb-term .a-dim {
@@ -1237,16 +1229,6 @@ body:has(.landing-page) {
 
 .lp-wb-term .a-link {
   color: var(--ansi-cyan);
-}
-
-/* A command types itself out, one character per step. */
-.lp-wb-typed {
-  display: inline-block;
-  width: calc(var(--chars) * 1ch);
-  overflow: hidden;
-  vertical-align: bottom;
-  white-space: nowrap;
-  animation: lp-type 360ms steps(var(--chars), end);
 }
 
 .lp-wb-tcur {
@@ -1285,20 +1267,11 @@ body:has(.landing-page) {
   height: 12px;
 }
 
-.lp-wb-status .lp-wb-status-fill {
-  flex: 1;
-}
-
-.lp-wb-status .lp-wb-status-live {
-  gap: var(--space-2);
-  color: var(--accent-text);
-}
-
 .lp-wb-switcher {
   display: none;
 }
 
-/* The phone frame: one pane at a time, the switcher a rack of four teeth. */
+/* The phone frame: one pane at a time, the switcher a rack of four whole teeth. */
 @container wb (max-width: 720px) {
   .lp-wb {
     background: var(--bg-chrome);
@@ -1317,7 +1290,7 @@ body:has(.landing-page) {
   }
 
   .lp-wb[data-phone-pane="preview"] {
-    --shown-bg: #1b1c22;
+    --shown-bg: light-dark(#ffffff, #111b17);
   }
 
   .lp-wb[data-phone-pane="preview"]:not([data-step="4"]) {
@@ -1331,7 +1304,9 @@ body:has(.landing-page) {
   .lp-wb-activity,
   .lp-wb-status,
   .lp-wb-palette,
-  .lp-wb-brand-word {
+  .lp-wb-brand-word,
+  .lp-wb-head,
+  .lp-wb-tline.is-wide {
     display: none;
   }
 
@@ -1392,6 +1367,17 @@ body:has(.landing-page) {
     font-size: 14px;
   }
 
+  /* On a phone the editor wraps at words, and a wrapped line keeps its indent. */
+  .lp-wb-code {
+    font-size: 12px;
+  }
+
+  .lp-wb-code code {
+    padding-left: calc(var(--indent) * 1ch);
+    text-indent: calc(var(--indent) * -1ch);
+    white-space: pre-wrap;
+  }
+
   .lp-wb-term {
     justify-content: flex-start;
   }
@@ -1421,17 +1407,12 @@ body:has(.landing-page) {
     font: var(--weight-medium) var(--text-sm) / 1 var(--font-mono);
   }
 
-  .lp-wb-keys .is-mod {
-    border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
-    color: var(--accent-text);
-  }
-
   .lp-wb-switcher {
     --tooth-flank: 9px;
     grid-area: switch;
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    padding: 0 var(--space-1);
+    padding: 0 var(--space-3);
     border-top: 1px solid var(--line-strong);
     background: var(--bg-tabstrip);
   }
@@ -1487,21 +1468,16 @@ body:has(.landing-page) {
   .lp-wb-switcher button[aria-selected="true"] .lp-ico {
     color: var(--accent-text);
   }
-
-  /* The dark starter page under the lit tooth needs light text on it. */
-  .lp-wb[data-phone-pane="preview"][data-step="4"] .lp-wb-switcher button[aria-selected="true"] {
-    color: #f3f1ea;
-  }
-
-  .lp-wb[data-phone-pane="preview"][data-step="4"] .lp-wb-switcher button[aria-selected="true"] .lp-ico {
-    color: #78e2be;
-  }
 }
 
-/* ───────────── Start: templates and saved workspaces ───────────── */
+/* ───────────── Start: templates, and saved workspaces when there are any ───────────── */
 
 .lp-start-grid {
   display: grid;
+  gap: var(--space-6);
+}
+
+.lp-start-grid.has-recent {
   grid-template-columns: minmax(0, 1fr) 380px;
   gap: var(--space-12);
   align-items: start;
@@ -1513,19 +1489,24 @@ body:has(.landing-page) {
   font-size: 14px;
 }
 
-/* A ruled list, two across: the featured starter first, across both columns. */
+/* Three across; the featured starter takes two cells. With saved workspaces beside them the
+   starters go two across, and Blank is left to the hero's own link. */
 .lp-tpls {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.lp-tpls li.is-featured {
+  grid-column: span 2;
+}
+
+.has-recent .lp-tpls {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: var(--space-10);
 }
 
-.lp-tpls li {
-  border-bottom: 1px solid var(--line);
-}
-
-.lp-tpls li.is-wide {
-  grid-column: 1 / -1;
+.has-recent .lp-tpls li:last-child {
+  display: none;
 }
 
 .lp-tpl {
@@ -1533,17 +1514,26 @@ body:has(.landing-page) {
   align-items: center;
   gap: var(--space-4);
   width: 100%;
-  min-height: 100px;
-  padding: var(--space-3) 0;
+  height: 100%;
+  min-height: 96px;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--lp-card);
   text-align: left;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 
 .lp-tpl:disabled {
   opacity: 0.55;
 }
 
+/* The featured starter: a tinted card with the page's solid action. */
 .is-featured > .lp-tpl {
-  min-height: 136px;
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--line));
+  background: color-mix(in oklab, var(--accent) 7%, var(--lp-card));
 }
 
 .lp-tpl-text {
@@ -1554,23 +1544,20 @@ body:has(.landing-page) {
 }
 
 .lp-tpl-name {
-  justify-self: start;
   font-size: 17px;
   font-weight: var(--weight-bold);
-  text-decoration: underline transparent 1px;
-  text-underline-offset: 5px;
-  transition: text-decoration-color var(--dur-fast) var(--ease-out);
 }
 
 .is-featured .lp-tpl-name {
-  font-size: 24px;
+  font-size: 22px;
   font-stretch: 112%;
   letter-spacing: -0.01em;
 }
 
 .lp-tpl-desc {
   color: var(--fg-muted);
-  font-size: var(--text-md);
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 .lp-tpl-go {
@@ -1586,26 +1573,25 @@ body:has(.landing-page) {
   display: inline-flex;
   flex: none;
   align-items: center;
-  height: 40px;
-  padding: 0 var(--space-5);
-  border: 1px solid var(--line-strong);
+  justify-content: center;
+  height: 44px;
+  padding: 0 var(--space-6);
   border-radius: var(--radius-sm);
-  font-size: 14px;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font-size: 15px;
   font-weight: var(--weight-semibold);
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .lp-tpl:hover:not(:disabled) .lp-tpl-name {
-    text-decoration-color: var(--accent);
+  .lp-tpl:hover:not(:disabled) {
+    border-color: var(--fg-subtle);
+    transform: translateY(-2px);
   }
 
-  .lp-tpl:hover:not(:disabled) .lp-logo-tile {
-    border-color: var(--line-strong);
-    transform: translateY(-2px);
+  .is-featured > .lp-tpl:hover:not(:disabled) {
+    border-color: var(--accent);
   }
 
   .lp-tpl:hover:not(:disabled) .lp-tpl-go {
@@ -1614,36 +1600,31 @@ body:has(.landing-page) {
   }
 
   .lp-tpl:hover:not(:disabled) .lp-tpl-action {
-    border-color: var(--primary-bg);
-    background: var(--primary-bg);
-    color: var(--primary-fg);
+    background: var(--primary-hover);
   }
 }
 
-.lp-tpl:active:not(:disabled) .lp-logo-tile {
-  transform: scale(0.96);
+.lp-tpl:active:not(:disabled) {
+  transform: scale(0.99);
 }
 
 .lp-logo-tile {
   display: grid;
   flex: none;
   place-items: center;
-  width: 52px;
-  height: 52px;
+  width: 48px;
+  height: 48px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--bg-editor);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
   color: var(--fg);
-  transition:
-    transform var(--dur-base) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
 }
 
 .lp-logo-tile img,
 .lp-brand-svg {
   display: block;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
 }
 
 .lp-brand-svg {
@@ -1660,35 +1641,46 @@ body:has(.landing-page) {
   color: var(--fg-muted);
 }
 
+/* With nothing saved yet there is no column: one quiet line under the starters says so. */
+.lp-start-grid:not(.has-recent) .lp-recent-head {
+  display: none;
+}
+
+.lp-start-grid:not(.has-recent) .lp-recent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-6);
+  color: var(--fg-subtle);
+  font-size: 14px;
+}
+
+.lp-start-grid:not(.has-recent) .lp-recent-empty,
+.lp-start-grid:not(.has-recent) .lp-recent-foot {
+  padding: 0;
+  border: 0;
+}
+
 /* Saved workspaces */
-/* As tall as the featured starter's row beside it, so the two lists share their first rule. */
 .lp-recent-head {
   display: grid;
-  align-content: center;
   gap: var(--space-1);
-  min-height: 137px;
-  border-bottom: 1px solid var(--line);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--line-strong);
 }
 
 .lp-recent-head h3,
 .lp-spec h3 {
-  font-size: 26px;
-  font-stretch: 112%;
+  font-size: 24px;
+  font-stretch: 114%;
   font-weight: var(--weight-bold);
   letter-spacing: -0.015em;
-  line-height: 1.12;
+  line-height: 1.15;
 }
 
 .lp-recent-head p {
   color: var(--fg-muted);
   font-size: var(--text-md);
-}
-
-@media (max-width: 900px) {
-  .lp-recent-head {
-    min-height: 0;
-    padding-bottom: var(--space-4);
-  }
 }
 
 .lp-recent-notice {
@@ -1855,10 +1847,6 @@ body:has(.landing-page) {
   margin-left: var(--space-2);
 }
 
-.lp-ws-actions .lp-ws-more-btn {
-  display: none;
-}
-
 .lp-ws-icon-btn {
   display: grid;
   place-items: center;
@@ -1869,6 +1857,10 @@ body:has(.landing-page) {
   transition:
     color var(--dur-fast) var(--ease-out),
     background-color var(--dur-fast) var(--ease-out);
+}
+
+.lp-ws-actions .lp-ws-more-btn {
+  display: none;
 }
 
 .lp-ws-icon-btn.is-ok {
@@ -1964,25 +1956,28 @@ body:has(.landing-page) {
   font-size: var(--text-sm);
 }
 
-/* ───────────── Why: three claims, each with the thing itself beside it ───────────── */
+/* ───────────── Why: three claims, each beside the thing itself ───────────── */
 
-.lp-why {
-  background: var(--bg-panel);
+.lp-specs {
+  border-top: 1px solid var(--line-strong);
 }
 
 .lp-spec {
   display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(0, 7fr) minmax(0, 10fr);
-  gap: var(--space-10);
+  grid-template-columns: 400px minmax(0, 1fr) 400px;
+  gap: var(--space-12);
   align-items: center;
-  min-height: 184px;
   padding: var(--space-6) 0;
   border-bottom: 1px solid var(--line);
 }
 
+.lp-spec h3 {
+  white-space: nowrap;
+}
+
 .lp-spec p {
   color: var(--fg-muted);
-  font-size: 16px;
+  font-size: var(--text-md);
   line-height: 1.55;
 }
 
@@ -1992,22 +1987,36 @@ body:has(.landing-page) {
   font: var(--weight-medium) 0.9em var(--font-mono);
 }
 
+/* Every specimen is the same height, so the rows keep one rhythm. */
 .lp-specimen {
+  display: grid;
+  align-content: center;
   min-width: 0;
+  height: 128px;
+  font-stretch: 100%;
 }
 
 .lp-specimen-term {
-  display: grid;
   gap: 2px;
-  padding: var(--space-4) var(--space-5);
+  padding: 0 var(--space-5);
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--term-bg);
+  color: var(--ansi-fg);
   font: var(--text-sm) / 22px var(--font-mono);
 }
 
 .lp-specimen-prompt {
+  color: var(--accent-text);
+}
+
+.lp-specimen-out {
   color: var(--ansi-dim);
+}
+
+.lp-specimen-out b {
+  color: var(--ansi-green);
+  font-weight: 600;
 }
 
 .lp-specimen-tabs .lp-tab-strip {
@@ -2016,7 +2025,7 @@ body:has(.landing-page) {
 }
 
 .lp-specimen-tabs .lp-tab-tooth {
-  --tooth-bg: var(--bg-editor);
+  --tooth-bg: var(--lp-card);
   height: 32px;
   font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono);
 }
@@ -2026,11 +2035,11 @@ body:has(.landing-page) {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  height: 48px;
+  height: 56px;
   padding: 0 var(--space-4);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-editor);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) var(--radius-lg);
+  background: var(--lp-card);
   color: var(--fg-muted);
   font: var(--text-xs) / 1 var(--font-mono);
 }
@@ -2041,56 +2050,23 @@ body:has(.landing-page) {
   gap: var(--space-2);
 }
 
-.lp-specimen-plate span:last-child {
-  color: var(--accent-text);
-}
-
-/* The parts as a chain: links overlap, alternating inner and outer plates, a pin at each joint. */
+/* The parts as labelled tags, evenly spaced. */
 .lp-chain {
   display: flex;
   flex-wrap: wrap;
-  row-gap: var(--space-2);
-  padding-left: 11px;
+  gap: var(--space-2);
 }
 
 .lp-chain li {
-  position: relative;
   display: inline-flex;
   align-items: center;
-  height: 36px;
-  margin-left: -11px;
-  padding: 0 14px;
+  height: 34px;
+  padding: 0 var(--space-3);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-pill);
-  background: var(--bg-editor);
-  font: var(--weight-medium) 11px / 1 var(--font-mono);
+  border-radius: var(--radius-sm);
+  background: var(--lp-card);
+  font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono);
   white-space: nowrap;
-}
-
-.lp-chain li:nth-child(even) {
-  z-index: 1;
-  border-color: var(--fg-subtle);
-  background: var(--bg-panel);
-}
-
-.lp-chain li::before,
-.lp-chain li::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--fg-subtle);
-  transform: translateY(-50%);
-}
-
-.lp-chain li::before {
-  left: 6px;
-}
-
-.lp-chain li::after {
-  right: 6px;
 }
 
 .lp-limits {
@@ -2106,78 +2082,102 @@ body:has(.landing-page) {
   color: var(--warn);
 }
 
-/* ───────────── Close: the page's one inverted band ───────────── */
+/* ───────────── Close: the deep band, the last action, the mark ───────────── */
 
 .lp-close {
-  background: var(--primary-bg);
-  color: var(--primary-fg);
+  --focus: var(--band-fg);
+  position: relative;
+  overflow: hidden;
+  background: var(--band-bg);
+  color: var(--band-fg);
 }
 
-.lp-close {
-  --focus: var(--primary-fg);
-}
-
-.lp-close .lp-wrap {
-  display: flex;
-  flex-direction: column;
-  min-height: 100svh;
-  padding-top: var(--lp-padt);
-  padding-bottom: var(--space-6);
+.lp-close > .lp-wrap {
+  position: relative;
+  z-index: 1;
+  padding: var(--space-24) 0 var(--space-6);
 }
 
 .lp-close-main {
-  position: relative;
   display: grid;
-  flex: 1;
-  align-content: start;
   justify-items: start;
   gap: var(--space-10);
+  padding-bottom: var(--space-24);
 }
 
 .lp-close-title {
-  position: relative;
-  z-index: 1;
-  max-width: 17ch;
-  font-size: clamp(34px, 4.6vw, 68px);
+  font-size: clamp(32px, 4.3vw, 60px);
 }
 
+.lp-close-title span {
+  display: block;
+}
+
+/* In the light theme the band is deep green, so its button takes the lamp's bright value. */
 .lp-close .lp-btn-primary {
-  position: relative;
-  z-index: 1;
-  background: var(--bg);
-  color: var(--fg);
+  background: light-dark(#78e2be, var(--primary-bg));
+  color: light-dark(#0d1512, var(--primary-fg));
 }
 
-/* The mark, large. It indexes one tooth when the button beside it is pointed at. */
+/* The mark, large: a thin outline cropped by the band's right and bottom edges, one tooth lit.
+   It indexes a tooth when the button is pointed at. */
 .lp-chainring {
   position: absolute;
-  top: 50%;
-  right: 0;
-  width: min(420px, 38%);
-  fill: color-mix(in oklab, var(--primary-fg) 13%, var(--primary-bg));
-  transform: translateY(-54%);
+  right: -150px;
+  bottom: -270px;
+  width: 720px;
+  height: 720px;
   transition: transform 520ms var(--ease-detent);
+}
+
+.lp-chainring-body {
+  fill: none;
+  stroke: color-mix(in oklab, var(--band-fg) 30%, transparent);
+  stroke-width: 0.5;
+}
+
+.lp-chainring-lit {
+  fill: var(--accent);
+  stroke: none;
+}
+
+.lp-close .lp-chainring-lit {
+  fill: light-dark(#78e2be, var(--accent));
 }
 
 @media (hover: hover) and (pointer: fine) {
   .lp-close .lp-btn-primary:hover {
-    background: var(--bg-elevated);
+    background: light-dark(#93ebcd, var(--primary-hover));
   }
 
-  .lp-close .lp-btn-primary:hover ~ .lp-chainring {
-    transform: translateY(-54%) rotate(8.18deg);
+  .lp-close:has(.lp-btn-primary:hover) .lp-chainring {
+    transform: rotate(8.18deg);
   }
 }
 
+/* The footer row is a solid strip across the band, so the mark stops at its rule. */
+.lp-foot::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  bottom: calc(-1 * var(--space-6));
+  left: 50%;
+  width: 100vw;
+  background: var(--band-bg);
+  transform: translateX(-50%);
+}
+
 .lp-foot {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3) var(--space-8);
   padding-top: var(--space-5);
-  border-top: 1px solid color-mix(in oklab, var(--primary-fg) 22%, transparent);
-  color: color-mix(in oklab, var(--primary-fg) 78%, var(--primary-bg));
+  border-top: 1px solid color-mix(in oklab, var(--band-fg) 22%, transparent);
+  color: color-mix(in oklab, var(--band-fg) 80%, var(--band-bg));
   font-size: var(--text-sm);
 }
 
@@ -2189,7 +2189,7 @@ body:has(.landing-page) {
   display: flex;
   align-items: center;
   gap: var(--space-6);
-  color: var(--primary-fg);
+  color: var(--band-fg);
   font-weight: var(--weight-medium);
 }
 
@@ -2214,17 +2214,9 @@ body:has(.landing-page) {
   }
 }
 
-@keyframes lp-type {
-  from {
-    width: 0;
-  }
-}
-
 /* The hero enters once per page load: the words rise in order, then the tab settles. */
 @media (prefers-reduced-motion: no-preference) {
-  html.m-enter:not(.m-enter-done)
-    .lp-hero[data-enter]
-    :is(h1, .lp-lede, .lp-hero-actions, .lp-open, .lp-hero-tab) {
+  html.m-enter:not(.m-enter-done) .lp-hero[data-enter] :is(h1, .lp-lede, .lp-hero-controls, .lp-hero-tab) {
     animation: lp-rise 480ms var(--ease-out) both;
   }
 
@@ -2232,27 +2224,21 @@ body:has(.landing-page) {
     animation-delay: 40ms;
   }
 
-  html.m-enter:not(.m-enter-done) .lp-hero[data-enter] .lp-hero-actions {
+  html.m-enter:not(.m-enter-done) .lp-hero[data-enter] .lp-hero-controls {
     animation-delay: 80ms;
   }
 
-  html.m-enter:not(.m-enter-done) .lp-hero[data-enter] .lp-open {
-    animation-delay: 120ms;
-  }
-
   html.m-enter:not(.m-enter-done) .lp-hero[data-enter] .lp-hero-tab {
-    animation-delay: 100ms;
+    animation-delay: 120ms;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lp-wb-typed,
   .lp-wb-app {
     animation: none;
   }
 
   .lp-brand-mark,
-  .lp-tab-sprocket,
   .lp-chainring {
     transition: none;
   }
@@ -2260,14 +2246,9 @@ body:has(.landing-page) {
 
 /* ───────────── Narrower screens ───────────── */
 
-@media (max-width: 1180px) {
+@media (max-width: 1240px) {
   .landing-page {
     --lp-gutter: 32px;
-  }
-
-  .lp-hero > .lp-wrap {
-    grid-template-columns: minmax(0, 1fr) 340px;
-    gap: var(--space-10);
   }
 
   .lp-nav > .lp-wrap {
@@ -2278,24 +2259,59 @@ body:has(.landing-page) {
     gap: var(--space-5);
   }
 
-  .lp-start-grid {
-    grid-template-columns: minmax(0, 1fr) 320px;
-    gap: var(--space-8);
+  /* The links drop under the repo bar they belong to. */
+  .lp-hero-controls {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .lp-open-foot {
+    grid-column: 2;
+    margin-top: calc(-1 * var(--space-2));
   }
 
   .lp-spec {
+    grid-template-columns: 320px minmax(0, 1fr) 360px;
+    gap: var(--space-8);
+  }
+
+  .lp-spec h3 {
+    white-space: normal;
+  }
+
+  .lp-start-grid.has-recent {
+    grid-template-columns: minmax(0, 1fr) 320px;
     gap: var(--space-8);
   }
 }
 
 @media (max-width: 900px) {
-  .lp-hero > .lp-wrap,
-  .lp-start-grid {
+  .landing-page {
+    --lp-pad: 80px;
+  }
+
+  .lp-hero-text,
+  .lp-hero-controls,
+  .lp-any > .lp-wrap,
+  .lp-start-grid.has-recent {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .lp-hero h1 {
-    font-size: clamp(42px, 8.6vw, 72px);
+  .lp-open-foot {
+    grid-column: 1;
+  }
+
+  .lp-lede {
+    max-width: 56ch;
+    padding-bottom: 0;
+  }
+
+  .lp-tpls,
+  .has-recent .lp-tpls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .has-recent .lp-tpls li:last-child {
+    display: block;
   }
 
   .lp-spec {
@@ -2303,7 +2319,6 @@ body:has(.landing-page) {
     grid-template-areas: "title specimen" "body specimen";
     gap: var(--space-3) var(--space-8);
     align-items: start;
-    padding: var(--space-6) 0;
   }
 
   .lp-spec h3 {
@@ -2317,10 +2332,6 @@ body:has(.landing-page) {
   .lp-specimen {
     grid-area: specimen;
     align-self: center;
-  }
-
-  .lp-tab-drive-text {
-    display: none;
   }
 
   /* The page's links move into a menu under the bar. */
@@ -2341,11 +2352,20 @@ body:has(.landing-page) {
     font-weight: var(--weight-semibold);
   }
 
-  .lp-menu a {
+  .lp-menu a,
+  .lp-menu button {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     min-height: 52px;
     border-bottom: 1px solid var(--line);
+    font-weight: inherit;
+    text-align: left;
+  }
+
+  .lp-chainring {
+    right: -260px;
+    opacity: 0.7;
   }
 }
 
@@ -2353,34 +2373,31 @@ body:has(.landing-page) {
   .landing-page {
     --lp-gutter: 16px;
     --lp-nav-h: 60px;
-    --lp-padt: 96px;
-    --lp-padb: 56px;
-  }
-
-  /* On a phone the workbench fills a screen; the other sections are as tall as what they hold. */
-  .landing-page main > section:not(.lp-bench) {
-    min-height: 0;
-  }
-
-  .landing-page main > section:not(.lp-hero) {
-    padding-top: 72px;
+    --lp-pad: 64px;
   }
 
   .lp-nav > .lp-wrap {
     gap: var(--space-3);
   }
 
+  .lp-nav-right {
+    gap: var(--space-1);
+  }
+
+  /* The phone bar holds the mark, one action and the menu. */
+  .lp-desktop-only,
   .lp-nav-github {
     display: none;
   }
 
-  .lp-nav-right {
-    gap: var(--space-1);
+  .lp-menu .lp-phone-only {
+    display: flex;
   }
 
   .lp-nav-cta {
     height: 44px;
     padding: 0 var(--space-3);
+    font-size: var(--text-sm);
   }
 
   .lp-brand {
@@ -2388,37 +2405,60 @@ body:has(.landing-page) {
     font-size: 18px;
   }
 
-  /* The phone bar holds the mark, one theme button and the menu. */
-  .lp-desktop-only {
-    display: none;
+  /* Words, the two buttons, then the product inside the first screen; the repo bar follows it. */
+  .landing-page main > .lp-hero {
+    --lp-h1: clamp(30px, 9.7vw, 52px);
+    padding-top: calc(var(--lp-nav-h) + var(--space-8));
+    padding-bottom: var(--space-12);
   }
 
-  .lp-phone-only {
-    display: inline-flex;
+  .lp-hero > .lp-wrap {
+    gap: var(--space-5);
+  }
+
+  .lp-hero-text,
+  .lp-hero-controls {
+    display: contents;
   }
 
   .lp-hero h1 {
-    font-size: clamp(38px, 11.4vw, 56px);
     line-height: 1;
   }
 
   .lp-lede {
-    margin-top: var(--space-5);
     font-size: var(--text-lg);
   }
 
   .lp-hero-actions {
     display: grid;
-    width: 100%;
-    margin-top: var(--space-6);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2);
+  }
+
+  .lp-hero-actions .lp-btn {
+    height: 48px;
+    padding: 0 var(--space-2);
+    font-size: 14.5px;
+  }
+
+  .lp-hero-tab {
+    --lp-wb-h: 500px;
+    order: 1;
   }
 
   .lp-open {
-    padding-top: var(--space-8);
+    flex: none;
+    order: 2;
+    max-width: none;
   }
 
   .lp-open-row {
+    height: 56px;
     padding-left: var(--space-3);
+  }
+
+  .lp-open-submit {
+    height: 44px;
   }
 
   .lp-open-prefix {
@@ -2426,8 +2466,13 @@ body:has(.landing-page) {
   }
 
   .lp-open-foot {
+    order: 3;
     justify-content: space-between;
-    margin-top: var(--space-1);
+    margin-top: calc(-1 * var(--space-3));
+  }
+
+  .lp-tab-note {
+    display: none;
   }
 
   .lp-sec-head {
@@ -2438,46 +2483,32 @@ body:has(.landing-page) {
     font-size: 16px;
   }
 
-  /* Browser teeth: the selected one keeps its name, the others are their icons. */
-  .lp-bench .lp-tab-tooth {
-    height: 44px;
-    padding: 0 calc(var(--tooth-flank) + var(--space-2_5));
+  .lp-browsers {
+    gap: 0 var(--space-5);
   }
 
-  .lp-bench .lp-tab-tooth:not(.is-active) span {
-    display: none;
+  .lp-browsers li {
+    height: 56px;
+    font-size: var(--text-md);
   }
 
-  .lp-tab-drive {
-    height: 44px;
-  }
-
-  .lp-tpls {
+  .lp-tpls,
+  .has-recent .lp-tpls {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .lp-tpls li:nth-child(even) {
-    border-right: 0;
+  .lp-tpls li.is-featured {
+    grid-column: auto;
   }
 
   .lp-tpl {
-    min-height: 76px;
+    min-height: 80px;
+    padding: var(--space-3) var(--space-4);
   }
 
   .is-featured > .lp-tpl {
     flex-wrap: wrap;
-    padding-top: var(--space-5);
-    padding-bottom: var(--space-5);
-  }
-
-  .is-featured .lp-logo-tile {
-    width: 52px;
-    height: 52px;
-  }
-
-  .is-featured .lp-logo-tile img {
-    width: 28px;
-    height: 28px;
+    padding: var(--space-4);
   }
 
   .is-featured .lp-tpl-name {
@@ -2485,13 +2516,7 @@ body:has(.landing-page) {
   }
 
   .lp-tpl-action {
-    justify-content: center;
     width: 100%;
-    height: 44px;
-  }
-
-  .lp-start-grid {
-    gap: var(--space-10);
   }
 
   .lp-spec {
@@ -2501,25 +2526,34 @@ body:has(.landing-page) {
   }
 
   .lp-specimen {
+    height: auto;
+    min-height: 104px;
     margin-top: var(--space-2);
   }
 
+  .lp-specimen-term {
+    padding: var(--space-3) var(--space-4);
+  }
+
   .lp-spec h3 {
-    font-size: 23px;
+    font-size: 22px;
   }
 
   .lp-limits {
     align-items: flex-start;
   }
 
-  .lp-close .lp-wrap {
-    min-height: 0;
+  .lp-close > .lp-wrap {
     padding-top: var(--space-16);
   }
 
   .lp-close-main {
     gap: var(--space-8);
-    padding-bottom: var(--space-12);
+    padding-bottom: var(--space-16);
+  }
+
+  .lp-close-title {
+    font-size: clamp(22px, 6.5vw, 40px);
   }
 
   .lp-close-main .lp-btn {
@@ -2527,21 +2561,11 @@ body:has(.landing-page) {
   }
 
   .lp-chainring {
-    position: static;
-    width: 200px;
-    justify-self: end;
-    transform: none;
-    order: -1;
-    margin-bottom: calc(-1 * var(--space-4));
+    display: none;
   }
 
   .lp-foot {
     align-items: flex-start;
-  }
-
-  .lp-foot-links {
-    width: 100%;
-    gap: var(--space-5);
   }
 
   .lp-live-desktop,
@@ -2552,6 +2576,13 @@ body:has(.landing-page) {
   .lp-live.lp-live-inline,
   .lp-ws-when-phone {
     display: inline-flex;
+  }
+}
+
+/* The narrowest phones keep the mark and drop the word beside it. */
+@media (max-width: 359px) {
+  .lp-brand > span {
+    display: none;
   }
 }
 
@@ -2570,13 +2601,9 @@ body:has(.landing-page) {
   }
 }
 
-/* Where there is no hover, row actions are always there and large enough to hit. */
+/* Where there is no hover, row actions are large enough to hit. */
 @media (pointer: coarse) {
   .lp-ws-icon-btn {
     width: 44px;
-  }
-
-  .lp-bench .lp-tab-tooth {
-    height: 44px;
   }
 }

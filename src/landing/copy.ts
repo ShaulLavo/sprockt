@@ -1,13 +1,3 @@
-// Functional placeholders the copywriter has not written yet (labels for assistive technology
-// and the phone menu). Listed in the copy requests for the identity pass.
-export const PENDING_COPY = {
-  skip: "Skip to content",
-  menu: "Menu",
-  browsers: "Browsers",
-  heroFrame: "Sprockt in a browser tab, running the Vite + React starter",
-  benchFrame: "The Sprockt workbench: files, editor, preview and terminal",
-} as const;
-
 // Copy strings synced with /work/reports/sprockt-v1-20261125/copy/landing.json.
 export const LANDING_COPY = {
   navTemplates: "Templates",
@@ -15,6 +5,8 @@ export const LANDING_COPY = {
   navDocs: "Docs",
   navGithub: "GitHub",
   navCta: "New workspace",
+  navMenu: "Menu",
+  skip: "Skip to content",
   heroPill: "Bun 1.4.4 in WebAssembly",
   heroTitle: "Real Bun in any browser tab.",
   heroLede:
@@ -52,14 +44,19 @@ export const LANDING_COPY = {
   recentRetry: "Retry",
   recentRetrying: "Retrying...",
   whyTitle: "Why Sprockt",
-  whyNote: "Open a tab and start coding. No account needed.",
+  whyNote: "Open a tab and code. No account needed.",
+  closingTitle: "Open a tab and code. No account needed.",
+  showcaseTitle: "A full IDE in any browser",
+  showcaseBrowsers: "Browsers",
+  showcaseHeroFrame: "Sprockt running the Vite + React starter in a browser tab.",
+  showcaseBenchFrame: "Sprockt workbench with files, editor, preview and terminal.",
   whyBrowsersTitle: "Any browser, including iPhone",
   whyBrowsersBody:
     "Runs in Chrome, Firefox, desktop Safari and iPhone Safari. No extension or Chromium lock-in.",
   whyBunTitle: "Real Bun in WebAssembly",
-  whyTabsTitle: "One workspace across tabs",
+  whyTabsTitle: "Saved locally in IndexedDB",
   whyTabsBody:
-    "Projects stay saved in IndexedDB. A second tab attaches to the same live files and dev server.",
+    "Projects stay in browser IndexedDB. Open the same workspace in a new tab and Sprockt asks before moving it over.",
   whyOssTitle: "Free and MIT open source",
   whyOssBody:
     "Sprockt, its Bun runtime, browser OS, editor, GPU terminal and shell are all MIT licensed on GitHub.",

@@ -89,6 +89,7 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
       fontSize: 13,
       lineHeight: 20,
       gutterLeadingInset: 8,
+      wordWrapBreak: "word",
     });
     const unmount = mountEditorPlugins(
       {

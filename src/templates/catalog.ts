@@ -107,12 +107,15 @@ function App() {
   return (
     <main className="app">
       <h1>Hello from bun.wasm</h1>
-      <p className="tagline">Vite serves this React app through Bun, running in your browser.</p>
+      <p className="tagline">
+        Vite serves this React app through Bun, running in your browser.
+      </p>
       <button className="counter" onClick={() => setCount((n) => n + 1)}>
         count is {count}
       </button>
       <p className="hint">
-        Edit <code>src/App.tsx</code> and the page updates without losing the count.
+        Edit <code>src/App.tsx</code> and the page updates without losing
+        the count.
       </p>
     </main>
   );
@@ -121,9 +124,10 @@ function App() {
 export default App;
 `,
   "src/App.css": `:root {
+  color-scheme: light dark;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  color: #f3f1ea;
-  background: #1b1c22;
+  color: light-dark(#0d1813, #e9f0ea);
+  background: light-dark(#ffffff, #111b17);
 }
 
 body {
@@ -143,12 +147,11 @@ body {
 h1 {
   margin: 0;
   font-size: 2.2rem;
-  color: #fbf0df;
 }
 
 .tagline {
   margin: 0;
-  color: #b7b4ad;
+  color: light-dark(#34423a, #b0bfb6);
 }
 
 .counter {
@@ -156,10 +159,10 @@ h1 {
   padding: 0.7rem 1.4rem;
   font: inherit;
   font-weight: 600;
-  color: #1b1c22;
-  background: #fbf0df;
+  color: light-dark(#ffffff, #0d1512);
+  background: light-dark(#0a7556, #78e2be);
   border: 0;
-  border-radius: 999px;
+  border-radius: 6px;
   cursor: pointer;
 }
 
@@ -168,12 +171,12 @@ h1 {
 }
 
 .hint {
-  color: #8d8a84;
+  color: light-dark(#56675e, #8a9c93);
   font-size: 0.9rem;
 }
 
 code {
-  color: #f472b6;
+  color: light-dark(#0a6b4f, #78e2be);
 }
 `,
 };

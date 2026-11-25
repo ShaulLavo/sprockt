@@ -301,9 +301,9 @@
   height: var(--control-h);
   margin: 0 auto;
   padding: 0 var(--space-1) 0 var(--space-2);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  background: var(--bg-panel);
+  background: var(--bg-input);
   color: var(--fg-muted);
   transition:
     border-color var(--dur-fast) var(--ease-out),
@@ -437,7 +437,7 @@
   width: 24px;
   height: 22px;
   border-radius: var(--radius-xs);
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
   transition:
     color var(--dur-fast) var(--ease-out),
     background-color var(--dur-fast) var(--ease-out);
@@ -484,14 +484,15 @@
   height: var(--activity-icon);
 }
 
-/* An open pane's button is engaged: a lit tooth on the bar's edge, the icon in the text color. */
+/* An open pane's button is engaged: its icon sits on a raised key in the text color, with a lit
+   tooth on the bar's edge. A closed pane's icon is plain and quiet. */
 .wb-act::before {
   content: "";
   position: absolute;
   top: 50%;
   left: 0;
   width: 3px;
-  height: 20px;
+  height: 26px;
   background: var(--accent);
   clip-path: polygon(0 0, 100% 3px, 100% calc(100% - 3px), 0 100%);
   opacity: 0;
@@ -501,13 +502,33 @@
     transform var(--dur-base) var(--ease-detent);
 }
 
+.wb-act::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  left: 50%;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-active);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
 .wb-act[aria-pressed="true"] {
+  z-index: 0;
   color: var(--fg);
 }
 
 .wb-act[aria-pressed="true"]::before {
   opacity: 1;
   transform: translate(0, -50%);
+}
+
+.wb-act[aria-pressed="true"]::after {
+  opacity: 1;
 }
 
 .wb-act:focus-visible {
@@ -859,8 +880,16 @@
     padding: 0;
   }
 
-  .wb-titlebar-right {
+  /* The workspace name stays left; its actions sit against the right edge. */
+  .wb-titlebar .wb-titlebar-right {
     gap: var(--space-1);
+    margin-left: auto;
+  }
+
+  /* The switcher below already names the pane on screen. */
+  .wb-explorer .pane-header,
+  .wb-preview .pane-header {
+    display: none;
   }
 
   .wb-run {
@@ -910,8 +939,8 @@
     display: grid;
     grid-area: switch;
     grid-template-columns: repeat(4, 1fr);
-    padding: 0 max(var(--space-1), env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px)
-      max(var(--space-1), env(safe-area-inset-left, 0px));
+    padding: 0 max(var(--space-3), env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px)
+      max(var(--space-3), env(safe-area-inset-left, 0px));
     border-top: 1px solid var(--line-strong);
     background: var(--bg-tabstrip);
   }

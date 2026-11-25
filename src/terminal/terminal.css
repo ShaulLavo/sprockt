@@ -1,6 +1,6 @@
 /* Terminal panel. Tabs follow the workbench's one tab rule: a tab is a tooth. Inactive tabs are
-   labels on the darker strip; the tab taking input is a tooth of the panel's own surface, rising
-   out of it, with the lamp color along its flat top. */
+   labels on the darker strip; the shown tab is a tooth of the panel's own surface, rising out of
+   it. Its flat top carries the lamp color only while the terminal has the keyboard. */
 
 .terminal-panel {
   background: var(--term-bg);
@@ -24,6 +24,7 @@
   flex: 0 1 auto;
   align-items: flex-end;
   min-width: 0;
+  padding-left: var(--space-2);
   overflow-x: auto;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
@@ -83,15 +84,24 @@
   font-weight: var(--weight-semibold);
 }
 
-.ttab.is-active::before {
-  background:
-    linear-gradient(var(--accent), var(--accent)) top / 100% var(--tab-indicator) no-repeat,
-    var(--line-strong);
+.ttab.is-active::after {
+  background: var(--term-bg);
 }
 
-.ttab.is-active::after {
-  inset: var(--tab-indicator) 1px 0;
-  background: var(--term-bg);
+/* The bar along the tooth's flat top: quiet while the terminal is not taking input, the lamp
+   color once it has the keyboard. It spans exactly the flat, so it meets the flanks squarely. */
+.ttab.is-active .ttab-main::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: var(--tooth-flank);
+  left: var(--tooth-flank);
+  height: var(--tab-indicator);
+  background: var(--fg-subtle);
+}
+
+.terminal-panel:focus-within .ttab.is-active .ttab-main::before {
+  background: var(--accent);
 }
 
 .terminal-panel.is-collapsed .ttab::before,
@@ -371,11 +381,7 @@
     background: var(--bg-active);
   }
 
-  .term-key.is-mod {
-    color: var(--accent-text);
-    border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
-  }
-
+  /* Ctrl looks like any other key until it is armed. */
   .term-key.is-mod[aria-pressed="true"] {
     background: var(--accent);
     border-color: var(--accent);

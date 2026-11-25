@@ -185,9 +185,18 @@ test("phone viewport has no horizontal overflow, exposes menu/theme controls, an
   await page.goto("/");
   await expect(page.getByTestId("landing-page")).toBeVisible();
 
-  // Compact phone nav controls fit cleanly without horizontal overflow.
-  await expect(page.getByTestId("phone-theme-toggle")).toBeVisible();
+  // The phone bar holds the mark, one action and the menu; the page fits before the menu opens.
+  await expect(page.getByTestId("header-new-workspace")).toBeVisible();
   await expect(page.getByTestId("phone-menu-toggle")).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+
+  // The menu holds the page's links and the theme toggle.
+  await page.getByTestId("phone-menu-toggle").click();
+  const menu = page.getByTestId("phone-menu");
+  await expect(menu).toBeVisible();
+  await expect(menu).toContainText("Templates");
+  await expect(menu).toContainText("GitHub");
 
   // First click locks an explicit theme (dark or light); second click flips to the opposite theme.
   await page.getByTestId("phone-theme-toggle").click();
@@ -197,11 +206,4 @@ test("phone viewport has no horizontal overflow, exposes menu/theme controls, an
   await page.getByTestId("phone-theme-toggle").click();
   const secondTheme = firstTheme === "dark" ? "light" : "dark";
   await assertPhoneLayout(page, secondTheme);
-
-  // Mobile menu exposes navigation links at 44px touch height.
-  await page.getByTestId("phone-menu-toggle").click();
-  const menu = page.getByTestId("phone-menu");
-  await expect(menu).toBeVisible();
-  await expect(menu).toContainText("Templates");
-  await expect(menu).toContainText("GitHub");
 });

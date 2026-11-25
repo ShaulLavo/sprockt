@@ -55,6 +55,15 @@ function readWorkspaceHint(id: string): WorkspaceMeta | undefined {
   }
 }
 
+/** Whether this browser remembers any workspace, known at once, before storage is read. */
+export function hasWorkspaceHints(): boolean {
+  try {
+    return Object.keys(localStorage).some((key) => key.startsWith(HINT_PREFIX));
+  } catch {
+    return false;
+  }
+}
+
 export function removeWorkspaceHint(id: string): void {
   try {
     localStorage.removeItem(HINT_PREFIX + id);

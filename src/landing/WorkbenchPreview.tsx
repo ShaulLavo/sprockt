@@ -1,175 +1,16 @@
 // The workbench as it looks with the Vite + React starter open, drawn in plain markup so the
 // landing page loads no editor, terminal or runtime code. It shows the template's real source
 // and the real output of its install and dev commands. Wide, it is the desktop frame; under
-// 720px of its own width (a phone, or the hero's narrow tab) it is the phone frame, one pane
-// at a time. Every copy on the page shares one Demo, as tabs share a workspace.
+// 720px of its own width (a phone, or the narrow tab beside the browser list) it is the phone
+// frame, one pane at a time. Every copy on the page shares one Demo, as tabs share a workspace.
 import { createSignal, For, Show, untrack } from "solid-js";
 import { DEMO_READY, type Demo } from "./demo";
 import { Icon } from "./icons";
+import { APP_TSX_LINES } from "./starter-source";
 
 export type PhonePane = "files" | "code" | "preview" | "terminal";
 
-type Token = readonly [kind: string, text: string];
-
-/** src/App.tsx of the Vite + React starter (src/templates/catalog.ts), with its syntax marked. */
-const APP_TSX: readonly (readonly Token[])[] = [
-  [
-    ["sk", "import"],
-    ["", " "],
-    ["sp", "{"],
-    ["", " useState "],
-    ["sp", "}"],
-    ["", " "],
-    ["sk", "from"],
-    ["", " "],
-    ["ss", '"react"'],
-    ["sp", ";"],
-  ],
-  [
-    ["sk", "import"],
-    ["", " "],
-    ["ss", '"./App.css"'],
-    ["sp", ";"],
-  ],
-  [],
-  [
-    ["sk", "function"],
-    ["", " "],
-    ["sf", "App"],
-    ["sp", "() {"],
-  ],
-  [
-    ["sk", "const"],
-    ["", " "],
-    ["sp", "["],
-    ["", "count"],
-    ["sp", ","],
-    ["", " setCount"],
-    ["sp", "]"],
-    ["", " "],
-    ["so", "="],
-    ["", " "],
-    ["sf", "useState"],
-    ["sp", "("],
-    ["sn", "0"],
-    ["sp", ");"],
-  ],
-  [],
-  [
-    ["sk", "return"],
-    ["", " "],
-    ["sp", "("],
-  ],
-  [
-    ["sp", "<"],
-    ["stg", "main"],
-    ["", " "],
-    ["sa", "className"],
-    ["so", "="],
-    ["ss", '"app"'],
-    ["sp", ">"],
-  ],
-  [
-    ["sp", "<"],
-    ["stg", "h1"],
-    ["sp", ">"],
-    ["", "Hello from bun.wasm"],
-    ["sp", "</"],
-    ["stg", "h1"],
-    ["sp", ">"],
-  ],
-  [
-    ["sp", "<"],
-    ["stg", "p"],
-    ["", " "],
-    ["sa", "className"],
-    ["so", "="],
-    ["ss", '"tagline"'],
-    ["sp", ">"],
-    ["", "Vite serves this React app through Bun, running in your browser."],
-    ["sp", "</"],
-    ["stg", "p"],
-    ["sp", ">"],
-  ],
-  [
-    ["sp", "<"],
-    ["stg", "button"],
-    ["", " "],
-    ["sa", "className"],
-    ["so", "="],
-    ["ss", '"counter"'],
-    ["", " "],
-    ["sa", "onClick"],
-    ["so", "="],
-    ["sp", "{() =>"],
-    ["", " "],
-    ["sf", "setCount"],
-    ["sp", "(("],
-    ["", "n"],
-    ["sp", ")"],
-    ["", " "],
-    ["so", "=>"],
-    ["", " n "],
-    ["so", "+"],
-    ["", " "],
-    ["sn", "1"],
-    ["sp", ")}>"],
-  ],
-  [
-    ["", "count is "],
-    ["sp", "{"],
-    ["", "count"],
-    ["sp", "}"],
-  ],
-  [
-    ["sp", "</"],
-    ["stg", "button"],
-    ["sp", ">"],
-  ],
-  [
-    ["sp", "<"],
-    ["stg", "p"],
-    ["", " "],
-    ["sa", "className"],
-    ["so", "="],
-    ["ss", '"hint"'],
-    ["sp", ">"],
-  ],
-  [
-    ["", "Edit "],
-    ["sp", "<"],
-    ["stg", "code"],
-    ["sp", ">"],
-    ["", "src/App.tsx"],
-    ["sp", "</"],
-    ["stg", "code"],
-    ["sp", ">"],
-    ["", " and the page updates without losing the count."],
-  ],
-  [
-    ["sp", "</"],
-    ["stg", "p"],
-    ["sp", ">"],
-  ],
-  [
-    ["sp", "</"],
-    ["stg", "main"],
-    ["sp", ">"],
-  ],
-  [["sp", ");"]],
-  [["sp", "}"]],
-  [],
-  [
-    ["sk", "export default"],
-    ["", " App"],
-    ["sp", ";"],
-  ],
-];
-
-/** Each line's indent in columns. A wrapped line continues at the same indent. */
-const APP_TSX_INDENT = [0, 0, 0, 0, 2, 0, 2, 4, 6, 6, 6, 8, 6, 6, 8, 6, 4, 2, 0, 0, 0] as const;
-
-/** The line the caret is on, counted from 1: the heading someone just edited. */
+/** The editor's current line, counted from 1: the heading. The keyboard is in the terminal. */
 const CARET_LINE = 9;
 
 interface TreeRow {
@@ -221,16 +62,12 @@ function FileMark(props: { kind: TreeRow["kind"] }) {
   );
 }
 
-/** A command at the prompt. It types itself out when its step arrives. */
-function Prompt(props: { command: string; typed: boolean }) {
+/** A prompt, with its command once that step of the boot has arrived. */
+function Prompt(props: { command: string; entered: boolean }) {
   return (
     <span class="lp-wb-tline">
-      <span class="a-path">~/vite-react</span> <span class="a-dim">$</span>{" "}
-      <Show when={props.typed}>
-        <span class="lp-wb-typed" style={{ "--chars": props.command.length }}>
-          {props.command}
-        </span>
-      </Show>
+      <span class="a-path">~/vite-react</span> <span class="a-prompt">$</span>{" "}
+      <Show when={props.entered}>{props.command}</Show>
     </span>
   );
 }
@@ -295,9 +132,7 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
         </div>
 
         <div class="lp-wb-pane lp-wb-explorer" aria-hidden="true">
-          <div class="lp-wb-strip">
-            <span class="lp-wb-tooth is-active">Files</span>
-          </div>
+          <div class="lp-wb-head">Files</div>
           <ul class="lp-wb-tree">
             <For each={TREE}>
               {(row) => (
@@ -337,22 +172,19 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
             </span>
           </div>
           <ol class="lp-wb-code">
-            <For each={APP_TSX}>
+            <For each={APP_TSX_LINES}>
               {(line, index) => (
                 <li classList={{ "is-current": index() + 1 === CARET_LINE }}>
                   <span class="lp-wb-ln">{index() + 1}</span>
-                  <code style={{ "--indent": APP_TSX_INDENT[index()] ?? 0 }}>
-                    {" ".repeat(APP_TSX_INDENT[index()] ?? 0)}
-                    <For each={line}>
+                  <code style={{ "--indent": line.indent }}>
+                    {" ".repeat(line.indent)}
+                    <For each={line.tokens}>
                       {(token) => (
                         <Show when={token[0]} fallback={token[1]}>
                           <span class={token[0]}>{token[1]}</span>
                         </Show>
                       )}
                     </For>
-                    <Show when={index() + 1 === CARET_LINE}>
-                      <span class="lp-wb-caret" />
-                    </Show>
                   </code>
                 </li>
               )}
@@ -361,8 +193,8 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
         </div>
 
         <div class="lp-wb-pane lp-wb-preview">
-          <div class="lp-wb-strip" aria-hidden="true">
-            <span class="lp-wb-tooth is-active">Preview</span>
+          <div class="lp-wb-head" aria-hidden="true">
+            Preview
             <span class="lp-wb-url">
               <Icon name="reload" />
               <span>127.0.0.1:5173</span>
@@ -414,7 +246,7 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
           </div>
           <div class="lp-wb-term">
             <pre>
-              <Prompt command="bun install" typed={step() >= 1} />
+              <Prompt command="bun install" entered={step() >= 1} />
               <Show when={step() >= 2}>
                 <span class="lp-wb-tline">
                   <span class="a-bold">bun install</span> <span class="a-dim">v1.4.4</span>
@@ -433,10 +265,11 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
                   <span class="a-ok">+</span> react-dom<span class="a-dim">@19.3.1</span>
                 </span>
                 <span class="lp-wb-tline"> </span>
-                <Prompt command="bun run dev" typed={step() >= 3} />
+                <Prompt command="bun run dev" entered={step() >= 3} />
               </Show>
               <Show when={props.demo.ready()}>
-                <span class="lp-wb-tline">
+                {/* The script's echo is wider than a phone's terminal; the phone frame leaves it out. */}
+                <span class="lp-wb-tline is-wide">
                   <span class="a-dim">$ vite --host 127.0.0.1 --port 5173 --strictPort</span>
                 </span>
                 <span class="lp-wb-tline"> </span>
@@ -461,7 +294,7 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
             </pre>
           </div>
           <div class="lp-wb-keys">
-            <For each={SOFT_KEYS}>{(key) => <span classList={{ "is-mod": key === "ctrl" }}>{key}</span>}</For>
+            <For each={SOFT_KEYS}>{(key) => <span>{key}</span>}</For>
           </div>
         </div>
 
@@ -469,12 +302,6 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
           <span>
             <Icon name="check" />
             saved
-          </span>
-          <span class="lp-wb-status-fill" />
-          <span>Ln 9, Col 37</span>
-          <span>TypeScript JSX</span>
-          <span class="lp-wb-status-live">
-            <span class="lp-wb-lamp" />2 tabs
           </span>
         </div>
 

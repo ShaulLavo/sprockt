@@ -33,6 +33,15 @@ export function editorTheme(scheme: ColorScheme): EditorTheme {
     inactiveSelectionColor: token("bg-hover", "#e6ebf2", "#1b2431"),
     popupBackgroundColor: token("bg-elevated", "#ffffff", "#1c2533"),
     caretColor: token("caret", "#d1245a", "#ff7ea2"),
+    // A problem is underlined in its status color. The code under it keeps its place in the page:
+    // no red wash across whole lines, so a file with many problems is still readable.
+    colors: {
+      "lsp.diagnostic.error": SYNTAX.text,
+      "lsp.diagnostic.errorBackground": "transparent",
+      "lsp.diagnostic.errorUnderline": token("danger", "#c6283f", "#ff6b6b"),
+      "lsp.diagnostic.warningBackground": `color-mix(in oklab, ${token("warn", "#946200", "#f0bd4f")} 20%, transparent)`,
+      "lsp.diagnostic.informationBackground": `color-mix(in oklab, ${token("info", "#1f63c6", "#7fb6ff")} 16%, transparent)`,
+    },
     syntax: {
       keyword: SYNTAX.keyword,
       keywordDeclaration: SYNTAX.keyword,

@@ -36,10 +36,13 @@ export type TerminalColors = Readonly<Record<SurfaceKey, TerminalColor>> & {
   readonly ansi: readonly TerminalColor[];
 };
 
+/** Matches the phone layout in workbench.css. A phone gets a size that fits about 50 columns. */
+const onPhone = typeof matchMedia === "function" && matchMedia("(max-width: 768px)").matches;
+
 /** The terminal font: the workbench's code face, with the platform monospace as a fallback. */
 export const TERMINAL_FONT: Partial<TerminalFontSettings> = {
   family: '"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  size: 13,
+  size: onPhone ? 12 : 13,
   lineHeight: 1.15,
   weight: 400,
   boldWeight: 600,

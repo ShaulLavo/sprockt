@@ -12,15 +12,20 @@ import {
   type TemplateId,
   type TemplateSummary,
 } from "../templates/metadata";
-import { CHAINRING, chainringPath } from "../ui/sprocket";
-import { LANDING_COPY, PENDING_COPY } from "./copy";
+import { CHAINRING, chainringPath, toothPath } from "../ui/sprocket";
+import { LANDING_COPY } from "./copy";
 import { createDemo } from "./demo";
 import { parseGithubInput } from "./github-input";
 import { Icon } from "./icons";
 import { BrandLogoTile, LOGOS } from "./logos";
 import { createThemeController } from "./theme";
 import { WorkbenchPreview } from "./WorkbenchPreview";
-import { listStoredWorkspaces, saveWorkspaceHint, type StoredWorkspaceSummary } from "./workspaces";
+import {
+  hasWorkspaceHints,
+  listStoredWorkspaces,
+  saveWorkspaceHint,
+  type StoredWorkspaceSummary,
+} from "./workspaces";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import "./landing.css";
 
@@ -33,7 +38,7 @@ const SAMPLE_GITHUB_PATH = routePath(SAMPLE_GITHUB_ROUTE);
 const REPO_URL = "https://github.com/ShaulLavo/sprockt";
 const DOCS_URL = "https://github.com/ShaulLavo/sprockt#readme";
 
-/** Matches the one-column layout in landing.css, where the hero drops its workbench. */
+/** Matches the one-column layout in landing.css, where the second workbench render is dropped. */
 const COMPACT_QUERY = "(max-width: 900px)";
 
 /** The two faces the first screen is set in, fetched before the stylesheet asks for them. */
@@ -52,25 +57,33 @@ function preloadFont(href: string): void {
 preloadFont(archivoLatinUrl);
 preloadFont(plexMonoLatinUrl);
 
-/** The browsers Sprockt runs in: the teeth of the showcase's tab strip. */
+/** The browsers Sprockt runs in. */
 const BROWSERS = [
-  { id: "chrome", label: "Chrome", logo: LOGOS.chrome },
-  { id: "firefox", label: "Firefox", logo: LOGOS.firefox },
-  { id: "safari", label: "Safari", logo: LOGOS.safari },
-  { id: "iphone", label: "iPhone Safari", logo: undefined },
+  { label: "Chrome", logo: LOGOS.chrome },
+  { label: "Firefox", logo: LOGOS.firefox },
+  { label: "Safari", logo: LOGOS.safari },
+  { label: "iPhone Safari", logo: LOGOS.safari },
 ] as const;
-
-type BrowserId = (typeof BROWSERS)[number]["id"];
 
 /** The parts Sprockt is built from, in the order a keystroke travels through them. */
 const STACK = ["Singapore", "ghostty-webgpu", "bash-web", "bun-wasm", "Waffle"] as const;
 
-const BUN_COMMANDS = ["bun install", "bun run dev", "bun test", "bun build"] as const;
-
 const CHAINRING_PATH = chainringPath(CHAINRING);
+/** The one lit tooth of the large mark, as on the small one. */
+const CHAINRING_LIT = toothPath(CHAINRING, 40, 0.3);
 
-/** The starters, then the empty workspace as the last row. */
+/** The starters, then the empty workspace as the last cell. */
 const TEMPLATES = STARTER_TEMPLATE_SUMMARIES.concat(BLANK_TEMPLATE_SUMMARY);
+
+/** A headline's last full stop is set in the lamp color: the page's one lit tooth. */
+function splitFinalStop(text: string): readonly [body: string, stop: string] {
+  return text.endsWith(".") ? [text.slice(0, -1), "."] : [text, ""];
+}
+
+/** A statement of two sentences, one per line, so neither ends on a lone word. */
+function sentences(text: string): readonly string[] {
+  return text.split(/(?<=\.)\s+/);
+}
 
 function createMediaQuery(query: string): Accessor<boolean> {
   const list = matchMedia(query);
@@ -79,27 +92,6 @@ function createMediaQuery(query: string): Accessor<boolean> {
   list.addEventListener("change", update);
   onCleanup(() => list.removeEventListener("change", update));
   return matches;
-}
-
-function ThemeSwitch(props: { theme: ReturnType<typeof createThemeController> }) {
-  const option = (scheme: "light" | "dark", label: string) => (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      aria-pressed={props.theme.resolved() === scheme}
-      data-testid={`theme-${scheme}`}
-      onClick={() => props.theme.setTheme(scheme)}
-    >
-      <Icon name={scheme === "light" ? "sun" : "moon"} />
-    </button>
-  );
-  return (
-    <div class="lp-theme-switch lp-desktop-only" role="group" aria-label="Theme">
-      {option("light", "Light theme")}
-      {option("dark", "Dark theme")}
-    </div>
-  );
 }
 
 export function Landing() {
@@ -111,10 +103,11 @@ export function Landing() {
   const [creatingTemplate, setCreatingTemplate] = createSignal<TemplateId | undefined>();
   const [createError, setCreateError] = createSignal<string | undefined>();
   const [menuOpen, setMenuOpen] = createSignal(false);
-  const [browser, setBrowser] = createSignal<BrowserId>("chrome");
 
   const [workspaces, setWorkspaces] = createStore<StoredWorkspaceSummary[]>([]);
   const [loadingWorkspaces, setLoadingWorkspaces] = createSignal(true);
+  // Known before storage answers, so a returning visitor's page does not jump once it does.
+  const expectsWorkspaces = hasWorkspaceHints();
   let refreshSequence = 0;
 
   async function refreshWorkspaces(): Promise<void> {
@@ -132,6 +125,8 @@ export function Landing() {
     if (document.visibilityState === "visible") void refreshWorkspaces();
   }
 
+  /** Saved workspaces get a column of their own; with none, the starters take the full width. */
+  const hasRecent = () => workspaces.length > 0 || (loadingWorkspaces() && expectsWorkspaces);
   const nextTheme = () => (theme.resolved() === "dark" ? "light" : "dark");
 
   function closeMenuOnEscape(event: KeyboardEvent): void {
@@ -176,15 +171,12 @@ export function Landing() {
     }
   }
 
-  /** How many teeth the showcase's sprocket has turned: one per boot step, one per browser. */
-  const turns = () => demo.step() + BROWSERS.findIndex((item) => item.id === browser());
-
   function renderTemplate(template: TemplateSummary) {
     const isCreating = () => creatingTemplate() === template.id;
     const isFeatured = Boolean(template.featured);
 
     return (
-      <li classList={{ "is-featured": isFeatured, "is-wide": isFeatured || template.id === "blank" }}>
+      <li classList={{ "is-featured": isFeatured }}>
         <button
           type="button"
           class="lp-tpl"
@@ -223,10 +215,12 @@ export function Landing() {
     </>
   );
 
+  const [titleBody, titleStop] = splitFinalStop(LANDING_COPY.heroTitle);
+
   return (
     <div class="landing-page" data-testid="landing-page">
       <a class="lp-skip" href="#main">
-        {PENDING_COPY.skip}
+        {LANDING_COPY.skip}
       </a>
       <header class="lp-nav nav" classList={{ "is-open": menuOpen() }}>
         <div class="lp-wrap wrap">
@@ -250,31 +244,41 @@ export function Landing() {
               <Icon name="github" />
               <span>{LANDING_COPY.navGithub}</span>
             </a>
-            <ThemeSwitch theme={theme} />
+            <div class="lp-theme-switch lp-desktop-only" role="group" aria-label="Theme">
+              <button
+                type="button"
+                title="Light theme"
+                aria-label="Light theme"
+                aria-pressed={theme.resolved() === "light"}
+                data-testid="theme-light"
+                onClick={() => theme.setTheme("light")}
+              >
+                <Icon name="sun" />
+              </button>
+              <button
+                type="button"
+                title="Dark theme"
+                aria-label="Dark theme"
+                aria-pressed={theme.resolved() === "dark"}
+                data-testid="theme-dark"
+                onClick={() => theme.setTheme("dark")}
+              >
+                <Icon name="moon" />
+              </button>
+            </div>
             <button
               type="button"
-              class="lp-btn lp-btn-line lp-nav-cta lp-desktop-only"
+              class="lp-btn lp-btn-line lp-nav-cta"
               disabled={creatingTemplate() !== undefined}
               data-testid="header-new-workspace"
               onClick={() => void launchTemplate("vite-react")}
             >
               {LANDING_COPY.navCta}
             </button>
-            {/* On a phone the bar holds two controls: one theme button and the menu. */}
-            <button
-              type="button"
-              class="lp-btn lp-btn-quiet lp-nav-icon lp-phone-only"
-              title={`Switch to ${nextTheme()} theme`}
-              aria-label={`Switch to ${nextTheme()} theme`}
-              data-testid="phone-theme-toggle"
-              onClick={() => theme.setTheme(nextTheme())}
-            >
-              <Icon name={theme.resolved() === "dark" ? "sun" : "moon"} />
-            </button>
             <button
               type="button"
               class="lp-btn lp-btn-quiet lp-nav-icon lp-nav-menu"
-              aria-label={PENDING_COPY.menu}
+              aria-label={LANDING_COPY.navMenu}
               aria-expanded={menuOpen()}
               aria-controls="lp-menu"
               data-testid="phone-menu-toggle"
@@ -290,6 +294,17 @@ export function Landing() {
             <a href={REPO_URL} target="_blank" rel="noreferrer">
               {LANDING_COPY.navGithub}
             </a>
+            {/* On a phone the theme lives here: the bar keeps to the mark, one action and the menu. */}
+            <button
+              type="button"
+              class="lp-phone-only"
+              aria-label={`Switch to ${nextTheme()} theme`}
+              data-testid="phone-theme-toggle"
+              onClick={() => theme.setTheme(nextTheme())}
+            >
+              <span>{nextTheme() === "light" ? "Light theme" : "Dark theme"}</span>
+              <Icon name={nextTheme() === "light" ? "sun" : "moon"} />
+            </button>
           </nav>
         </Show>
       </header>
@@ -298,59 +313,67 @@ export function Landing() {
         <section class="lp-hero hero" data-enter aria-labelledby="hero-title">
           <div class="lp-wrap wrap">
             <div class="lp-hero-text hero-text">
-              <h1 id="hero-title">{LANDING_COPY.heroTitle}</h1>
+              <h1 id="hero-title">
+                {titleBody}
+                <span class="lp-stop">{titleStop}</span>
+              </h1>
               <p class="lp-lede">{LANDING_COPY.heroLede}</p>
-              <div class="lp-hero-actions">
-                <button
-                  type="button"
-                  class="lp-btn lp-btn-primary lp-btn-lg"
-                  disabled={creatingTemplate() !== undefined}
-                  data-testid="hero-start-cta"
-                  onClick={() => void launchTemplate("vite-react")}
-                >
-                  {creatingTemplate() === "vite-react" ? LANDING_COPY.templateCreating : LANDING_COPY.heroCta}
-                </button>
-                <a class="lp-btn lp-btn-line lp-btn-lg" href="#templates">
-                  {LANDING_COPY.heroSecondary}
-                </a>
-              </div>
-
-              <form class="lp-open" role="search" onSubmit={handleGithubSubmit} noValidate>
-                <div class="lp-open-row">
-                  <label class="lp-open-field" for="repo-input">
-                    <Icon name="github" />
-                    <span class="lp-open-prefix" aria-hidden="true">
-                      github.com/
-                    </span>
-                    <span class="lp-sr-only">{LANDING_COPY.openLabel}</span>
-                    <input
-                      id="repo-input"
-                      type="text"
-                      placeholder={LANDING_COPY.openPlaceholder}
-                      autocomplete="off"
-                      spellcheck={false}
-                      autocapitalize="off"
-                      value={repoInput()}
-                      aria-invalid={repoError() ? "true" : undefined}
-                      aria-describedby={repoError() ? "repo-error" : undefined}
-                      data-testid="repo-input"
-                      onInput={(event) => {
-                        setRepoInput(event.currentTarget.value);
-                        if (repoError()) setRepoError(undefined);
-                      }}
-                    />
-                  </label>
-                  <button class="lp-btn lp-open-submit" type="submit" data-testid="repo-submit">
-                    {LANDING_COPY.openButton}
+              <div class="lp-hero-controls">
+                <div class="lp-hero-actions">
+                  <button
+                    type="button"
+                    class="lp-btn lp-btn-primary lp-btn-lg"
+                    disabled={creatingTemplate() !== undefined}
+                    data-testid="hero-start-cta"
+                    onClick={() => void launchTemplate("vite-react")}
+                  >
+                    {creatingTemplate() === "vite-react"
+                      ? LANDING_COPY.templateCreating
+                      : LANDING_COPY.heroCta}
                   </button>
+                  <a class="lp-btn lp-btn-line lp-btn-lg" href="#templates">
+                    {LANDING_COPY.heroSecondary}
+                  </a>
                 </div>
-                <Show when={repoError()}>
-                  {(message) => (
-                    <p id="repo-error" class="lp-open-error" role="alert" data-testid="repo-error">
-                      {message()}
-                    </p>
-                  )}
-                </Show>
+
+                <form class="lp-open" role="search" onSubmit={handleGithubSubmit} noValidate>
+                  <div class="lp-open-row">
+                    <label class="lp-open-field" for="repo-input">
+                      <Icon name="github" />
+                      <span class="lp-open-prefix" aria-hidden="true">
+                        github.com/
+                      </span>
+                      <span class="lp-sr-only">{LANDING_COPY.openLabel}</span>
+                      <input
+                        id="repo-input"
+                        type="text"
+                        placeholder={LANDING_COPY.openPlaceholder}
+                        autocomplete="off"
+                        spellcheck={false}
+                        autocapitalize="off"
+                        value={repoInput()}
+                        aria-invalid={repoError() ? "true" : undefined}
+                        aria-describedby={repoError() ? "repo-error" : undefined}
+                        data-testid="repo-input"
+                        onInput={(event) => {
+                          setRepoInput(event.currentTarget.value);
+                          if (repoError()) setRepoError(undefined);
+                        }}
+                      />
+                    </label>
+                    <button class="lp-btn lp-open-submit" type="submit" data-testid="repo-submit">
+                      {LANDING_COPY.openButton}
+                    </button>
+                  </div>
+                  <Show when={repoError()}>
+                    {(message) => (
+                      <p id="repo-error" class="lp-open-error" role="alert" data-testid="repo-error">
+                        {message()}
+                      </p>
+                    )}
+                  </Show>
+                </form>
+
                 <div class="lp-open-foot">
                   <span>
                     {LANDING_COPY.openTry}{" "}
@@ -376,64 +399,57 @@ export function Landing() {
                     {creatingTemplate() === "blank" ? LANDING_COPY.templateCreating : LANDING_COPY.altBlank}
                   </button>
                 </div>
-              </form>
+              </div>
             </div>
 
-            <Show when={!compact()}>
-              <div class="lp-tab lp-hero-tab" data-enter-media>
-                <div class="lp-tab-strip" aria-hidden="true">
-                  <span class="lp-tab-tooth is-active">
-                    <Icon name="logo" />
-                    Sprockt
-                    <Icon name="x" class="lp-tab-x" />
-                  </span>
-                  <span class="lp-tab-add">
-                    <Icon name="plus" />
-                  </span>
-                </div>
-                <WorkbenchPreview demo={demo} pane="terminal" label={PENDING_COPY.heroFrame} />
+            {/* The product itself, in the browser tab the headline promises. */}
+            <div class="lp-tab lp-hero-tab" data-enter-media>
+              <div class="lp-tab-strip" aria-hidden="true">
+                <span class="lp-tab-tooth is-active">
+                  <Icon name="logo" />
+                  Sprockt
+                  <Icon name="x" class="lp-tab-x" />
+                </span>
+                <span class="lp-tab-add">
+                  <Icon name="plus" />
+                </span>
+                <span class="lp-tab-note">{LANDING_COPY.heroPill}</span>
               </div>
-            </Show>
+              <WorkbenchPreview demo={demo} pane="terminal" label={LANDING_COPY.showcaseBenchFrame} />
+            </div>
           </div>
         </section>
 
-        <section class="lp-bench" id="workbench" aria-labelledby="bench-title">
+        <section class="lp-any" id="browsers" aria-labelledby="any-title">
           <div class="lp-wrap wrap">
-            <div class="lp-sec-head">
-              <h2 id="bench-title">{LANDING_COPY.whyBrowsersTitle}</h2>
-              <p>{LANDING_COPY.whyBrowsersBody}</p>
+            <div class="lp-any-text">
+              <div class="lp-sec-head">
+                <h2 id="any-title">{LANDING_COPY.showcaseTitle}</h2>
+                <p>{LANDING_COPY.whyBrowsersBody}</p>
+              </div>
+              <ul class="lp-browsers" aria-label={LANDING_COPY.showcaseBrowsers}>
+                <For each={BROWSERS}>
+                  {(item) => (
+                    <li>
+                      <img src={item.logo} alt="" width="24" height="24" loading="lazy" />
+                      <span>{item.label}</span>
+                    </li>
+                  )}
+                </For>
+              </ul>
             </div>
-            <div class="lp-tab lp-bench-tab" data-browser={browser()} style={{ "--turns": turns() }}>
-              <div class="lp-tab-strip">
-                <div class="lp-tab-teeth" role="tablist" aria-label={PENDING_COPY.browsers}>
-                  <For each={BROWSERS}>
-                    {(item) => (
-                      <button
-                        type="button"
-                        role="tab"
-                        class="lp-tab-tooth"
-                        classList={{ "is-active": browser() === item.id }}
-                        aria-selected={browser() === item.id}
-                        aria-label={item.label}
-                        onClick={() => setBrowser(item.id)}
-                      >
-                        <Show when={item.logo} fallback={<Icon name="phone" />}>
-                          {(logo) => <img src={logo()} alt="" width="16" height="16" />}
-                        </Show>
-                        <span>{item.label}</span>
-                      </button>
-                    )}
-                  </For>
+            {/* The same workspace again, in the phone layout: one state, two renders. */}
+            <Show when={!compact()}>
+              <div class="lp-tab lp-any-tab">
+                <div class="lp-tab-strip" aria-hidden="true">
+                  <span class="lp-tab-tooth is-active">
+                    <img src={LOGOS.safari} alt="" width="16" height="16" />
+                    iPhone Safari
+                  </span>
                 </div>
-                <span class="lp-tab-drive" aria-hidden="true">
-                  <span class="lp-tab-drive-text">{LANDING_COPY.heroPill}</span>
-                  <Icon name="logo" class="lp-tab-sprocket" />
-                </span>
+                <WorkbenchPreview demo={demo} pane="terminal" label={LANDING_COPY.showcaseHeroFrame} />
               </div>
-              <div class="lp-bench-stage">
-                <WorkbenchPreview demo={demo} pane="preview" label={PENDING_COPY.benchFrame} />
-              </div>
-            </div>
+            </Show>
           </div>
         </section>
 
@@ -443,7 +459,7 @@ export function Landing() {
               <h2 id="tpl-title">{LANDING_COPY.templatesTitle}</h2>
               <p>{LANDING_COPY.templatesNote}</p>
             </div>
-            <div class="lp-start-grid">
+            <div class="lp-start-grid" classList={{ "has-recent": hasRecent() }}>
               <div>
                 <Show when={createError()}>
                   {(message) => (
@@ -479,13 +495,16 @@ export function Landing() {
                   <code>bun build</code> and <code>bun:sqlite</code> straight in the tab.
                 </p>
                 <div class="lp-specimen lp-specimen-term" data-ui="terminal" aria-hidden="true">
-                  <For each={BUN_COMMANDS}>
-                    {(command) => (
-                      <span>
-                        <span class="lp-specimen-prompt">$</span> {command}
-                      </span>
-                    )}
-                  </For>
+                  <span>
+                    <span class="lp-specimen-prompt">$</span> bun --version
+                  </span>
+                  <span class="lp-specimen-out">1.4.4</span>
+                  <span>
+                    <span class="lp-specimen-prompt">$</span> bun run dev
+                  </span>
+                  <span class="lp-specimen-out">
+                    <b>VITE</b> v8.3.5 ready
+                  </span>
                 </div>
               </li>
 
@@ -494,10 +513,7 @@ export function Landing() {
                 <p>{LANDING_COPY.whyTabsBody}</p>
                 <div class="lp-specimen lp-specimen-tabs" data-ui="tabs" aria-hidden="true">
                   <div class="lp-tab-strip">
-                    <span class="lp-tab-tooth is-active">
-                      <span class="lp-lamp" />
-                      vite-react
-                    </span>
+                    <span class="lp-tab-tooth">vite-react</span>
                     <span class="lp-tab-tooth is-active">
                       <span class="lp-lamp" />
                       vite-react
@@ -508,10 +524,7 @@ export function Landing() {
                       <Icon name="drive" />
                       IndexedDB
                     </span>
-                    <span>
-                      <span class="lp-lamp" />
-                      dev :5173
-                    </span>
+                    <span>vite-react</span>
                   </div>
                 </div>
               </li>
@@ -539,7 +552,9 @@ export function Landing() {
       <footer class="lp-close closing">
         <div class="lp-wrap wrap">
           <div class="lp-close-main">
-            <p class="lp-close-title">{LANDING_COPY.whyNote}</p>
+            <p class="lp-close-title">
+              <For each={sentences(LANDING_COPY.closingTitle)}>{(sentence) => <span>{sentence}</span>}</For>
+            </p>
             <button
               type="button"
               class="lp-btn lp-btn-primary lp-btn-lg"
@@ -549,9 +564,6 @@ export function Landing() {
             >
               {creatingTemplate() === "vite-react" ? LANDING_COPY.templateCreating : LANDING_COPY.heroCta}
             </button>
-            <svg class="lp-chainring" viewBox="0 0 240 240" aria-hidden="true">
-              <path fill-rule="evenodd" d={CHAINRING_PATH} />
-            </svg>
           </div>
           <div class="lp-foot">
             <span>{LANDING_COPY.footerLine}</span>
@@ -565,6 +577,11 @@ export function Landing() {
             </span>
           </div>
         </div>
+        {/* The mark, large: an outline cropped by the band's edges, one tooth lit. */}
+        <svg class="lp-chainring" viewBox="0 0 240 240" aria-hidden="true">
+          <path class="lp-chainring-body" fill-rule="evenodd" d={CHAINRING_PATH} />
+          <path class="lp-chainring-lit" d={CHAINRING_LIT} />
+        </svg>
       </footer>
     </div>
   );

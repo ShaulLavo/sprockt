@@ -1,7 +1,7 @@
 /* Sprockt design tokens and base styles.
-   The identity is a machine tool: enamel-green surfaces, paper-and-ink primary actions, and one
-   lamp color for whatever is live or engaged. Tabs are teeth (flat-topped, sloped flanks), the
-   mark is a sprocket whose teeth are tabs.
+   The identity is a machine tool: enamel-green surfaces with a real step between them, and one
+   lamp green that is both the primary action and whatever is live or engaged. Tabs are teeth
+   (flat-topped, sloped flanks), the mark is a sprocket whose teeth are tabs.
    Every color is light-dark(light, dark). The page follows the system unless <html data-theme>
    is "light" or "dark" (src/workbench/theme.ts sets it from the stored choice).
    Slices keep their own CSS next to their components and build on these tokens. */
@@ -16,40 +16,46 @@
   color-scheme: light dark;
 
   /* ── Surfaces ── (enamel green-greys: tinted, never neutral grey, never pure black) */
-  --bg: light-dark(#e6ece5, #0f1815);
-  --bg-chrome: light-dark(#e6ece5, #0f1815);
-  --bg-panel: light-dark(#eef2ec, #131e1a);
-  --bg-editor: light-dark(#fbfcfa, #15211c);
-  --bg-input: light-dark(#ffffff, #1a2721);
-  --bg-elevated: light-dark(#ffffff, #1d2b25);
-  --bg-hover: light-dark(#dce5db, #1b2923);
-  --bg-active: light-dark(#d2e3d8, #1f332b);
-  --bg-selection: light-dark(#bfe6d2, #23493c);
-  --bg-line: light-dark(#f1f5ef, #1a2822);
-  --bg-stage: light-dark(#d5ddd4, #0a100d);
-  --bg-tabstrip: light-dark(#dde5dc, #0c1411);
-  --term-bg: light-dark(#f6f8f4, #111b17);
+  --bg: light-dark(#f4f7f2, #0d1512);
+  --bg-chrome: light-dark(#eef1ee, #0c1411);
+  --bg-panel: light-dark(#f6f8f5, #111b17);
+  --bg-editor: light-dark(#ffffff, #18251f);
+  --bg-input: light-dark(#ffffff, #1c2a24);
+  --bg-elevated: light-dark(#ffffff, #213029);
+  --bg-hover: light-dark(#e3e9e2, #1e2d26);
+  --bg-active: light-dark(#d5e8dc, #224035);
+  --bg-selection: light-dark(#b9e6cf, #235040);
+  --bg-line: light-dark(#f2f6f1, #1d2c25);
+  --bg-stage: light-dark(#e4ebe3, #080d0b);
+  --bg-tabstrip: light-dark(#e6ebe5, #0a110e);
+  --term-bg: light-dark(#fbfcfa, #131e19);
   --scrim: light-dark(rgb(13 24 19 / 0.22), rgb(0 0 0 / 0.55));
 
   /* ── Lines ── */
-  --line: light-dark(#d0dad0, #22312a);
-  --line-strong: light-dark(#b2c0b4, #34473e);
+  --line: light-dark(#d6ddd5, #263830);
+  --line-strong: light-dark(#b6c2b8, #3b5247);
 
   /* ── Text ── (fg ≥ 15:1, muted ≥ 7:1 for body text, subtle ≥ 4.5:1 for labels) */
-  --fg: light-dark(#0d1813, #e7eee8);
-  --fg-muted: light-dark(#34423a, #a5b5ac);
-  --fg-subtle: light-dark(#56675e, #80928a);
+  --fg: light-dark(#0d1813, #e9f0ea);
+  --fg-muted: light-dark(#34423a, #b0bfb6);
+  --fg-subtle: light-dark(#56675e, #8a9c93);
 
-  /* ── Primary actions: ink on paper, paper on ink. The strongest contrast on the page. ── */
-  --primary-bg: light-dark(#10231b, #e7eee8);
-  --primary-fg: light-dark(#f4f7f2, #0d1813);
-  --primary-hover: light-dark(#1b3a2d, #ffffff);
+  /* A second ground, a clear step from --bg, for alternate page bands and raised cards; and the
+     deep band a page may close on. */
+  --bg-band: light-dark(#e6ede5, #16241e);
+  --band-bg: light-dark(#10231b, #16241e);
+  --band-fg: light-dark(#f4f7f2, #e9f0ea);
 
-  /* ── Accent: the pilot lamp. Whatever is live, engaged or focused, and nothing else. ── */
+  /* ── Primary actions: the lamp green, solid. One per screen; every other action stays quiet. ── */
+  --primary-bg: light-dark(#0a7556, #78e2be);
+  --primary-fg: light-dark(#ffffff, #0d1512);
+  --primary-hover: light-dark(#086347, #93ebcd);
+
+  /* ── Accent: the pilot lamp. The primary action, and whatever is live, engaged or focused. ── */
   --accent: light-dark(#0a7556, #78e2be);
-  --accent-fg: light-dark(#ffffff, #06140e);
+  --accent-fg: light-dark(#ffffff, #0d1512);
   --accent-text: light-dark(#0a6b4f, #78e2be);
-  --accent-soft: light-dark(#dcefe4, #163026);
+  --accent-soft: light-dark(#d9efe3, #173328);
   --focus: light-dark(#0a7556, #78e2be);
   --caret: light-dark(#0a7556, #78e2be);
 
@@ -66,37 +72,37 @@
 
   /* ── File types ── */
   --ft-folder: light-dark(#6a7a71, #80928a);
-  --ft-tsx: light-dark(#1d5fa6, #8dc4f2);
-  --ft-ts: light-dark(#1d5fa6, #8dc4f2);
+  --ft-tsx: light-dark(#0b5cc4, #7cc0ff);
+  --ft-ts: light-dark(#0b5cc4, #7cc0ff);
   --ft-css: light-dark(#a2317a, #e59ac0);
-  --ft-json: light-dark(#8a5a00, #f0d58a);
-  --ft-html: light-dark(#a8501a, #edae85);
+  --ft-json: light-dark(#8f5a00, #ffd45e);
+  --ft-html: light-dark(#b6470f, #ffab73);
 
   /* ── Syntax ── (cool keywords and warm values against the green ground) */
-  --syn-text: light-dark(#0d1813, #dce5de);
-  --syn-keyword: light-dark(#1d5fa6, #8dc4f2);
-  --syn-string: light-dark(#3d7a1f, #b5d98c);
-  --syn-function: light-dark(#7a5600, #f0d58a);
-  --syn-type: light-dark(#0a7566, #7adcc4);
-  --syn-tag: light-dark(#1d5fa6, #8dc4f2);
-  --syn-attr: light-dark(#a8501a, #edae85);
-  --syn-number: light-dark(#b93a2b, #f5968a);
-  --syn-property: light-dark(#2e4a3d, #c6d4cb);
-  --syn-punct: light-dark(#56675e, #8fa197);
-  --syn-operator: light-dark(#56675e, #8fa197);
-  --syn-comment: light-dark(#6a7a71, #6f8278);
+  --syn-text: light-dark(#0d1813, #e2ebe4);
+  --syn-keyword: light-dark(#0b5cc4, #7cc0ff);
+  --syn-string: light-dark(#2c7a12, #a9e07a);
+  --syn-function: light-dark(#8f5a00, #ffd45e);
+  --syn-type: light-dark(#00796b, #5fe3c6);
+  --syn-tag: light-dark(#0b5cc4, #7cc0ff);
+  --syn-attr: light-dark(#b6470f, #ffab73);
+  --syn-number: light-dark(#c4281c, #ff8d82);
+  --syn-property: light-dark(#2e4a3d, #cfe0d6);
+  --syn-punct: light-dark(#56675e, #93a69b);
+  --syn-operator: light-dark(#56675e, #93a69b);
+  --syn-comment: light-dark(#6a7a71, #74877d);
   --syn-comment-style: italic;
 
   /* ── Terminal (ANSI) ── */
-  --ansi-fg: light-dark(#14211b, #dce5de);
+  --ansi-fg: light-dark(#14211b, #e2ebe4);
   --ansi-dim: light-dark(#6a7a71, #71847a);
   --ansi-black: light-dark(#0d1813, #2a3a32);
   --ansi-red: light-dark(#bf2b3a, #ff7b72);
-  --ansi-green: light-dark(#1c7a3e, #8fdc8a);
-  --ansi-yellow: light-dark(#8a5a00, #f0c96b);
-  --ansi-blue: light-dark(#1d5fa6, #8dc4f2);
+  --ansi-green: light-dark(#1c7a3e, #8be07f);
+  --ansi-yellow: light-dark(#8f5a00, #ffd45e);
+  --ansi-blue: light-dark(#0b5cc4, #7cc0ff);
   --ansi-magenta: light-dark(#a2317a, #e59ac0);
-  --ansi-cyan: light-dark(#0a7580, #6fd8d0);
+  --ansi-cyan: light-dark(#0a7580, #5fd8d0);
   --ansi-white: light-dark(#56675e, #c9d5cc);
   --ansi-bright-black: var(--ansi-dim);
   --ansi-bright-red: light-dark(#a01f2e, #ff9a92);
@@ -111,7 +117,7 @@
 
   /* ── Status bar ── */
   --status-bg: var(--bg-tabstrip);
-  --status-fg: light-dark(#34423a, #a5b5ac);
+  --status-fg: light-dark(#34423a, #b0bfb6);
   --status-line: var(--line);
 
   /* ── Type ── One grotesque at two widths, one typewriter-pitch mono.
@@ -162,8 +168,8 @@
   --space-24: 96px;
 
   /* ── Radius ── (machined: small and crisp) */
-  --radius-xs: 2px;
-  --radius-sm: 3px;
+  --radius-xs: 3px;
+  --radius-sm: 4px;
   --radius-md: 4px;
   --radius-lg: 6px;
   --radius-xl: 8px;
@@ -365,7 +371,7 @@ kbd {
   fill: var(--accent);
 }
 
-/* A primary action: ink on paper in light, paper on ink in dark. */
+/* A primary action: the lamp green, solid. */
 .primary {
   display: inline-flex;
   align-items: center;
@@ -461,54 +467,21 @@ kbd {
   height: 100%;
 }
 
-/* A pane's header is a tab strip holding one tooth: the pane's name. */
+/* A pane that is not a set of tabs (Files, Preview) has a plain header: its name, then room
+   for its tools. Teeth are for tabs only. */
 .pane-header {
-  --tooth-bg: var(--pane-bg, var(--bg-panel));
   display: flex;
   flex: none;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
   height: var(--tab-h);
-  padding: 0 var(--space-2) 0 0;
+  padding: 0 var(--space-2) 0 var(--space-3);
   border-bottom: 1px solid var(--line);
-  background: var(--bg-tabstrip);
-  color: var(--fg);
+  color: var(--fg-muted);
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   white-space: nowrap;
-}
-
-.pane-header > :first-child {
-  position: relative;
-  z-index: 0;
-  display: inline-flex;
-  align-items: center;
-  height: calc(var(--tab-h) - var(--tooth-top));
-  margin-bottom: -1px;
-  padding: 0 calc(var(--tooth-flank) + var(--space-3));
-}
-
-.pane-header > :first-child::before,
-.pane-header > :first-child::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  clip-path: var(--tooth-shape);
-}
-
-.pane-header > :first-child::before {
-  background: var(--line-strong);
-}
-
-.pane-header > :first-child::after {
-  inset: 1px 1px 0;
-  background: var(--tooth-bg);
-}
-
-.pane-header > :not(:first-child) {
-  align-self: center;
 }
 
 .pane-empty,
