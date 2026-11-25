@@ -34,40 +34,37 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
 
-  # The production build, then the end-to-end suite in Chromium, Firefox and WebKit.
+  # The production build, then the end-to-end suite in Chromium, Firefox and WebKit. The job runs
+  # in Playwright's image, which carries the three browsers and their system libraries: installing
+  # those libraries on a plain runner took over two minutes of every run. Keep the image tag on
+  # the same version as @playwright/test.
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      options: --user 1001 --ipc=host
     env:
       SPROCKT_GUEST_CACHE: ${{ github.workspace }}/.guest-cache
     steps:
       - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
+      # setup-bun needs unzip, which the image lacks; its Node installs Bun instead.
+      - name: Install Bun
+        run: |
+          npm install --global --prefix "$HOME/.local" "bun@$BUN_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
+          key: bun-playwright-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-playwright-
       - uses: actions/cache@v4
         with:
           path: .guest-cache
           key: guests-${{ hashFiles('guests.lock.json') }}
-      - uses: actions/cache@v4
-        id: playwright
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install --frozen-lockfile
       # The build stages and verifies the pinned guests first, from the cache when it has them.
       - run: bun run build
-      - name: Install browsers
-        if: steps.playwright.outputs.cache-hit != 'true'
-        run: bunx playwright install --with-deps chromium firefox webkit
-      - name: Install browser system libraries
-        if: steps.playwright.outputs.cache-hit == 'true'
-        run: bunx playwright install-deps chromium firefox webkit
       - run: bun run test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()
