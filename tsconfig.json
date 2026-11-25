@@ -19,5 +19,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "e2e", "scripts", "vite.config.ts", "playwright.config.ts"]
+  "include": ["src", "worker", "e2e", "scripts", "vite.config.ts", "playwright.config.ts"]
 }
