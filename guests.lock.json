@@ -13,9 +13,9 @@
       "bytes": 2309643
     },
     "tsrs-lsp.wasm": {
-      "source": "https://github.com/ShaulLavo/tsrs/releases/download/wasi-lsp-v0.1.0/tsrs-lsp.wasm",
-      "sha256": "3e9b995e007b6d1a1f03cac02c1d13ea42ffd622e79080fd888727dda855a119",
-      "bytes": 12491195
+      "source": "https://github.com/ShaulLavo/tsrs/releases/download/wasi-lsp-v0.1.1/tsrs-lsp.wasm",
+      "sha256": "1bfc19da32debbcb80749b47a340a43fbf9de13d511887876ffb431d20aed6a4",
+      "bytes": 12516688
     }
   }
 }

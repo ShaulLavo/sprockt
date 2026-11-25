@@ -180,7 +180,7 @@ caching and `Access-Control-Allow-Origin: *`. The packages do not name them yet:
 - `guests.lock.json` pins `bun-browser.wasm` (bun-wasm `7b25271e3`) and `shell-engine.wasm`
   (bash-web 0.0.114) by store URL, SHA-256 and size. The URL contains the hash, so it never
   serves anything else. `tsrs-lsp.wasm` (the TypeScript language server) is pinned to its
-  tagged GitHub release on the ShaulLavo/tsrs fork, served uncompressed.
+  tagged GitHub release on the ShaulLavo/tsrs fork (`wasi-lsp-v0.1.1`), served uncompressed.
 - `bun run guests` downloads, decodes the gzip encoding, checks the decoded size and SHA-256,
   and stages them at `public/guests/<sha256>/<name>` (written beside the target and renamed,
   so a killed run leaves no partial file). The build script runs it first, so a build never
