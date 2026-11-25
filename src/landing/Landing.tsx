@@ -1,6 +1,7 @@
 import { createResource, For, Show } from "solid-js";
 import { storedWorkspaces } from "waffle";
 import { navigate } from "../app/router";
+import { IncompleteImport } from "../importer/IncompleteImport";
 import { newWorkspaceId, workspaceIdOf } from "../workspace/paths";
 import "./landing.css";
 
@@ -12,7 +13,7 @@ async function savedWorkspaceIds(): Promise<string[]> {
 const open = (id: string) => navigate({ kind: "workspace", id });
 
 export function Landing() {
-  const [saved] = createResource(savedWorkspaceIds, { initialValue: [] });
+  const [saved, { refetch }] = createResource(savedWorkspaceIds, { initialValue: [] });
 
   return (
     <main class="landing">
@@ -34,6 +35,7 @@ export function Landing() {
                 <button type="button" onClick={() => open(id)}>
                   {id}
                 </button>
+                <IncompleteImport id={id} onDeleted={() => void refetch()} />
               </li>
             )}
           </For>

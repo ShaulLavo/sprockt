@@ -41,6 +41,12 @@ describe("parseRoute", () => {
     expect(parseRoute("/github/a%20b/c")).toEqual({ kind: "not-found" });
   });
 
+  test("a share link is /s; the snapshot is in the fragment, not the path", () => {
+    expect(parseRoute("/s")).toEqual({ kind: "share" });
+    expect(parseRoute("/s/")).toEqual({ kind: "share" });
+    expect(parseRoute("/s/extra")).toEqual({ kind: "not-found" });
+  });
+
   test("anything else is not found", () => {
     expect(parseRoute("/settings")).toEqual({ kind: "not-found" });
   });
@@ -70,6 +76,8 @@ describe("routePath", () => {
     { kind: "github", owner: "a", repo: "b", branch: "feature/x" },
     { kind: "github", owner: "a", repo: "b", branch: "main", subdir: "examples/vite" },
     { kind: "github", owner: "a", repo: "b", branch: "main", subdir: "docs/a#b/what?/50%" },
+    { kind: "github", owner: "a", repo: "b", branch: "main", subdir: "my app/100%" },
+    { kind: "share" },
   ];
 
   test("reserved characters in a subdirectory are encoded per segment", () => {

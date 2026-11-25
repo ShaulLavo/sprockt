@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildTar, chunkedStream, paxBody, type TarFixtureEntry } from "./tar-writer.ts";
 import { GitHubImportError, type GitHubErrorCode } from "./errors.ts";
-import { importGitHubRepo } from "./import.ts";
+import { importGitHubRepo, type ImportProgress } from "./import.ts";
 import { parseGitHubSource, type GitHubSource } from "./source.ts";
 
 function source(input: string): GitHubSource {
@@ -66,6 +66,20 @@ async function importError(promise: Promise<unknown>): Promise<GitHubImportError
 }
 
 describe("importGitHubRepo", () => {
+  test("reports progress: resolving first, then growing download totals", async () => {
+    const fetch = mockFetch({ "/api/github/archive/acme/demo/main": { body: repoArchive() } });
+    const stages: ImportProgress[] = [];
+    await importGitHubRepo(source("/github/acme/demo/tree/main"), {
+      fetch,
+      onProgress: (p) => stages.push(p),
+    });
+    expect(stages[0]).toEqual({ stage: "resolving" });
+    const downloads = stages.flatMap((p) => (p.stage === "downloading" ? [p.bytes] : []));
+    expect(downloads.length).toBeGreaterThan(0);
+    expect(downloads).toEqual(downloads.toSorted((a, b) => a - b));
+    expect(downloads.at(-1)).toBe(repoArchive().byteLength);
+  });
+
   test("resolves the default branch and unpacks the whole repository", async () => {
     const calls: string[] = [];
     const fetch = mockFetch(

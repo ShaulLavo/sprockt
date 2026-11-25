@@ -10,6 +10,8 @@ export type Route =
       readonly branch?: string;
       readonly subdir?: string;
     }
+  /** `/s#share=…`: a share link. The snapshot is in the fragment, read by the share page. */
+  | { readonly kind: "share" }
   | { readonly kind: "not-found" };
 
 const NOT_FOUND: Route = { kind: "not-found" };
@@ -48,6 +50,7 @@ export function parseRoute(pathname: string): Route {
   const [first, second] = parts;
   if (first === undefined) return { kind: "landing" };
   if (first === "github") return githubRoute(parts.slice(1));
+  if (first === "s") return parts.length === 1 ? { kind: "share" } : NOT_FOUND;
   if (first !== "w" || parts.length !== 2 || !second || !isWorkspaceId(second)) return NOT_FOUND;
   return { kind: "workspace", id: second };
 }
@@ -63,5 +66,6 @@ function githubPath(route: Extract<Route, { kind: "github" }>): string {
 export function routePath(route: Route): string {
   if (route.kind === "workspace") return `/w/${route.id}`;
   if (route.kind === "github") return githubPath(route);
+  if (route.kind === "share") return "/s";
   return "/";
 }
