@@ -2,11 +2,14 @@
 import { GitHubImportError } from "./github/errors";
 import { COPY, fill } from "./copy";
 
-/** "45 seconds", "1 minute", "3 minutes": a wait, rounded up to whole minutes past a minute. */
+/** "1 second", "45 seconds", "1 minute", "3 minutes": a wait, rounded up to whole minutes past a minute. */
 export function formatWait(seconds: number): string {
-  if (seconds < 60) return fill(COPY.placeholder.seconds, { count: Math.max(1, Math.ceil(seconds)) });
+  if (seconds < 60) {
+    const whole = Math.max(1, Math.ceil(seconds));
+    return whole === 1 ? COPY.importer.second : fill(COPY.importer.seconds, { count: whole });
+  }
   const minutes = Math.ceil(seconds / 60);
-  return minutes === 1 ? COPY.placeholder.minute : fill(COPY.placeholder.minutes, { count: minutes });
+  return minutes === 1 ? COPY.importer.minute : fill(COPY.importer.minutes, { count: minutes });
 }
 
 /** Bytes as KiB or MiB with one decimal, the way the import limits are written. */
@@ -35,16 +38,16 @@ export function importErrorMessage(error: unknown): string {
         ? fill(COPY.errors.githubRateLimit, { retryAfter: formatWait(error.retryAfter) })
         : COPY.errors.githubRateLimitUnknown;
     case "network":
-      return COPY.placeholder.networkError;
+      return COPY.errors.networkError;
     default:
-      return fill(COPY.placeholder.importFailed, { message: error.message });
+      return fill(COPY.errors.importFailed, { message: error.message });
   }
 }
 
 function storageOrGeneric(error: unknown): string {
   if (isStorageFull(error)) return COPY.errors.storageFull;
   const message = error instanceof Error ? error.message : String(error);
-  return fill(COPY.placeholder.importFailed, { message });
+  return fill(COPY.errors.importFailed, { message });
 }
 
 /** WASI's ENOSPC, which Waffle's filesystem returns for a full disk. */

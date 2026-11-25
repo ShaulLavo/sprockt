@@ -29,18 +29,18 @@ export function IncompleteImport(props: { id: string; onDeleted: () => void }) {
       return;
     }
     setConfirming(false);
-    setError(COPY.placeholder.deleteBusy);
+    setError(COPY.errors.deleteBusy);
   }
 
   return (
     <Show when={meta.state === "ready" && meta()}>
       {(incomplete) => (
         <div class="incomplete-import" data-testid="incomplete-import">
-          <span class="incomplete-label">{COPY.placeholder.importIncomplete}</span>
+          <span class="incomplete-label">{COPY.importer.importIncomplete}</span>
           <Show when={retryPath(props.id, incomplete())}>
             {(path) => (
               <a class="importer-button" href={path()} data-testid="incomplete-retry">
-                {COPY.placeholder.tryAgain}
+                {COPY.importer.tryAgain}
               </a>
             )}
           </Show>
@@ -53,7 +53,7 @@ export function IncompleteImport(props: { id: string; onDeleted: () => void }) {
                 data-testid="incomplete-delete"
                 onClick={() => setConfirming(true)}
               >
-                {COPY.placeholder.delete}
+                {COPY.importer.delete}
               </button>
             }
           >

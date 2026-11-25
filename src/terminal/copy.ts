@@ -1,21 +1,16 @@
-// Terminal strings. `ui` entries are verbatim from the copywriter's ui.json; `pending` entries are
-// short functional placeholders waiting for real copy.
-
+// Terminal strings, synced with copy/ui.json.
 export const ui = {
   terminal: "Terminal",
   noTerminal: "No terminal open. Start a new shell to run commands.",
-} as const;
-
-export const pending = {
   tabs: "Terminal tabs",
   newTerminal: "New terminal",
   splitTerminal: "Split terminal",
-  unsplitTerminal: "Join terminals",
-  killTerminal: "Kill terminal",
+  unsplitTerminal: "Unsplit terminal",
+  closeActiveTerminal: "Close terminal",
   closeTerminal: "Close {name}",
   renameTerminal: "Rename {name}",
-  collapsePanel: "Collapse panel",
-  expandPanel: "Expand panel",
+  collapsePanel: "Collapse terminal",
+  expandPanel: "Expand terminal",
   terminalKeys: "Terminal keys",
-  shellStopped: "The shell stopped unexpectedly.",
+  shellStopped: "Shell stopped unexpectedly.",
 } as const;

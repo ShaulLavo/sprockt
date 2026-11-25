@@ -53,7 +53,7 @@ export function Explorer(props: { store: EditorStore }) {
         <span>Files</span>
       </header>
       <ul class="tree" data-testid="file-tree">
-        <For each={tree.latest} fallback={<li class="tree-empty">No files yet</li>}>
+        <For each={tree.latest} fallback={<li class="tree-empty">No files yet.</li>}>
           {(node) => <Entry node={node} depth={0} store={props.store} />}
         </For>
       </ul>

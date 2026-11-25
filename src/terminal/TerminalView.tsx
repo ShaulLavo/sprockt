@@ -2,7 +2,7 @@
 // workbench theme. Hidden tabs keep running; Ghostty refits a tab when it is shown again.
 import { createEffect, createSignal, on, onCleanup, onMount, Show, type Accessor } from "solid-js";
 import { useWorkspace } from "../workspace/session";
-import { pending } from "./copy";
+import { ui } from "./copy";
 import { startTerminal, type TerminalHandle } from "./session";
 import { terminalAppearance } from "./theme";
 
@@ -49,7 +49,7 @@ export function TerminalView(props: TerminalViewProps) {
       onState(state, detail) {
         if (closing.signal.aborted) return;
         terminals.setState(props.id, state);
-        if (state === "failed") setFailure(detail ?? pending.shellStopped);
+        if (state === "failed") setFailure(detail ?? ui.shellStopped);
         runStartupCommand();
       },
       onTitle: (title) => terminals.setShellTitle(props.id, title),

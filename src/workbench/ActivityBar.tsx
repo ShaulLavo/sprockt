@@ -1,7 +1,7 @@
 // The desktop activity bar: one toggle per pane that can be closed.
 import { For } from "solid-js";
 import { Icon, type IconName } from "../ui/icons";
-import { pending, ui } from "./copy";
+import { ui } from "./copy";
 import { isOpen, setOpen, type Splitter } from "./layout";
 import type { LayoutStore } from "./layout-store";
 
@@ -13,7 +13,7 @@ const ITEMS: readonly { pane: Splitter; label: string; icon: IconName }[] = [
 
 export function ActivityBar(props: { layout: LayoutStore }) {
   return (
-    <nav class="wb-activity" aria-label={pending.views}>
+    <nav class="wb-activity" aria-label={ui.workbench.views}>
       <For each={ITEMS}>
         {(item) => {
           const open = () => isOpen(props.layout.layout(), item.pane);

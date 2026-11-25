@@ -20,7 +20,7 @@ import { openWorkspace, WorkspaceContext, type WorkspaceSession } from "../works
 import { ActivityBar } from "./ActivityBar";
 import { currentStepLabel } from "./boot-steps";
 import { BootProgress } from "./BootProgress";
-import { pending, ui } from "./copy";
+import { ui } from "./copy";
 import {
   fitLayout,
   isOpen,
@@ -185,15 +185,15 @@ function Panes(props: { session: WorkspaceSession; frame: FrameState }) {
       <div class="wb-slot wb-explorer" {...slot("files")}>
         <Explorer store={explorerStore} />
       </div>
-      {handle("explorer", pending.resizeExplorer, "files")}
+      {handle("explorer", ui.workbench.resizeExplorer, "files")}
       <div class="wb-slot wb-editor wb-card" {...slot("code")}>
         <EditorPane store={editor} />
       </div>
-      {handle("preview", pending.resizePreview, "preview")}
+      {handle("preview", ui.workbench.resizePreview, "preview")}
       <div class="wb-slot wb-preview wb-card" {...slot("preview")}>
         <PreviewPane />
       </div>
-      {handle("terminal", pending.resizeTerminal, "terminal")}
+      {handle("terminal", ui.workbench.resizeTerminal, "terminal")}
       <div class="wb-slot wb-terminal wb-card" {...slot("terminal")}>
         <TerminalPanel
           scheme={colorScheme}
@@ -347,7 +347,7 @@ export function Workbench(props: { id: string }) {
       <ActivityBar layout={layout} />
       {/* The boot stage for assistive technology and tests; the boot card shows it on screen. */}
       <span class="sr-only" role="status" data-testid="boot-stage">
-        {stage() === "moved" ? pending.movedShort : currentStepLabel(stage())}
+        {stage() === "moved" ? ui.tabs.movedShort : currentStepLabel(stage())}
       </span>
       <Show when={elsewhere() === undefined}>
         <BootProgress workspaceId={props.id} stage="storage" />
@@ -361,18 +361,18 @@ export function Workbench(props: { id: string }) {
       {/* Opening here takes the workspace away from the other tab, so the person is asked. */}
       <Show when={busy()}>
         <Notice
-          text={pending.busy}
+          text={ui.tabs.busy}
           testId="workspace-busy"
-          action={pending.openHere}
+          action={ui.tabs.openHere}
           actionTestId="take-over"
           onAction={() => setTakeOver(true)}
         />
       </Show>
       <Show when={stage() === "moved"}>
         <Notice
-          text={pending.moved}
+          text={ui.tabs.moved}
           testId="moved-notice"
-          action={pending.openHere}
+          action={ui.tabs.openHere}
           onAction={() => location.reload()}
         />
       </Show>

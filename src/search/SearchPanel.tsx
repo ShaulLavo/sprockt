@@ -92,6 +92,8 @@ function summaryText(status: Status, fileCount: number): string {
   if (status.kind !== "done") return "";
   if (status.matches === 0) return SEARCH_COPY.noSearchResults;
   if (status.truncated) return fill(SEARCH_COPY.truncated, { matches: status.matches });
+  if (status.matches === 1) return SEARCH_COPY.resultOneInOne;
+  if (fileCount === 1) return fill(SEARCH_COPY.resultManyInOne, { matches: status.matches });
   return fill(SEARCH_COPY.resultCount, { matches: status.matches, files: fileCount });
 }
 

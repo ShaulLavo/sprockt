@@ -18,11 +18,14 @@ type ImportState =
   | { readonly stage: "failed"; readonly message: string };
 
 function stageText(state: ImportState): string {
-  if (state.stage === "resolving") return COPY.placeholder.resolving;
-  if (state.stage === "downloading")
-    return fill(COPY.placeholder.downloading, { size: formatSize(state.bytes) });
-  if (state.stage === "writing") return fill(COPY.placeholder.writing, { count: state.files });
-  if (state.stage === "opening") return COPY.placeholder.opening;
+  if (state.stage === "resolving") return COPY.importer.resolving;
+  if (state.stage === "downloading") {
+    return fill(COPY.importer.downloading, { size: formatSize(state.bytes) });
+  }
+  if (state.stage === "writing") {
+    return state.files === 1 ? COPY.importer.writingOne : fill(COPY.importer.writing, { count: state.files });
+  }
+  if (state.stage === "opening") return COPY.importer.opening;
   return state.message;
 }
 
@@ -87,7 +90,7 @@ export function ImportPage(props: { route: GitHubRoute }) {
   return (
     <main class="importer" data-testid="import-page" data-stage={state().stage}>
       <section class="importer-card" aria-live="polite">
-        <h1 class="importer-title">{fill(COPY.placeholder.importing, { name: name() })}</h1>
+        <h1 class="importer-title">{fill(COPY.importer.importing, { name: name() })}</h1>
         <Switch>
           <Match when={state().stage !== "failed"}>
             <p class="importer-stage" data-testid="import-stage">
@@ -101,10 +104,10 @@ export function ImportPage(props: { route: GitHubRoute }) {
             </p>
             <div class="importer-actions">
               <button type="button" class="importer-button primary" onClick={start}>
-                {COPY.placeholder.tryAgain}
+                {COPY.importer.tryAgain}
               </button>
               <button type="button" class="importer-button" onClick={() => navigate({ kind: "landing" })}>
-                {COPY.placeholder.backHome}
+                {COPY.importer.backHome}
               </button>
             </div>
           </Match>

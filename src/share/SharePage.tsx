@@ -15,7 +15,7 @@ async function openShare(fragment: string, signal: AbortSignal): Promise<string 
   const id = await createWorkspaceWithFiles(
     restored.files,
     {
-      name: COPY.placeholder.sharedName,
+      name: COPY.share.sharedName,
       created: new Date().toISOString(),
       source: { kind: "share", template: restored.template },
       ...(restored.template === BLANK_TEMPLATE ? {} : { template: restored.template }),
@@ -57,13 +57,13 @@ export function SharePage() {
   return (
     <main class="importer" data-testid="share-page" data-stage={error() ? "failed" : "opening"}>
       <section class="importer-card" aria-live="polite">
-        <h1 class="importer-title">{COPY.placeholder.openingShare}</h1>
+        <h1 class="importer-title">{COPY.share.openingShare}</h1>
         <Show
           when={error()}
           fallback={
             <>
-              <p class="importer-stage">{COPY.placeholder.opening}</p>
-              <div class="importer-progress" role="progressbar" aria-label={COPY.placeholder.opening} />
+              <p class="importer-stage">{COPY.importer.opening}</p>
+              <div class="importer-progress" role="progressbar" aria-label={COPY.importer.opening} />
             </>
           }
         >
@@ -74,7 +74,7 @@ export function SharePage() {
               </p>
               <div class="importer-actions">
                 <button type="button" class="importer-button" onClick={() => navigate({ kind: "landing" })}>
-                  {COPY.placeholder.backHome}
+                  {COPY.importer.backHome}
                 </button>
               </div>
             </>

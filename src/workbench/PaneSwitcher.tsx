@@ -1,7 +1,7 @@
 // The phone tab bar that picks which pane fills the screen.
 import { For, Show } from "solid-js";
 import { Icon, type IconName } from "../ui/icons";
-import { pending, ui } from "./copy";
+import { ui } from "./copy";
 
 /** The panes a phone shows one at a time. */
 export type PhonePane = "files" | "code" | "preview" | "terminal";
@@ -15,7 +15,7 @@ const PANES: readonly { pane: PhonePane; label: string; icon: IconName }[] = [
 
 export function PaneSwitcher(props: { pane: PhonePane; onPick(pane: PhonePane): void; dirty: boolean }) {
   return (
-    <nav class="wb-switcher" aria-label={pending.panes} data-testid="pane-switcher">
+    <nav class="wb-switcher" aria-label={ui.workbench.panes} data-testid="pane-switcher">
       <For each={PANES}>
         {(item) => (
           <button

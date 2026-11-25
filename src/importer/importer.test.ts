@@ -30,11 +30,11 @@ describe("import error messages", () => {
   });
 
   test("unexpected errors keep their message", () => {
-    expect(importErrorMessage(new Error("boom"))).toBe("The import did not finish: boom");
+    expect(importErrorMessage(new Error("boom"))).toBe("Import failed: boom");
   });
 
   test("waits and sizes", () => {
-    expect(formatWait(0.2)).toBe("1 seconds");
+    expect(formatWait(0.2)).toBe("1 second");
     expect(formatWait(60)).toBe("1 minute");
     expect(formatWait(600)).toBe("10 minutes");
     expect(formatSize(1536)).toBe("1.5 KiB");

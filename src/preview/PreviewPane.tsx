@@ -15,7 +15,11 @@ export function PreviewPane() {
       </header>
       <Show
         when={first()}
-        fallback={<p class="pane-empty">Start a dev server in the terminal to see it here.</p>}
+        fallback={
+          <p class="pane-empty">
+            No dev server is running yet. Start one in the terminal to preview it here.
+          </p>
+        }
       >
         {(server) => (
           <iframe class="preview-frame" title="Preview" src={preview.frameUrl(server().port, "/")} />

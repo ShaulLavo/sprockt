@@ -3,7 +3,7 @@
 // focus, so the keyboard stays open while they are tapped.
 import { createEffect, createSignal, For, on, onCleanup, onMount, type Accessor } from "solid-js";
 import { trackOverflowFade } from "../ui/fade";
-import { pending } from "./copy";
+import { ui } from "./copy";
 import type { TerminalHandle } from "./session";
 
 interface SoftKey {
@@ -103,12 +103,7 @@ export function TerminalKeys(props: {
   );
 
   return (
-    <div
-      class="term-keys"
-      role="toolbar"
-      aria-label={pending.terminalKeys}
-      ref={(element) => (row = element)}
-    >
+    <div class="term-keys" role="toolbar" aria-label={ui.terminalKeys} ref={(element) => (row = element)}>
       <For each={LEADING}>{Key}</For>
       <button
         type="button"
