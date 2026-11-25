@@ -37,6 +37,7 @@ const TREE: readonly TreeRow[] = [
   { name: "bun.lock", depth: 0, kind: "lock" },
   { name: "index.html", depth: 0, kind: "html" },
   { name: "package.json", depth: 0, kind: "json" },
+  { name: "tsconfig.json", depth: 0, kind: "json" },
   { name: "vite.config.ts", depth: 0, kind: "ts" },
 ];
 
@@ -260,6 +261,12 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
                   <span class="a-bold">bun install</span> <span class="a-dim">v1.4.4</span>
                 </span>
                 <span class="lp-wb-tline"> </span>
+                <span class="lp-wb-tline">
+                  <span class="a-ok">+</span> @types/react<span class="a-dim">@19.3.3</span>
+                </span>
+                <span class="lp-wb-tline">
+                  <span class="a-ok">+</span> @types/react-dom<span class="a-dim">@19.3.0</span>
+                </span>
                 <span class="lp-wb-tline">
                   <span class="a-ok">+</span> @vitejs/plugin-react<span class="a-dim">@6.1.2</span>
                 </span>

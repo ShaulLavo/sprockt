@@ -653,7 +653,7 @@ body:has(.landing-page) {
   grid-template-columns: 28px minmax(0, 1fr);
   gap: 2px var(--space-5);
   align-items: center;
-  padding: var(--space-5) 0;
+  padding: var(--space-6) 0;
   border-bottom: 1px solid var(--line-strong);
 }
 
@@ -688,8 +688,9 @@ body:has(.landing-page) {
   box-shadow: var(--lp-frame-shadow);
 }
 
+/* Tall enough for the terminal pane to hold the whole install and dev output. */
 .lp-phone .lp-wb-frame {
-  --lp-wb-h: 484px;
+  --lp-wb-h: 520px;
   border: 0;
   border-radius: 36px 36px 0 0;
   box-shadow: none;
@@ -2593,7 +2594,7 @@ body:has(.landing-page) {
 
   /* The product's own bars are enough on a phone: no browser tab is drawn over them. */
   .lp-hero-tab {
-    --lp-wb-h: 500px;
+    --lp-wb-h: 524px;
     order: 1;
   }
 
