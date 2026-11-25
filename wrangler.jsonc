@@ -1,0 +1,13 @@
+{
+  // sprockt.dev: the built app as static assets. Cross-origin isolation headers come from
+  // public/_headers. Deep links (/w/<id>, /github/<owner>/<repo>) fall back to index.html for
+  // navigations only, so a missing guest or worker still answers 404.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sprockt",
+  "compatibility_date": "2026-10-15",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+  },
+  "routes": [{ "pattern": "sprockt.dev", "custom_domain": true }],
+}

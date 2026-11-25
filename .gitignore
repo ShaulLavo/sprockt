@@ -3,3 +3,7 @@ dist/
 .wrangler/
 .DS_Store
 *.log
+# Staged by `bun run guests` from guests.lock.json.
+public/guests/
+test-results/
+playwright-report/
