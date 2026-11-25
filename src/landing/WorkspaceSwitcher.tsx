@@ -1,12 +1,12 @@
 // Local workspace switcher: lists stored IndexedDB workspaces, opens, renames, retries, and deletes them.
-// Renders shared `<IncompleteImport>` for workspaces whose import or template setup was interrupted.
+// Renders `<IncompleteRow>` (built on PR 4's `readIncomplete` / `retryPath`) for unfinished workspaces.
 import { createSignal, For, Show } from "solid-js";
-import { IncompleteImport } from "../importer/IncompleteImport";
 import type { WorkspaceMeta } from "../importer/metadata";
 import { templateLabel } from "../templates/metadata";
 import { formatRelativeTime } from "../templates/workspace-meta";
 import { LANDING_COPY } from "./copy";
 import { Icon } from "./icons";
+import { IncompleteRow } from "./IncompleteRow";
 import { BrandLogoTile } from "./logos";
 import {
   deleteStoredWorkspace,
@@ -137,6 +137,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
                     }
                     data-testid={`workspace-row-${ws.id}`}
                   >
+                    <span class="lp-sr-only">{ws.id}</span>
                     <Show
                       when={!isEditing() && !isConfirmingDelete()}
                       fallback={
@@ -225,7 +226,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
                                 <span class="lp-ws-name">{ws.name}</span>
                               </span>
                             </div>
-                            <IncompleteImport
+                            <IncompleteRow
                               id={ws.id}
                               meta={ws.meta}
                               skipProbe
@@ -279,7 +280,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
                           </Show>
                         </button>
 
-                        <IncompleteImport id={ws.id} meta={ws.meta} skipProbe onDeleted={props.onRefresh} />
+                        <IncompleteRow id={ws.id} meta={ws.meta} skipProbe onDeleted={props.onRefresh} />
 
                         {/* Desktop: reveal actions on hover/focus; Touch: single "more" button */}
                         <div class="lp-ws-actions">

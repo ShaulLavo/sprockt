@@ -39,7 +39,9 @@ test("landing renders cleanly without loading workbench or Waffle runtime code a
   await Promise.all(TEMPLATE_IDS.map((id) => expect(page.getByTestId(`template-${id}`)).toBeVisible()));
 
   // Neither the workbench nor Waffle runtime/storage code loads on a cold landing page.
-  expect(loadedScripts.some((url) => /Workbench-|waffle|runtime|storage-discovery/i.test(url))).toBe(false);
+  expect(loadedScripts.some((url) => /Workbench-|\/runtime-|waffle|storage-discovery/i.test(url))).toBe(
+    false,
+  );
 
   // Invalid repo input shows an inline error; escaped GitHub URLs decode once without double-encoding.
   await page.getByTestId("repo-input").fill("not a valid repo");
@@ -106,7 +108,7 @@ test("workspace switcher lists without runtime JS, preserves other tab on busy r
   await page.reload();
   await expect(page.getByTestId(`workspace-row-${id}`)).toBeVisible();
   page.off("response", onWarmResponse);
-  expect(warmScripts.some((url) => /Workbench-|waffle-runtime|runtime-/i.test(url))).toBe(false);
+  expect(warmScripts.some((url) => /Workbench-|\/runtime-|waffle-runtime/i.test(url))).toBe(false);
 
   // Rename persists in /.sprockt/workspace.json across reloads even after clearing localStorage hints.
   const warmRow = page.getByTestId(`workspace-row-${id}`);

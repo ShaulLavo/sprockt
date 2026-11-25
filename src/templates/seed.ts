@@ -11,7 +11,7 @@ import {
   type WorkspaceWriter,
 } from "../importer/new-workspace";
 import { deleteIdleWorkspaceStorage, openExistingDatabase } from "../landing/storage-discovery";
-import { projectPath, storageName } from "../workspace/paths";
+import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import { BLANK_TEMPLATE, findTemplate, type TemplateId } from "./catalog";
 import {
   createWorkspaceMeta,
@@ -40,6 +40,17 @@ function parentDirectory(path: string): string | undefined {
   return slash > 0 ? path.slice(0, slash) : undefined;
 }
 
+function resolveTemplatePath(relativePath: string): string {
+  if (!relativePath || relativePath.startsWith("/") || relativePath.includes("\0")) {
+    throw new TypeError(`Invalid template file path: ${relativePath}`);
+  }
+  const bad = relativePath
+    .split("/")
+    .find((segment) => segment === "" || segment === "." || segment === "..");
+  if (bad !== undefined) throw new TypeError(`Invalid template file path: ${relativePath}`);
+  return `${PROJECT_ROOT}/${relativePath}`;
+}
+
 async function writeAbsoluteFile(
   backend: PersistentBackend,
   path: string,
@@ -59,8 +70,10 @@ function createBackendWriter(backend: PersistentBackend): WorkspaceWriter {
   return {
     files: {
       async writeMany(files) {
+        await backend.prepare("mkdirp", [PROJECT_ROOT]);
+        backend.execute("mkdirp", [PROJECT_ROOT], EMPTY_BYTES);
         for (const [relativePath, content] of Object.entries(files)) {
-          const absolute = projectPath(relativePath);
+          const absolute = resolveTemplatePath(relativePath);
           // oxlint-disable-next-line no-await-in-loop
           await writeAbsoluteFile(backend, absolute, content);
         }

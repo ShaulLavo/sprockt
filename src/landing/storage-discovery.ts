@@ -1,7 +1,6 @@
 // Lightweight IndexedDB/OPFS storage inspection and deletion for the landing page.
 // Imports only Waffle's fs/ storage modules so waffle/runtime.ts stays unloaded on "/".
 import { IndexedDBStorage } from "waffle/fs/indexeddb";
-import { OpfsStorage } from "waffle/fs/opfs";
 import type { PersistedIndex, PersistedNode } from "waffle/fs/storage";
 
 const INDEXEDDB_FORMAT_PREFIX = "waffle-indexeddb-";
@@ -172,6 +171,7 @@ function deleteDatabase(name: string): Promise<void> {
 
 export async function deleteIdleWorkspaceStorage(name: string): Promise<"deleted" | "missing" | "busy"> {
   if (!globalThis.indexedDB || !globalThis.navigator?.locks) return "missing";
+  const { OpfsStorage } = await import("waffle/fs/opfs");
   const result = await withIdleIndexedDbLock(name, async (): Promise<"deleted" | "missing" | "busy"> => {
     const opfs = await OpfsStorage.claimIdle(name);
     if (opfs === "busy") return "busy";
