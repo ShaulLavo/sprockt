@@ -38,11 +38,11 @@ export type TerminalColors = Readonly<Record<SurfaceKey, TerminalColor>> & {
 
 /** The terminal font: the workbench's code face, with the platform monospace as a fallback. */
 export const TERMINAL_FONT: Partial<TerminalFontSettings> = {
-  family: '"Geist Mono Variable", "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  family: '"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   size: 13,
   lineHeight: 1.15,
   weight: 400,
-  boldWeight: 650,
+  boldWeight: 600,
 };
 
 const channel = (text: string) => Math.round(Math.min(Math.max(Number(text), 0), 255));

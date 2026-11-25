@@ -9,7 +9,7 @@ export type ColorScheme = "light" | "dark";
 export const THEME_STORAGE_KEY = "sprockt:theme";
 
 /** The browser chrome color behind the status bar on phones: the title bar's background. */
-const CHROME_COLOR: Readonly<Record<ColorScheme, string>> = { light: "#eef1f5", dark: "#0d1117" };
+const CHROME_COLOR: Readonly<Record<ColorScheme, string>> = { light: "#e6ece5", dark: "#0f1815" };
 
 export function parsePreference(value: string | null | undefined): ThemePreference {
   return value === "light" || value === "dark" ? value : "system";

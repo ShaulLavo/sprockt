@@ -1,5 +1,5 @@
-/* Editor pane, tabs and quick open. Colours are the Circuit design tokens; the light-dark()
-   fallbacks are Circuit's own values, used only while the workbench has not loaded the tokens. */
+/* Editor pane, tabs and quick open. Colours are the design tokens in src/styles.css; the light-dark()
+   fallbacks are used only while the workbench has not loaded them. */
 .editor-pane,
 .quick-open-backdrop {
   --ed-bg: var(--bg-editor, light-dark(#ffffff, #151c26));
@@ -108,7 +108,7 @@
 .editor-tabs {
   flex: none;
   height: var(--ed-tab-h);
-  background: var(--ed-panel);
+  background: var(--bg-tabstrip, var(--ed-panel));
   /* The bottom line is a shadow so the active tab's background can cover it. */
   box-shadow: inset 0 -1px 0 var(--ed-line);
   --fade-start: 0px;
@@ -147,12 +147,15 @@
 
 .editor-tab {
   position: relative;
+  z-index: 0;
   display: inline-flex;
   flex: none;
   gap: 6px;
   align-items: center;
+  align-self: flex-end;
   max-width: 240px;
-  padding: 0 6px 0 12px;
+  height: calc(var(--ed-tab-h) - var(--tooth-top, 0px));
+  padding: 0 calc(var(--tooth-flank, 0px) + 2px) 0 calc(var(--tooth-flank, 0px) + 8px);
   color: var(--ed-muted);
   font-size: var(--text-xs, 12px);
   white-space: nowrap;
@@ -191,22 +194,29 @@
   text-decoration: line-through;
 }
 
+/* The open tab is a tooth of the editor's own surface, the lamp color along its flat top. */
 .editor-tab.is-active {
-  background: var(--ed-bg);
   color: var(--ed-fg);
-  box-shadow:
-    inset 1px 0 0 var(--ed-line),
-    inset -1px 0 0 var(--ed-line);
+}
+
+.editor-tab.is-active::before,
+.editor-tab.is-active::after {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  clip-path: var(--tooth-shape, none);
+  content: "";
+}
+
+.editor-tab.is-active::before {
+  background:
+    linear-gradient(var(--ed-accent), var(--ed-accent)) top / 100% var(--ed-indicator) no-repeat,
+    var(--ed-line-strong);
 }
 
 .editor-tab.is-active::after {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: var(--ed-indicator);
-  background: var(--ed-accent);
-  content: "";
+  inset: var(--ed-indicator) 1px 0;
+  background: var(--ed-bg);
 }
 
 .editor-tab.is-dragging {
@@ -273,9 +283,6 @@
 @media (hover: hover) {
   .editor-tab:hover {
     color: var(--ed-fg);
-  }
-  .editor-tab:not(.is-active):hover {
-    background: var(--ed-hover);
   }
   .editor-tab:hover .editor-tab-close {
     opacity: 1;

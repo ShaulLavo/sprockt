@@ -1,3 +1,13 @@
+// Functional placeholders the copywriter has not written yet (labels for assistive technology
+// and the phone menu). Listed in the copy requests for the identity pass.
+export const PENDING_COPY = {
+  skip: "Skip to content",
+  menu: "Menu",
+  browsers: "Browsers",
+  heroFrame: "Sprockt in a browser tab, running the Vite + React starter",
+  benchFrame: "The Sprockt workbench: files, editor, preview and terminal",
+} as const;
+
 // Copy strings synced with /work/reports/sprockt-v1-20261125/copy/landing.json.
 export const LANDING_COPY = {
   navTemplates: "Templates",

@@ -1,5 +1,9 @@
-// Crisp 24x24 stroke icons matching Circuit's icon sheet.
+// Crisp 24x24 stroke icons. The logo is the filled sprocket mark from ../ui/sprocket.
 import type { JSX } from "solid-js";
+import { MARK, sprocketPath, toothPath } from "../ui/sprocket";
+
+const MARK_BODY = sprocketPath(MARK);
+const MARK_LIT = toothPath(MARK, 1, 0.9);
 
 export type IconName =
   | "logo"
@@ -49,15 +53,8 @@ function iconBody(name: IconName): JSX.Element {
     case "logo":
       return (
         <>
-          <circle
-            cx="12"
-            cy="12"
-            r="8"
-            stroke-width="3.4"
-            stroke-dasharray="3.14 3.14"
-            stroke-linecap="butt"
-          />
-          <circle cx="12" cy="12" r="3" />
+          <path fill="currentColor" stroke="none" fill-rule="evenodd" d={MARK_BODY} />
+          <path class="mark-lit" stroke="none" d={MARK_LIT} />
         </>
       );
     case "github":

@@ -23,7 +23,7 @@ declare module "../app/debug" {
   }
 }
 
-const MONO = '"Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+const MONO = '"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
 
 /** Phones wrap long lines to the screen instead of scrolling sideways. */
 function createNarrow() {
