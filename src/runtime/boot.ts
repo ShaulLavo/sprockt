@@ -96,10 +96,6 @@ async function installPrograms(runtime: Runtime): Promise<string> {
 }
 
 /**
- * Whether another tab has this workspace open right now. Opening it here would take it away
- * from that tab, so the workbench asks before it does.
- */
-/**
  * On iPhone, Bun's browser engine uses native shared memory as bun-wasm's own host does
  * (`web/src/host-memory-policy.ts`): Safari there reserves each memory's full maximum up front.
  */
@@ -107,6 +103,10 @@ function phoneEnv(): Record<string, string> {
   return /\biPhone\b/.test(navigator.userAgent) ? { BUN_WASM_IPHONE_NATIVE_MEMORY: "1" } : {};
 }
 
+/**
+ * Whether another tab has this workspace open right now. Opening it here would take it away
+ * from that tab, so the workbench asks before it does.
+ */
 export async function workspaceIsOpenElsewhere(id: string): Promise<boolean> {
   // Attaching shares the files with the other tab and takes nothing away from it.
   if (TAB_POLICY === "attach") return false;
