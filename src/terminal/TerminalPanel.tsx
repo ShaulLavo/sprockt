@@ -6,7 +6,7 @@ import { Icon } from "../ui/icons";
 import { fill } from "../ui/format";
 import { trackOverflowFade } from "../ui/fade";
 import { useWorkspace } from "../workspace/session";
-import { pending, ui } from "./copy";
+import { ui } from "./copy";
 import type { SessionState } from "./session";
 import type { TerminalStore } from "./store";
 import type { TerminalTab } from "./tabs";
@@ -45,7 +45,7 @@ function RenameField(props: { tab: TerminalTab; onDone(title: string | undefined
       ref={(element) => (input = element)}
       class="ttab-rename"
       value={props.tab.title}
-      aria-label={fill(pending.renameTerminal, { name: props.tab.title })}
+      aria-label={fill(ui.renameTerminal, { name: props.tab.title })}
       spellcheck={false}
       autocomplete="off"
       enterkeyhint="done"
@@ -104,7 +104,7 @@ function Tab(props: {
         type="button"
         class="ttab-close"
         tabindex="-1"
-        aria-label={fill(pending.closeTerminal, { name: props.tab.title })}
+        aria-label={fill(ui.closeTerminal, { name: props.tab.title })}
         onClick={() => props.store.close(props.tab.id)}
       >
         <Icon name="x" />
@@ -203,7 +203,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
       data-testid="terminal-panel"
     >
       <div class="term-bar">
-        <div class="term-tabs" role="tablist" aria-label={pending.tabs} ref={(element) => (strip = element)}>
+        <div class="term-tabs" role="tablist" aria-label={ui.tabs} ref={(element) => (strip = element)}>
           <For each={ids()}>
             {(id) => (
               <Show when={tabById(id)}>
@@ -224,8 +224,8 @@ export function TerminalPanel(props: TerminalPanelProps) {
         <button
           type="button"
           class="icon-button term-add"
-          aria-label={pending.newTerminal}
-          title={pending.newTerminal}
+          aria-label={ui.newTerminal}
+          title={ui.newTerminal}
           data-testid="new-terminal"
           onClick={create}
         >
@@ -239,8 +239,8 @@ export function TerminalPanel(props: TerminalPanelProps) {
           <button
             type="button"
             class="icon-button term-split"
-            aria-label={terminals.tabs().split ? pending.unsplitTerminal : pending.splitTerminal}
-            title={terminals.tabs().split ? pending.unsplitTerminal : pending.splitTerminal}
+            aria-label={terminals.tabs().split ? ui.unsplitTerminal : ui.splitTerminal}
+            title={terminals.tabs().split ? ui.unsplitTerminal : ui.splitTerminal}
             aria-pressed={Boolean(terminals.tabs().split)}
             onClick={toggleSplit}
           >
@@ -249,8 +249,8 @@ export function TerminalPanel(props: TerminalPanelProps) {
           <button
             type="button"
             class="icon-button"
-            aria-label={pending.killTerminal}
-            title={pending.killTerminal}
+            aria-label={ui.closeActiveTerminal}
+            title={ui.closeActiveTerminal}
             disabled={!terminals.tabs().focused}
             onClick={kill}
           >
@@ -259,8 +259,8 @@ export function TerminalPanel(props: TerminalPanelProps) {
           <button
             type="button"
             class="icon-button term-collapse"
-            aria-label={props.collapsed ? pending.expandPanel : pending.collapsePanel}
-            title={props.collapsed ? pending.expandPanel : pending.collapsePanel}
+            aria-label={props.collapsed ? ui.expandPanel : ui.collapsePanel}
+            title={props.collapsed ? ui.expandPanel : ui.collapsePanel}
             aria-expanded={!props.collapsed}
             onClick={() => props.onToggleCollapsed()}
           >
@@ -289,7 +289,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
             <p>{ui.noTerminal}</p>
             <button type="button" class="primary" onClick={create}>
               <Icon name="plus" />
-              {pending.newTerminal}
+              {ui.newTerminal}
             </button>
           </div>
         </Show>

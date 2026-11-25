@@ -1,6 +1,4 @@
-// Workbench and terminal strings. Entries under `ui` are verbatim from the copywriter's ui.json;
-// entries under `pending` are short functional placeholders waiting for real copy.
-
+// Workbench strings, synced with copy/ui.json.
 export const ui = {
   panels: {
     explorer: "Explorer",
@@ -17,8 +15,12 @@ export const ui = {
     saveFailed: "Could not save changes to browser storage.",
   },
   tabs: {
+    busy: "This workspace is open in another tab. Opening it here disconnects the other tab.",
+    moved: "Another tab took over this workspace. Open it here to keep working.",
+    movedShort: "Open in another tab",
+    openHere: "Open here",
     liveBadge: "{count} tabs",
-    liveBadgeTooltip: "This workspace is open in {count} browser tabs. Changes sync live.",
+    liveBadgeTooltip: "This workspace is open in {count} browser tabs.",
   },
   boot: {
     openingStorage: "Opening workspace storage",
@@ -34,23 +36,17 @@ export const ui = {
     saving: "Saving",
     saveFailed: "Save failed",
   },
-} as const;
-
-export const pending = {
-  home: "Sprockt home",
-  workspace: "Workspace",
-  busy: "This workspace is open in another tab.",
-  openHere: "Open it here",
-  views: "Views",
-  panes: "Panes",
-  menu: "Menu",
-  theme: "Theme",
-  themeSystem: "Match system",
-  themeLight: "Light",
-  themeDark: "Dark",
-  resizeExplorer: "Resize explorer",
-  resizePreview: "Resize preview",
-  resizeTerminal: "Resize terminal",
-  moved: "This workspace moved to another tab.",
-  movedShort: "Open in another tab",
+  workbench: {
+    home: "Go to Sprockt home",
+    workspace: "Workspace",
+    views: "Panels",
+    panes: "Workspace panes",
+    menu: "Workspace menu",
+    theme: "Theme",
+    themeLight: "Use light theme",
+    themeDark: "Use dark theme",
+    resizeExplorer: "Resize explorer",
+    resizePreview: "Resize preview",
+    resizeTerminal: "Resize terminal",
+  },
 } as const;

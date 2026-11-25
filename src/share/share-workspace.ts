@@ -73,10 +73,10 @@ export async function prepareShare(source: ShareSource, origin: string): Promise
     const result = await createShareLink(source, origin);
     if (result.ok) return { kind: "link", url: result.url };
     if (result.reason === "too-big") return { kind: "error", message: COPY.errors.shareLinkTooBig };
-    return { kind: "error", message: fill(COPY.placeholder.shareFailed, { message: result.path }) };
+    return { kind: "error", message: fill(COPY.errors.shareFailed, { message: result.path }) };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { kind: "error", message: fill(COPY.placeholder.shareFailed, { message }) };
+    return { kind: "error", message: fill(COPY.errors.shareFailed, { message }) };
   }
 }
 

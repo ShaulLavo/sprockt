@@ -41,7 +41,7 @@ describe("prepareShare, what the Share control shows", () => {
     });
     expect(await prepareShare(failingList, "https://sprockt.dev")).toEqual({
       kind: "error",
-      message: "Could not make a share link: listing failed",
+      message: "Could not create share link: listing failed",
     });
     const failingRead = source({
       list: async () => ["a.txt"],

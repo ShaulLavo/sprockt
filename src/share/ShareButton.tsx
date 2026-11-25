@@ -55,20 +55,20 @@ export function ShareButton(props: { session: Pick<WorkspaceSession, "files" | "
         disabled={state().kind === "busy"}
         onClick={() => void share()}
       >
-        {COPY.placeholder.share}
+        {COPY.share.share}
       </button>
       <Show when={link()}>
         {(ready) => (
           <div class="share-popover" role="status">
-            <Show when={ready().copied} fallback={<span>{COPY.placeholder.shareReady}</span>}>
-              <span data-testid="share-copied">{COPY.placeholder.shareCopied}</span>
+            <Show when={ready().copied} fallback={<span>{COPY.share.shareReady}</span>}>
+              <span data-testid="share-copied">{COPY.share.shareCopied}</span>
             </Show>
             <input
               class="share-link"
               data-testid="share-link"
               readonly
               value={ready().url}
-              aria-label={COPY.placeholder.shareReady}
+              aria-label={COPY.share.shareReady}
               onFocus={(event) => event.currentTarget.select()}
             />
           </div>

@@ -4,7 +4,7 @@
 import { createSignal, For, onCleanup, Show, type Accessor, type JSX } from "solid-js";
 import { Icon } from "../ui/icons";
 import type { WorkspaceSession } from "../workspace/session";
-import { pending, ui } from "./copy";
+import { ui } from "./copy";
 import { COMMAND, STATUS_SLOT, type Command } from "./slots";
 import { colorScheme, setColorScheme, type ColorScheme } from "./theme";
 
@@ -28,9 +28,9 @@ function ThemeOption(props: { scheme: ColorScheme; label: string }) {
 
 export function ThemeToggle() {
   return (
-    <div class="theme-toggle" role="group" aria-label={pending.theme}>
-      <ThemeOption scheme="light" label={pending.themeLight} />
-      <ThemeOption scheme="dark" label={pending.themeDark} />
+    <div class="theme-toggle" role="group" aria-label={ui.workbench.theme}>
+      <ThemeOption scheme="light" label={ui.workbench.themeLight} />
+      <ThemeOption scheme="dark" label={ui.workbench.themeDark} />
     </div>
   );
 }
@@ -98,7 +98,7 @@ function PhoneMenu(props: { session: WorkspaceSession | undefined }) {
         ref={(element) => (button = element)}
         type="button"
         class="wb-phone-button"
-        aria-label={pending.menu}
+        aria-label={ui.workbench.menu}
         aria-haspopup="menu"
         aria-expanded={open()}
         data-testid="phone-menu"
@@ -111,7 +111,7 @@ function PhoneMenu(props: { session: WorkspaceSession | undefined }) {
       </button>
       <Show when={open()}>
         <div class="wb-scrim" aria-hidden="true" onClick={close} />
-        <div class="wb-menu-panel" role="menu" aria-label={pending.menu}>
+        <div class="wb-menu-panel" role="menu" aria-label={ui.workbench.menu}>
           <For each={commands()}>
             {(command) => (
               <button
@@ -132,7 +132,7 @@ function PhoneMenu(props: { session: WorkspaceSession | undefined }) {
             )}
           </For>
           <div class="wb-menu-theme">
-            <span>{pending.theme}</span>
+            <span>{ui.workbench.theme}</span>
             <ThemeToggle />
           </div>
         </div>
@@ -159,8 +159,8 @@ export function TitleBar(props: TitleBarProps) {
       <button
         type="button"
         class="wb-brand"
-        aria-label={pending.home}
-        title={pending.home}
+        aria-label={ui.workbench.home}
+        title={ui.workbench.home}
         onClick={() => props.onHome()}
       >
         <span class="wb-brand-mark">
@@ -168,7 +168,7 @@ export function TitleBar(props: TitleBarProps) {
         </span>
         <span class="wb-brand-word">Sprockt</span>
       </button>
-      <nav class="wb-crumbs" aria-label={pending.workspace}>
+      <nav class="wb-crumbs" aria-label={ui.workbench.workspace}>
         <Show
           when={command(COMMAND.switchWorkspace)}
           fallback={

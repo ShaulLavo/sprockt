@@ -273,7 +273,7 @@ test("an import a reload cut off stays on the landing page until the visitor del
   await page.goto("/");
 
   const row = page.getByTestId("workspace-list").locator("li", { hasText: "cutoffdelete" });
-  await expect(row.getByTestId("incomplete-import")).toContainText("Import didn't finish");
+  await expect(row.getByTestId("incomplete-import")).toContainText("Import did not finish");
   const finished = page.getByTestId("workspace-list").locator("li", { hasText: "finishedone" });
   await expect(finished).toBeVisible();
   await expect(finished.getByTestId("incomplete-import")).toHaveCount(0);
