@@ -32,6 +32,16 @@ function attempt(page: Page, method: "read" | "write" | "remove", path: string):
 
 // These run against Waffle's own path resolution, in the browser: the rule the file service
 // enforces is only as good as its agreement with the filesystem that carries out the write.
+test("the file service writes into directories that do not exist yet", async ({ page }) => {
+  await newWorkspace(page);
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+  expect(await attempt(page, "write", "src/deep/er/main.ts")).toBe("done");
+  expect(await attempt(page, "read", "src/deep/er/main.ts")).toBe("read: written through the file service\n");
+  expect(await attempt(page, "read", "not/there/at/all.ts")).toBe("read: undefined");
+  await runInTerminal(page, "cat src/deep/er/main.ts");
+  await expect.poll(() => terminalText(page)).toMatch(/^written through the file service$/m);
+});
+
 test("the file service does not reach outside the project through links", async ({ page, browserName }) => {
   // The base programs have no `ln`, so Bun makes the links, and Bun's browser engine traps in
   // Playwright's WebKit (ARCHITECTURE.md "Known gaps"). Remove when Bun runs there.
