@@ -19,10 +19,7 @@ test("a workspace boots, the shell runs, and files survive a reload", async ({ p
   await expect.poll(() => terminalText(page)).toMatch(/^kept-across-reload$/m);
 });
 
-test("Bun runs in the shell and writes files the explorer picks up", async ({ page, browserName }) => {
-  // In Playwright's WebKit `bun --version` ends in a WASM trap; the shell and coreutils work.
-  // Remove when Bun's browser engine runs there (ARCHITECTURE.md "Known gaps").
-  test.fixme(browserName === "webkit", "Bun's browser engine traps in WebKit");
+test("Bun runs in the shell and writes files the explorer picks up", async ({ page }) => {
   await newWorkspace(page);
 
   await runInTerminal(page, "bun --version");
