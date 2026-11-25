@@ -6,6 +6,7 @@ import type { Runtime } from "waffle";
 import type { SaveState } from "./persistence";
 import { createProjectFiles, type ProjectFiles } from "./project-files";
 import type { DirEntry } from "./tree";
+import { createSizeLookup } from "./size";
 import { watchFilesystem } from "./watch";
 
 export type { SaveState };
@@ -60,6 +61,8 @@ export interface FileService {
   readdir(path: string): Promise<DirEntry[] | undefined>;
   read(path: string): Promise<string | undefined>;
   readBytes(path: string): Promise<Uint8Array | undefined>;
+  /** A file's size in bytes, without reading it; undefined when it is missing or not a file. */
+  size(path: string): Promise<number | undefined>;
   /** Creates missing parent directories. */
   write(path: string, content: string | Uint8Array): Promise<void>;
   /**
@@ -111,5 +114,9 @@ export interface FileService {
 }
 
 export function createFileService(runtime: Runtime): ProjectFiles {
-  return createProjectFiles(runtime.filesystem, (onChange) => watchFilesystem(runtime, onChange));
+  return createProjectFiles(
+    runtime.filesystem,
+    (onChange) => watchFilesystem(runtime, onChange),
+    createSizeLookup(runtime),
+  );
 }

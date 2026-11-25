@@ -40,13 +40,14 @@ export interface ExplorerOptions {
   readonly active: Accessor<string | undefined>;
   /** Whether a file has edits the editor has not saved. Read reactively. */
   hasUnsaved(path: string): boolean;
-  /** Every file with unsaved edits, wherever it is, `node_modules` and `.git` included. */
-  dirtyPaths(): readonly string[];
   /** The paths of the files open in tabs. */
   openPaths(): readonly string[];
   /** Makes the editor follow a file or folder that moved. */
   rename(from: string, to: string): void;
-  /** Closes the tab of a file that was deleted. */
+  /**
+   * Closes the tab of a file that was deleted. Only called for files without unsaved edits: the
+   * editor keeps an edited file open, marked deleted, so its text is not lost.
+   */
   close(path: string): void;
 }
 
@@ -345,18 +346,6 @@ export function createExplorerState(options: ExplorerOptions) {
     setProblem(undefined);
   }
 
-  /**
-   * Whether changing these paths would take a file with unsaved edits out from under the editor:
-   * one of them, or any open file below one of them, has edits. The editor's own list of unsaved
-   * files decides, so a file under `node_modules` or `.git` counts too. Says so and returns true.
-   */
-  function strandsUnsaved(paths: readonly string[]): boolean {
-    const stranded = options.dirtyPaths().find((dirty) => paths.some((path) => isSameOrInside(dirty, path)));
-    if (stranded === undefined) return false;
-    say(fill(copy.notices.unsaved, { name: baseName(stranded) }));
-    return true;
-  }
-
   async function runDraft(current: Draft, name: string): Promise<string> {
     if (current.mode === "rename") {
       const to = joinPath(parentOf(current.path), name);
@@ -389,7 +378,6 @@ export function createExplorerState(options: ExplorerOptions) {
       return false;
     }
     cancelDraft();
-    if (current.mode === "rename" && strandsUnsaved([current.path])) return true;
     try {
       const path = await runDraft(current, name);
       // Selected before the listing is refreshed: whatever the person does next starts from here.
@@ -409,7 +397,7 @@ export function createExplorerState(options: ExplorerOptions) {
   async function requestDelete(paths: readonly string[]): Promise<void> {
     if (!files.writable()) return;
     const doomed = topLevelPaths(paths);
-    if (doomed.length === 0 || strandsUnsaved(doomed)) return;
+    if (doomed.length === 0) return;
     setDeleting(doomed);
   }
 
@@ -420,8 +408,10 @@ export function createExplorerState(options: ExplorerOptions) {
     try {
       await Promise.all(doomed.map((path) => files.remove(path)));
       // Tabs of the deleted files, and of everything inside deleted folders, close with them.
+      // A file with unsaved edits stays open in the editor, marked deleted, so nothing is lost.
       for (const open of options.openPaths()) {
-        if (doomed.some((path) => isSameOrInside(open, path))) options.close(open);
+        if (doomed.some((path) => isSameOrInside(open, path)) && !options.hasUnsaved(open))
+          options.close(open);
       }
     } catch (error) {
       failed(error);
@@ -435,7 +425,6 @@ export function createExplorerState(options: ExplorerOptions) {
     const moving = topLevelPaths(paths);
     if (!files.writable() || !canMoveInto(moving, directory)) return;
     takeOver();
-    if (strandsUnsaved(moving)) return;
     try {
       const existing = new Set((await files.readdir(directory))?.map((entry) => entry.name));
       const names = moving.map(baseName);

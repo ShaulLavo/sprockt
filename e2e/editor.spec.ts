@@ -8,17 +8,6 @@ async function workspaceWith(page: Page, files: Record<string, string>): Promise
   await page.evaluate(async (set) => {
     const workspace = globalThis.sprockt?.workspace;
     if (!workspace) throw new Error("No workspace on the debug handle");
-    // Folders first, one level at a time: FileService's path check asks Waffle to resolve the
-    // path, and Waffle answers ENOENT (errno 44) when a folder in the middle is missing, so
-    // writing `src/components/X.tsx` fails until `src/components` exists. Reported to the
-    // file-tree slice; drop this loop when `confirmInside` treats ENOENT as "missing".
-    for (const path of Object.keys(set)) {
-      const parts = path.split("/").slice(0, -1);
-      for (let depth = 1; depth <= parts.length; depth += 1) {
-        // oxlint-disable-next-line no-await-in-loop
-        await workspace.files.mkdir(parts.slice(0, depth).join("/"));
-      }
-    }
     await workspace.files.writeMany(set);
   }, files);
   const tree = page.getByTestId("file-tree");
@@ -173,4 +162,60 @@ test("a plugin provider registered through the mount hook mounts on the live edi
       }),
   );
   expect(mounted).toBe("file:///workspace");
+});
+
+const treeRow = (page: Page, path: string) => page.locator(`[data-testid="tree-row"][data-path="${path}"]`);
+const read = (page: Page, path: string) =>
+  page.evaluate((file) => globalThis.sprockt?.workspace?.files.read(file), path);
+
+test("folders moved and deleted from the terminal leave open files open, marked deleted, unsaved text kept", async ({
+  page,
+}) => {
+  await workspaceWith(page, { "docs/a.txt": "hello\n", "notes/b.txt": "bee\n" });
+  await treeRow(page, "docs/a.txt").click();
+  await expect(tab(page, "docs/a.txt")).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => editorText(page)).toBe("hello\n");
+  await page.getByTestId("editor").click();
+  await caretToEnd(page);
+  await page.keyboard.type("unsaved");
+  await expect(tab(page, "docs/a.txt")).toHaveClass(/is-dirty/);
+
+  // The shell gives no move information: the file is gone from its path, so the tab says so.
+  await runInTerminal(page, "mv docs moved");
+  await expect(tab(page, "docs/a.txt")).toHaveClass(/is-missing/);
+  await expect(tab(page, "docs/a.txt")).toHaveClass(/is-dirty/);
+  expect(await editorText(page)).toBe("hello\nunsaved");
+  expect(await read(page, "moved/a.txt")).toBe("hello\n");
+
+  // A clean file inside a deleted folder stays open too, marked, and can be read until closed.
+  await treeRow(page, "notes/b.txt").click();
+  await expect.poll(() => editorText(page)).toBe("bee\n");
+  await runInTerminal(page, "rm -r notes");
+  await expect(tab(page, "notes/b.txt")).toHaveClass(/is-missing/);
+
+  // Saving the deleted file writes it again, with the unsaved text.
+  await tab(page, "docs/a.txt").click();
+  await press(page, "Mod+s");
+  await expect(tab(page, "docs/a.txt")).not.toHaveClass(/is-dirty/);
+  await expect(tab(page, "docs/a.txt")).not.toHaveClass(/is-missing/);
+  expect(await read(page, "docs/a.txt")).toBe("hello\nunsaved");
+
+  // FileService measures files without reading them; search uses that to skip big ones.
+  const sizes = await page.evaluate(async () => {
+    const files = globalThis.sprockt?.workspace?.files;
+    return [await files?.size("docs/a.txt"), await files?.size("notes/b.txt"), await files?.size("moved")];
+  });
+  expect(sizes).toEqual([13, undefined, undefined]);
+});
+
+test("the status bar shows the caret position and the language of the open file", async ({ page }) => {
+  await workspaceWith(page, { "src/main.ts": "const a = 1;\nconst b = 2;\n" });
+  await treeRow(page, "src/main.ts").click();
+  await expect.poll(() => editorText(page)).toBe("const a = 1;\nconst b = 2;\n");
+  await press(page, "Mod+p");
+  await page.keyboard.type("main.ts:2:7");
+  await page.keyboard.press("Enter");
+  const status = page.getByTestId("status-bar");
+  await expect(status).toContainText("Ln 2, Col 7");
+  await expect(status).toContainText("TypeScript");
 });

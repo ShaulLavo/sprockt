@@ -286,7 +286,6 @@ export function Explorer(props: { store: EditorStore }) {
     open: (path) => props.store.open(path),
     active: props.store.active,
     hasUnsaved: (path) => props.store.hasUnsaved(path),
-    dirtyPaths: () => props.store.buffers.dirtyPaths(),
     openPaths: () => props.store.tabs().map((tab) => tab.path),
     rename: (from, to) => props.store.rename(from, to),
     close: (path) => props.store.close(path),

@@ -51,7 +51,6 @@ export const copy = {
   } satisfies Record<NameProblem, string>,
   notices: {
     moveExists: "{name} already exists in the destination.",
-    unsaved: "{name} has unsaved changes. Save them or close the file first.",
     failed: "That did not work: {message}",
     skipped: "{count} items were skipped.",
     zipFailed: "Could not create the ZIP: {message}",

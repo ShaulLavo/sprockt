@@ -1,5 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 import { createRoot } from "solid-js";
+import type { FileChange } from "../files/service";
 import { createEditorStore } from "./store";
 
 // The store remembers tabs and recovers drafts through localStorage; bun has none.
@@ -12,8 +13,10 @@ beforeEach(() => {
   } as Storage;
 });
 
-function storeWith(files: Record<string, string>) {
+/** A store over an in-memory disk, with `emit` standing in for FileService change events. */
+function setUpStore(files: Record<string, string>) {
   const disk = new Map(Object.entries(files));
+  const listeners = new Set<(change: FileChange) => void>();
   const workspace = {
     id: "test",
     files: {
@@ -22,10 +25,21 @@ function storeWith(files: Record<string, string>) {
       saved: async () => {},
       revision: () => 0,
       writable: () => true,
+      subscribe(listener: (change: FileChange) => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
     },
   };
-  return createRoot(() => createEditorStore(workspace));
+  const emit = (change: Partial<FileChange>) => {
+    const full: FileChange = { paths: [], reset: false, moves: [], removed: [], ...change };
+    for (const listener of listeners) listener(full);
+  };
+  return { store: createRoot(() => createEditorStore(workspace)), disk, emit };
 }
+
+const storeWith = (files: Record<string, string>) => setUpStore(files).store;
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function type(store: ReturnType<typeof createEditorStore>, path: string, text: string): void {
   const session = store.buffers.get(path)?.session;
@@ -96,4 +110,68 @@ test("a replaced preview nobody typed in is released once the next file shows", 
   await store.buffers.load("b.ts");
   store.setDisplayed("b.ts");
   expect(store.buffers.paths()).toEqual(["b.ts"]);
+});
+
+test("a folder moved through FileService takes its open files along, unsaved text and undo too", async () => {
+  const { store, disk, emit } = setUpStore({ "docs/a.txt": "a", "docs/b.txt": "b" });
+  store.open("docs/a.txt");
+  await store.buffers.load("docs/a.txt");
+  store.setDisplayed("docs/a.txt");
+  type(store, "docs/a.txt", "unsaved ");
+  disk.set("moved/a.txt", "a");
+  disk.set("moved/b.txt", "b");
+  disk.delete("docs/a.txt");
+  disk.delete("docs/b.txt");
+  emit({
+    moves: [
+      { from: "docs", to: "moved" },
+      { from: "docs/a.txt", to: "moved/a.txt" },
+      { from: "docs/b.txt", to: "moved/b.txt" },
+    ],
+  });
+  await tick();
+  expect(store.tabs().map((tab) => tab.path)).toEqual(["moved/a.txt"]);
+  expect(store.active()).toBe("moved/a.txt");
+  expect(store.displayed()).toBe("moved/a.txt");
+  const buffer = store.buffers.get("moved/a.txt");
+  expect(buffer?.session.materializeFullText()).toBe("unsaved a");
+  expect(buffer?.dirty()).toBe(true);
+  expect(buffer?.missing()).toBe(false);
+  expect(buffer?.conflict()).toBeUndefined();
+  buffer?.session.undo();
+  expect(buffer?.session.materializeFullText()).toBe("a");
+});
+
+test("a read that started before a move does not mark the moved file deleted", async () => {
+  const { store, disk, emit } = setUpStore({ "a.txt": "a" });
+  store.open("a.txt");
+  await store.buffers.load("a.txt");
+  type(store, "a.txt", "unsaved ");
+  disk.set("b.txt", "a");
+  disk.delete("a.txt");
+  // The revision sync reads the old path, and the move arrives before that read finishes.
+  const syncing = store.buffers.sync();
+  emit({ moves: [{ from: "a.txt", to: "b.txt" }] });
+  await syncing;
+  await tick();
+  const buffer = store.buffers.get("b.txt");
+  expect(buffer?.missing()).toBe(false);
+  expect(buffer?.conflict()).toBeUndefined();
+  expect(buffer?.session.materializeFullText()).toBe("unsaved a");
+});
+
+test("deleted files keep their tabs and unsaved text, marked deleted", async () => {
+  const { store, disk, emit } = setUpStore({ "docs/a.txt": "a", "top.txt": "t" });
+  store.open("docs/a.txt");
+  await store.buffers.load("docs/a.txt");
+  type(store, "docs/a.txt", "unsaved ");
+  store.open("top.txt");
+  await store.buffers.load("top.txt");
+  disk.delete("docs/a.txt");
+  emit({ removed: ["docs", "docs/a.txt"] });
+  const buffer = store.buffers.get("docs/a.txt");
+  expect(buffer?.missing()).toBe(true);
+  expect(buffer?.session.materializeFullText()).toBe("unsaved a");
+  expect(store.tabs().map((tab) => tab.path)).toEqual(["docs/a.txt", "top.txt"]);
+  expect(store.buffers.get("top.txt")?.missing()).toBe(false);
 });

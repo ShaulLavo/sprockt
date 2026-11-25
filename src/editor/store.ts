@@ -77,7 +77,10 @@ export interface EditorStore {
 
 export interface EditorWorkspace {
   readonly id: string;
-  readonly files: Pick<FileService, "read" | "writeIfUnchanged" | "saved" | "revision" | "writable">;
+  readonly files: Pick<
+    FileService,
+    "read" | "writeIfUnchanged" | "saved" | "revision" | "writable" | "subscribe"
+  >;
 }
 
 /** Call inside a component: the store follows the files for as long as its owner lives. */
@@ -132,7 +135,29 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     if (path !== undefined) await buffers.save(path);
   };
 
+  /** Tabs, the file on screen and buffers (with unsaved text and undo) follow a move. */
+  function rename(from: string, to: string): void {
+    const follows = (path: string) => renamedPath(path, from, to) !== path;
+    const shown = displayed();
+    const affected = tabs().some((tab) => follows(tab.path)) || buffers.paths().some(follows);
+    if (!affected && (shown === undefined || !follows(shown))) return;
+    const current = active();
+    commit(renameTabs(tabs(), from, to), current === undefined ? undefined : renamedPath(current, from, to));
+    if (shown !== undefined) setDisplayed(renamedPath(shown, from, to));
+    buffers.rename(from, to);
+  }
+
   createEffect(on(workspace.files.revision, () => void buffers.sync(), { defer: true }));
+  // Moves and deletes made through FileService (the explorer, another pane) say exactly what
+  // happened: a folder lists every file inside it. Changes by the shell or another tab only
+  // arrive as changed paths, and the revision sync marks a vanished file deleted.
+  onCleanup(
+    workspace.files.subscribe((change) => {
+      for (const move of change.moves) rename(move.from, move.to);
+      if (change.removed.length > 0) buffers.markRemoved(change.removed);
+      if (change.moves.length > 0) void buffers.sync();
+    }),
+  );
   // Once another tab owns the workspace this tab cannot save. Its unsaved text is left where
   // that tab finds it when it opens the file.
   createEffect(() => {
@@ -186,16 +211,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     },
     move: (from, to) => commit(moveTab(tabs(), from, to), active()),
     pin,
-    rename(from, to) {
-      const current = active();
-      commit(
-        renameTabs(tabs(), from, to),
-        current === undefined ? undefined : renamedPath(current, from, to),
-      );
-      const shown = displayed();
-      if (shown !== undefined) setDisplayed(renamedPath(shown, from, to));
-      buffers.rename(from, to);
-    },
+    rename,
     async keepMine() {
       const path = displayed();
       if (path === undefined) return;

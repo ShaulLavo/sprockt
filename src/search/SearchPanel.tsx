@@ -14,7 +14,7 @@ const DEBOUNCE_MS = 200;
 type Status = ProjectSearchSummary | { readonly kind: "idle" } | { readonly kind: "running" };
 
 export interface SearchPanelProps {
-  readonly files: Pick<FileService, "list" | "readBytes">;
+  readonly files: Pick<FileService, "list" | "readBytes" | "size">;
   readonly onOpen: (path: string, location: { line: number; column: number }) => void;
   readonly onClose: () => void;
   /** Each change focuses the query field. */

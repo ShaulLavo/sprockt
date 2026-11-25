@@ -27,6 +27,8 @@ export interface Conflict {
   readonly diskText: string | undefined;
 }
 
+const isSameOrInside = (path: string, other: string) => path === other || path.startsWith(`${other}/`);
+
 export interface Buffer {
   /** Project-relative path. Changes only through `BufferSet.rename`. */
   readonly path: string;
@@ -46,6 +48,8 @@ export interface BufferSet {
   load(path: string): Promise<Buffer | undefined>;
   release(path: string): void;
   rename(from: string, to: string): void;
+  /** Files (and everything inside folders) deleted: their buffers stay, marked deleted, text kept. */
+  markRemoved(paths: readonly string[]): void;
   /**
    * Writes the buffer's text to its own path if the file still holds what the buffer was last in
    * step with; otherwise the buffer gets a conflict. Edits made while the write runs stay unsaved.
@@ -185,20 +189,28 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
 
   async function syncOne(entry: Entry): Promise<void> {
     if (entry.saving > 0) return;
-    const text = await files.read(entry.buffer.path);
-    // The buffer may have been closed, renamed or saved while the read ran.
-    if (!live(entry) || entry.saving > 0) return;
-    entry.setMissing(text === undefined);
+    const path = entry.buffer.path;
+    const text = await files.read(path);
+    // The buffer may have been closed, moved or saved while the read ran; a moved buffer is
+    // compared again under its new path by the sync that follows the move.
+    if (!live(entry) || entry.buffer.path !== path || entry.saving > 0) return;
     // Back to what the buffer was last in step with: an earlier outside change was undone.
-    if (text === entry.disk) return entry.setConflict(undefined);
-    if (text === undefined) {
-      // A deleted file stays open, marked, with any unsaved text; saving writes it again.
-      entry.disk = undefined;
+    if (text === entry.disk) {
+      entry.setMissing(text === undefined);
       return entry.setConflict(undefined);
     }
+    if (text === undefined) return markGone(entry);
+    entry.setMissing(false);
     const current = entry.buffer.session.materializeFullText();
     if (text === current || !entry.buffer.dirty()) return adopt(entry, text);
     entry.setConflict({ diskText: text });
+  }
+
+  /** A deleted file stays open, marked, with any unsaved text; saving writes it again. */
+  function markGone(entry: Entry): void {
+    entry.disk = undefined;
+    entry.setMissing(true);
+    entry.setConflict(undefined);
   }
 
   async function syncAll(): Promise<void> {
@@ -329,6 +341,11 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       entries.delete(path);
       membershipChanged();
     },
+    markRemoved(paths) {
+      for (const entry of entries.values()) {
+        if (paths.some((path) => isSameOrInside(entry.buffer.path, path))) markGone(entry);
+      }
+    },
     rename(from, to) {
       const moved = Array.from(entries.values()).filter(
         (entry) => renamedPath(entry.buffer.path, from, to) !== entry.buffer.path,
@@ -365,9 +382,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       if (!live(entry)) return;
       if (text !== undefined) return adopt(entry, text);
       // The file is gone: there is nothing to reload, so the draft stays, marked deleted.
-      entry.disk = undefined;
-      entry.setMissing(true);
-      entry.setConflict(undefined);
+      markGone(entry);
     },
     paths: () => Array.from(entries.keys()),
     unsaved() {

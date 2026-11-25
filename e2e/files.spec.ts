@@ -344,7 +344,7 @@ test("the tree always has one Tab stop, and Escape returns from the context menu
   await expect(row(page, "top.txt")).toBeFocused();
 });
 
-test("a folder holding unsaved edits cannot be renamed, moved or deleted from under the editor", async ({
+test("a folder holding unsaved edits can be renamed, moved and deleted; the editor keeps the edits", async ({
   page,
 }) => {
   await newWorkspace(page);
@@ -356,27 +356,34 @@ test("a folder holding unsaved edits cannot be renamed, moved or deleted from un
   await typeInEditor(page, "unsaved");
   await expect(page.getByTestId("editor-dirty")).toBeVisible();
 
-  // Rename the folder.
+  // Rename the folder: the open file follows, unsaved, and the disk keeps the saved text.
   await row(page, "docs").press("F2");
   await page.getByTestId("tree-input").fill("renamed");
   await page.getByTestId("tree-input").press("Enter");
-  await expect(page.getByTestId("tree-notice")).toBeVisible();
-  await expect(row(page, "docs")).toBeVisible();
-  await expect(row(page, "renamed")).toHaveCount(0);
-
-  // Delete it: no confirmation is even offered.
-  await row(page, "docs").press("Delete");
-  await expect(page.getByTestId("tree-notice")).toBeVisible();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(row(page, "renamed")).toBeVisible();
+  await expect(page.getByTestId("editor-file")).toHaveAttribute("aria-label", "renamed/a.txt");
+  await expect(page.getByTestId("editor-dirty")).toBeVisible();
+  expect(await editorText(page)).toBe("hello\nunsaved");
+  expect(await readFile(page, "renamed/a.txt")).toBe("hello\n");
 
   // Move it into another folder.
   const transfer = await page.evaluateHandle(() => new DataTransfer());
-  await row(page, "docs").dispatchEvent("dragstart", { dataTransfer: transfer });
+  await row(page, "renamed").dispatchEvent("dragstart", { dataTransfer: transfer });
   await row(page, "other").dispatchEvent("dragover", { dataTransfer: transfer });
   await row(page, "other").dispatchEvent("drop", { dataTransfer: transfer });
-  await expect(row(page, "other/docs")).toHaveCount(0);
-  await expect(row(page, "docs")).toBeVisible();
-  expect(await readFile(page, "docs/a.txt")).toBe("hello\n");
+  await expect(row(page, "other/renamed")).toBeVisible();
+  await expect(page.getByTestId("editor-file")).toHaveAttribute("aria-label", "other/renamed/a.txt");
+  expect(await editorText(page)).toBe("hello\nunsaved");
+
+  // Delete it: the tab stays open, marked deleted, with the unsaved text.
+  await row(page, "other/renamed").press("Delete");
+  await page.getByRole("button", { name: "Delete folder" }).click();
+  await expect(row(page, "other/renamed")).toHaveCount(0);
+  const tab = page.locator('[data-testid="editor-tab"][data-path="other/renamed/a.txt"]');
+  await expect(tab).toHaveClass(/is-missing/);
+  await expect(page.getByTestId("editor-dirty")).toBeVisible();
+  expect(await editorText(page)).toBe("hello\nunsaved");
+  expect(await readFile(page, "other/renamed/a.txt")).toBeUndefined();
 });
 
 test("the ZIP download holds the project's files and leaves node_modules out", async ({ page }, testInfo) => {
@@ -431,7 +438,7 @@ test("what the terminal does to files shows up in the tree, in open folders too,
   await expect(row(page, "made.txt")).toHaveCount(0);
 });
 
-test("a file under node_modules with unsaved edits keeps its folder from being renamed", async ({ page }) => {
+test("renaming a folder takes an unsaved file under node_modules along", async ({ page }) => {
   await newWorkspace(page);
   await runInTerminal(page, "mkdir -p node_modules/pkg && echo x > node_modules/pkg/index.js");
   await expandRow(page, "node_modules");
@@ -445,9 +452,10 @@ test("a file under node_modules with unsaved edits keeps its folder from being r
   await row(page, "node_modules").press("F2");
   await page.getByTestId("tree-input").fill("modules");
   await page.getByTestId("tree-input").press("Enter");
-  await expect(page.getByTestId("tree-notice")).toBeVisible();
-  await expect(row(page, "node_modules")).toBeVisible();
-  await expect(row(page, "modules")).toHaveCount(0);
+  await expect(row(page, "modules")).toBeVisible();
+  await expect(page.getByTestId("editor-file")).toHaveAttribute("aria-label", "modules/pkg/index.js");
+  await expect(page.getByTestId("editor-dirty")).toBeVisible();
+  expect(await editorText(page)).toBe("x\nunsaved");
 });
 
 test("a new workspace shows its small folders open, and keeps what the person then closes", async ({

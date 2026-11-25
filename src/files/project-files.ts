@@ -1,5 +1,6 @@
 // FileService on top of a filesystem and a watcher, with nothing browser-specific in it, so the
 // rules it enforces (the project boundary, what "saved" means) are tested without a runtime.
+import type { SizeLookup } from "./size";
 import { createSignal } from "solid-js";
 import { createZipBlob } from "../lib/zip/zip";
 import {
@@ -121,7 +122,15 @@ async function confirmInside(lookup: Lookup, absolute: string, through: boolean)
   }
 }
 
-export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFiles): ProjectFiles {
+/**
+ * `sizeOf` measures a file at an absolute path without reading it; without one, `size` reads the
+ * file (in-memory filesystems in tests).
+ */
+export function createProjectFiles(
+  filesystem: ProjectFilesystem,
+  watch: WatchFiles,
+  sizeOf?: SizeLookup,
+): ProjectFiles {
   const [revision, setRevision] = createSignal(0);
   const [saveState, setSaveState] = createSignal<SaveState>("saved");
   const [writable, setWritable] = createSignal(true);
@@ -309,6 +318,12 @@ export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFi
     },
     read: readText,
     readBytes: readConfined,
+    async size(path) {
+      const absolute = projectPath(path);
+      await confiner()(absolute, true);
+      if (sizeOf) return sizeOf.size(absolute);
+      return (await filesystem.readFile(absolute))?.length;
+    },
     write: (path, content) => mutate(() => writeConfined(confiner(), path, content), [path]),
     writeIfUnchanged: (path, content, expected) =>
       mutate(async (): Promise<WriteOutcome> => {
@@ -417,6 +432,7 @@ export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFi
       clearTimeout(timer);
       listeners.clear();
       stopWatching();
+      sizeOf?.dispose();
     },
   };
 }
