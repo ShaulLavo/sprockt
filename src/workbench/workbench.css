@@ -886,8 +886,8 @@
     margin-left: auto;
   }
 
-  /* The switcher below already names the pane on screen. */
-  .wb-explorer .pane-header,
+  /* The switcher below already names the pane on screen. The explorer keeps its header: it
+     holds the file actions. */
   .wb-preview .pane-header {
     display: none;
   }

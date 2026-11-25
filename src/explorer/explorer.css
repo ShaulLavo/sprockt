@@ -1,4 +1,4 @@
-/* The explorer in Circuit's direction. Colours come from the Circuit tokens; each falls back to the
+/* The explorer. Colours come from the design tokens in src/styles.css; each falls back to the
    foundation's tokens so the pane also reads correctly before the workbench ships them. Everything
    is scoped to .explorer-pane because the class names (.row, .name, .dirty) are generic. */
 
@@ -52,7 +52,7 @@
   flex: 1;
   font-size: var(--text-xs, 12px);
   font-weight: var(--weight-semibold, 600);
-  letter-spacing: 0.09em;
+  letter-spacing: 0;
   color: var(--e-muted);
 }
 
