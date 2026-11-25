@@ -6,6 +6,7 @@ import { createRuntime, openIdleWorkspace, type GuestLauncher, type Runtime } fr
 import { installBase } from "waffle-base";
 import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import { runtimeAssets } from "./assets";
+import { TAB_POLICY } from "./tab-policy";
 
 /**
  * `waiting`: another tab holds this workspace's storage, and this tab waits for it.
@@ -58,11 +59,10 @@ function programLauncher(workerUrl: URL): GuestLauncher {
 }
 
 /**
- * What a tab does when another one has the workspace. The target is `"attach"`: every tab
- * shares one live filesystem. In Waffle 0.0.148 that mode loses file bytes for programs (an
- * empty `cat`, empty shell redirects; see ARCHITECTURE.md "Known gaps"). Until that is fixed an
- * ordinary open never takes storage from another tab: it waits in line (`"wait"`), and only an
- * open the person confirmed uses `"takeover"`.
+ * What a tab does when another one has the workspace (`TAB_POLICY`, `./tab-policy.ts`). With
+ * `"attach"` every tab shares one live filesystem. Otherwise an ordinary open never takes
+ * storage from another tab: it waits in line (`"wait"`), and only an open the person confirmed
+ * uses `"takeover"`.
  */
 function createWorkspaceRuntime(id: string, takeOver: boolean, onStage: (stage: BootStage) => void): Runtime {
   return createRuntime({
@@ -70,7 +70,7 @@ function createWorkspaceRuntime(id: string, takeOver: boolean, onStage: (stage: 
       mode: "fast",
       name: storageName(id),
       workerURL: runtimeAssets.filesystemWorker,
-      whenBusy: takeOver ? "takeover" : "wait",
+      whenBusy: TAB_POLICY === "attach" ? "attach" : takeOver ? "takeover" : "wait",
       onStateChange: (state) => {
         if (state.status === "waiting") onStage("waiting");
       },
@@ -100,6 +100,8 @@ async function installPrograms(runtime: Runtime): Promise<string> {
  * from that tab, so the workbench asks before it does.
  */
 export async function workspaceIsOpenElsewhere(id: string): Promise<boolean> {
+  // Attaching shares the files with the other tab and takes nothing away from it.
+  if (TAB_POLICY === "attach") return false;
   const idle = await openIdleWorkspace({ mode: "fast", name: storageName(id) });
   if (idle === "busy") return true;
   if (idle !== "missing") await idle.close();
