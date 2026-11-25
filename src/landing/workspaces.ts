@@ -9,9 +9,8 @@ import {
   type WorkspaceMeta,
   type WorkspaceState,
 } from "../templates/workspace-meta";
+import { readWorkspaceHint, WORKSPACE_HINT_PREFIX as HINT_PREFIX } from "../workspace/hint";
 import { storageName, workspaceIdOf } from "../workspace/paths";
-
-const HINT_PREFIX = "sprockt:ws-meta:";
 
 // Serialize same-tab storage probes and mutations so a focus/visibility refresh never collides
 // with an explicit rename, retry, or delete on the same Waffle maintenance lock.
@@ -46,12 +45,12 @@ export function saveWorkspaceHint(id: string, meta: WorkspaceMeta): void {
   }
 }
 
-function readWorkspaceHint(id: string): WorkspaceMeta | undefined {
+/** Whether this browser remembers any workspace, known at once, before storage is read. */
+export function hasWorkspaceHints(): boolean {
   try {
-    const raw = localStorage.getItem(HINT_PREFIX + id);
-    return raw ? parseWorkspaceMeta(raw) : undefined;
+    return Object.keys(localStorage).some((key) => key.startsWith(HINT_PREFIX));
   } catch {
-    return undefined;
+    return false;
   }
 }
 

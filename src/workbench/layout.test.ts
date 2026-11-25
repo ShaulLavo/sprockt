@@ -90,7 +90,7 @@ describe("keyboard", () => {
   test("reports the size on screen, 0 to 100, to assistive technology", () => {
     const space = { width: 1000, height: 800 };
     const fitted = fitLayout(DEFAULT_LAYOUT, space);
-    expect(ariaValue(fitted, "preview", space)).toBe(42);
+    expect(ariaValue(fitted, "preview", space)).toBe(Math.round(DEFAULT_LAYOUT.preview * 100));
     expect(ariaValue({ ...fitted, terminal: 0 }, "terminal", space)).toBe(0);
     // A wide saved explorer held narrower by a small window reports what is shown.
     const narrow = { width: 736, height: 700 };

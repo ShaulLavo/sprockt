@@ -1,5 +1,5 @@
-/* Editor pane, tabs and quick open. Colours are the Circuit design tokens; the light-dark()
-   fallbacks are Circuit's own values, used only while the workbench has not loaded the tokens. */
+/* Editor pane, tabs and quick open. Colours are the design tokens in src/styles.css; the light-dark()
+   fallbacks are used only while the workbench has not loaded them. */
 .editor-pane,
 .quick-open-backdrop {
   --ed-bg: var(--bg-editor, light-dark(#ffffff, #151c26));
@@ -90,6 +90,36 @@
   height: auto;
 }
 
+/* Fold markers: small chevrons in the gutter. With a pointer they wait until the gutter is
+   pointed at; a folded region always shows its marker, so nothing hidden goes unmarked. */
+.editor-pane .editor-virtualized-fold-toggle {
+  color: var(--ed-subtle);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .editor-pane .editor-virtualized-fold-toggle {
+    opacity: 0;
+    transition: opacity var(--ed-dur) var(--ed-ease);
+  }
+
+  .editor-pane .editor-virtualized-gutter:hover .editor-virtualized-fold-toggle,
+  .editor-pane .editor-virtualized-fold-toggle:focus-visible,
+  .editor-pane .editor-virtualized-fold-toggle[data-editor-fold-state="collapsed"] {
+    opacity: 1;
+  }
+}
+
+.editor-pane .editor-virtualized-fold-icon {
+  width: 12px;
+  height: 12px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .editor-pane .editor-virtualized-fold-toggle:hover {
+    color: var(--ed-fg);
+  }
+}
+
 .editor-empty {
   position: absolute;
   inset: 0;
@@ -108,7 +138,7 @@
 .editor-tabs {
   flex: none;
   height: var(--ed-tab-h);
-  background: var(--ed-panel);
+  background: var(--bg-tabstrip, var(--ed-panel));
   /* The bottom line is a shadow so the active tab's background can cover it. */
   box-shadow: inset 0 -1px 0 var(--ed-line);
   --fade-start: 0px;
@@ -125,6 +155,7 @@
 .editor-tabs-strip {
   display: flex;
   height: 100%;
+  padding-left: var(--space-2, 8px);
   overflow-x: auto;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
@@ -147,12 +178,15 @@
 
 .editor-tab {
   position: relative;
+  z-index: 0;
   display: inline-flex;
   flex: none;
   gap: 6px;
   align-items: center;
+  align-self: flex-end;
   max-width: 240px;
-  padding: 0 6px 0 12px;
+  height: calc(var(--ed-tab-h) - var(--tooth-top, 0px));
+  padding: 0 calc(var(--tooth-flank, 0px) + 2px) 0 calc(var(--tooth-flank, 0px) + 8px);
   color: var(--ed-muted);
   font-size: var(--text-xs, 12px);
   white-space: nowrap;
@@ -191,22 +225,50 @@
   text-decoration: line-through;
 }
 
+/* The open tab is a tooth of the editor's own surface, the lamp color along its flat top. */
 .editor-tab.is-active {
-  background: var(--ed-bg);
+  color: var(--ed-muted);
+}
+
+/* The open tab of the pane that has the keyboard is the one set in full ink and weight; an
+   open tab elsewhere stays quiet, so two tab strips never both look current. */
+.editor-pane:focus-within .editor-tab.is-active {
   color: var(--ed-fg);
-  box-shadow:
-    inset 1px 0 0 var(--ed-line),
-    inset -1px 0 0 var(--ed-line);
+  font-weight: var(--weight-semibold, 600);
+}
+
+.editor-tab.is-active::before,
+.editor-tab.is-active::after {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  clip-path: var(--tooth-shape, none);
+  content: "";
+}
+
+.editor-tab.is-active::before {
+  background: var(--ed-line-strong);
 }
 
 .editor-tab.is-active::after {
+  inset: 1px 1px 0;
+  background: var(--ed-bg);
+}
+
+/* The bar along the tooth's flat top: quiet while the editor is not taking input, the lamp color
+   once it has the keyboard. */
+.editor-tab.is-active .editor-tab-name::before {
   position: absolute;
   top: 0;
-  right: 0;
-  left: 0;
+  right: var(--tooth-flank, 0px);
+  left: var(--tooth-flank, 0px);
   height: var(--ed-indicator);
-  background: var(--ed-accent);
+  background: var(--ed-subtle);
   content: "";
+}
+
+.editor-pane:focus-within .editor-tab.is-active .editor-tab-name::before {
+  background: var(--ed-accent);
 }
 
 .editor-tab.is-dragging {
@@ -273,9 +335,6 @@
 @media (hover: hover) {
   .editor-tab:hover {
     color: var(--ed-fg);
-  }
-  .editor-tab:not(.is-active):hover {
-    background: var(--ed-hover);
   }
   .editor-tab:hover .editor-tab-close {
     opacity: 1;
@@ -368,8 +427,22 @@
     width: 28px;
     height: 28px;
   }
+  /* One compact line of path under the tab: which App.tsx this is. */
   .editor-crumbs {
+    height: 24px;
     padding: 0 12px;
+  }
+  /* A phone has no room for a fold column, and no pointer to reveal its markers with. */
+  .editor-pane .editor-virtualized-fold-toggle {
+    display: none;
+  }
+  /* The one pane on screen is the one in use, so its open tab is lit and set in full ink. */
+  .editor-tab.is-active {
+    color: var(--ed-fg);
+    font-weight: var(--weight-semibold, 600);
+  }
+  .editor-tab.is-active .editor-tab-name::before {
+    background: var(--ed-accent);
   }
   .editor-conflict-action {
     height: 32px;

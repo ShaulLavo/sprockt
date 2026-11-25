@@ -100,8 +100,8 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
 
   return (
     <aside class="lp-recent-col" aria-labelledby="recent-title">
-      <div class="lp-sec-head lp-sec-head-compact">
-        <h2 id="recent-title">{LANDING_COPY.recentTitle}</h2>
+      <div class="lp-recent-head">
+        <h3 id="recent-title">{LANDING_COPY.recentTitle}</h3>
         <p>{LANDING_COPY.recentNote}</p>
       </div>
       <div class="lp-recent">
@@ -117,7 +117,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
           when={props.workspaces.length > 0}
           fallback={
             <div class="lp-recent-empty" data-testid="workspace-empty">
-              <p>{props.loading ? "Checking local workspaces..." : LANDING_COPY.recentEmpty}</p>
+              <p>{props.loading ? LANDING_COPY.recentChecking : LANDING_COPY.recentEmpty}</p>
             </div>
           }
         >

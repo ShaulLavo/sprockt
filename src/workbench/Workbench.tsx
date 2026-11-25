@@ -56,10 +56,10 @@ function createMediaQuery(query: string): Accessor<boolean> {
 
 /**
  * The fixed parts of the desktop frame in CSS pixels, as workbench.css lays them out: the
- * activity bar and three card gaps across; the title bar, status bar and one gap down.
+ * activity bar and three hairline gaps across; the title bar, status bar and one gap down.
  */
-const FRAME_WIDTH_PX = 46 + 3 * 6;
-const FRAME_HEIGHT_PX = 42 + 24 + 6;
+const FRAME_WIDTH_PX = 46 + 3 * 1;
+const FRAME_HEIGHT_PX = 42 + 24 + 1;
 
 const paneSpace = (): Space => ({
   width: innerWidth - FRAME_WIDTH_PX,

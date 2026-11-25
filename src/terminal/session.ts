@@ -9,9 +9,17 @@ import { TERMINAL_FONT } from "./theme";
 
 export type { SessionState };
 
+/** A terminal's size in character cells. */
+export interface TerminalSize {
+  readonly columns: number;
+  readonly rows: number;
+}
+
 export interface TerminalHandle {
   /** The text on screen, one string per row, for tests and diagnostics. */
   lines(): string[];
+  /** The screen's size and the size the shell was last told, for tests and diagnostics. */
+  size(): { readonly screen: TerminalSize; readonly shell: TerminalSize };
   focus(): void;
   /** Types a command line and presses Enter, replacing anything half typed. */
   submit(command: string): Promise<void>;
@@ -62,7 +70,24 @@ function codeFontReady(): Promise<unknown> {
 }
 
 /** Ties a started shell to its view. Disposal runs once, and frees the view even if the shell fails to stop. */
-function terminalHandle(view: Terminal, session: BrowserSession, start: TerminalStart): TerminalHandle {
+function terminalHandle(
+  view: Terminal,
+  session: BrowserSession,
+  start: TerminalStart,
+  started: TerminalSize,
+): TerminalHandle {
+  // The size the shell believes its screen has. Every change of the screen's own size is
+  // passed on, so programs lay their output out for the columns actually on screen.
+  let told = started;
+  const tell = (columns: number, rows: number) => {
+    if (columns === told.columns && rows === told.rows) return;
+    told = { columns, rows };
+    session.resize(columns, rows);
+  };
+  const screen = (): TerminalSize => {
+    const { columns, rows } = view.geometry();
+    return { columns, rows };
+  };
   let control: (() => void) | undefined;
   const typed = (bytes: Uint8Array) => {
     const chord = control && controlChord(bytes);
@@ -74,10 +99,14 @@ function terminalHandle(view: Terminal, session: BrowserSession, start: Terminal
   };
   const subscriptions = [
     view.onData((event) => typed(event.bytes)),
-    view.onResize(({ cols, rows }) => session.resize(cols, rows)),
+    view.onResize(({ cols, rows }) => tell(cols, rows)),
     view.onFrame(() => session.markRendered()),
     view.on("title", (title) => start.onTitle?.(title)),
   ];
+  // The screen may have been refitted while the shell was starting, before anything listened:
+  // its pane came on screen (a phone starts with the terminal hidden), or the code face loaded.
+  const now = screen();
+  tell(now.columns, now.rows);
   let disposal: Promise<void> | undefined;
   async function dispose(): Promise<void> {
     for (const subscription of subscriptions) subscription.dispose();
@@ -89,6 +118,7 @@ function terminalHandle(view: Terminal, session: BrowserSession, start: Terminal
   }
   return {
     lines: () => view.visibleLines().map((line) => line.trimEnd()),
+    size: () => ({ screen: screen(), shell: told }),
     focus: () => view.focus(),
     submit: (command) => session.submit(command),
     input: (data) => session.input(data),
@@ -97,6 +127,18 @@ function terminalHandle(view: Terminal, session: BrowserSession, start: Terminal
     setAppearance: (appearance) => void view.setAppearance(appearance),
     dispose: () => (disposal ??= dispose()),
   };
+}
+
+/**
+ * Where several panes share the screen, one has the keyboard at a time, and a terminal without
+ * it shows a hollow cursor. On a phone the terminal is the only pane on screen, so its cursor
+ * stays solid: nothing else could be taking the keys.
+ */
+function followPaneLayout(view: Terminal, signal: AbortSignal): void {
+  const sharedScreen = matchMedia("(min-width: 769px)");
+  const apply = () => void view.setCursorInactiveStyle(sharedScreen.matches ? "outline" : undefined);
+  apply();
+  sharedScreen.addEventListener("change", apply, { signal });
 }
 
 /** Starts a terminal; aborting `start.signal` cancels a start still in progress. */
@@ -118,6 +160,7 @@ export async function startTerminal(start: TerminalStart): Promise<TerminalHandl
   try {
     await view.open(start.host);
     start.signal.throwIfAborted();
+    followPaneLayout(view, start.signal);
     const geometry = view.geometry();
     const session = await BrowserSession.create({
       runtime: start.runtime,
@@ -131,7 +174,7 @@ export async function startTerminal(start: TerminalStart): Promise<TerminalHandl
       onOutput: (bytes) => view.write(bytes),
       onState: (state, detail) => start.onState(state, detail),
     });
-    return terminalHandle(view, session, start);
+    return terminalHandle(view, session, start, { columns: geometry.columns, rows: geometry.rows });
   } catch (error) {
     view.dispose();
     throw error;

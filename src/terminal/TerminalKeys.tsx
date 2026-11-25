@@ -18,8 +18,9 @@ const LEADING: readonly SoftKey[] = [
   { label: "tab", name: "Tab", data: "\t" },
 ];
 
-/** Shown after the Ctrl key. */
+/** Shown after the Ctrl key. Ctrl+C comes first: stopping a dev server takes one tap. */
 const TRAILING: readonly SoftKey[] = [
+  { label: "^C", name: "Control+C", data: "\x03" },
   { label: "↑", name: "Up", data: "\x1b[A" },
   { label: "↓", name: "Down", data: "\x1b[B" },
   { label: "←", name: "Left", data: "\x1b[D" },

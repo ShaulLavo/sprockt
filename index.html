@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#eef1f5" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d1117" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#eef1ee" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0c1411" />
     <!-- The saved theme, applied before the first paint. src/workbench/theme.ts owns the same
          key and colors and takes over once the app loads. -->
     <script>
@@ -14,16 +14,22 @@
         if (theme === "light" || theme === "dark") {
           document.documentElement.dataset.theme = theme;
           document.querySelectorAll('meta[name="theme-color"]').forEach(function (meta) {
-            meta.content = theme === "light" ? "#eef1f5" : "#0d1117";
+            meta.content = theme === "light" ? "#eef1ee" : "#0c1411";
           });
         }
       } catch (error) {}
+      // The landing hero enters once per page load, while this class is set and the other is not.
+      document.documentElement.classList.add("m-enter");
+      setTimeout(function () {
+        document.documentElement.classList.add("m-enter-done");
+      }, 700);
     </script>
     <meta
       name="description"
-      content="Free, MIT-licensed browser IDE that runs real Bun in WebAssembly across Chrome, Firefox, desktop Safari and iPhone Safari."
+      content="Open a public GitHub repo or starter template and run Bun 1.4.4, Vite, Next.js, Hono, Astro, SvelteKit or SQLite right in Chrome, Firefox or Safari."
     />
-    <title>Sprockt</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Sprockt | Real Bun in any browser tab</title>
   </head>
   <body>
     <div id="app"></div>

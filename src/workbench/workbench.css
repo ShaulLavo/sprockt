@@ -1,26 +1,27 @@
-/* The workbench frame, Circuit style: chrome around floating rounded cards for the editor,
-   preview and terminal. Sizes come from custom properties Workbench.tsx sets on .workbench
-   (--explorer-col, --preview-col, --terminal-row): the saved layout fitted to the window, so
-   the editor keeps its room. */
+/* The workbench frame: panes sit flush, one hairline apart, like plates on a machine bed. The
+   frame's own background is the hairline color, so every 1px grid gap reads as a seam. Sizes
+   come from custom properties Workbench.tsx sets on .workbench (--explorer-col, --preview-col,
+   --terminal-row): the saved layout fitted to the window, so the editor keeps its room. */
 
 .workbench {
-  --edge-gap: var(--card-gap);
+  --edge-gap: 0px;
   display: grid;
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
-  background: var(--bg-chrome);
+  background: var(--line);
   grid-template-columns:
     var(--activity-w) var(--explorer-col) var(--card-gap) minmax(0, 1fr)
     var(--card-gap) var(--preview-col) var(--edge-gap);
   grid-template-rows:
     var(--titlebar-h) minmax(0, 1fr) var(--card-gap) var(--terminal-row)
     var(--statusbar-h);
+  /* The terminal sits under the editor, so the preview keeps the pane's full height. */
   grid-template-areas:
     "title title title title title title title"
     "act files sx code sp preview ."
-    "act files sx st st st ."
-    "act files sx term term term ."
+    "act files sx st sp preview ."
+    "act files sx term sp preview ."
     "status status status status status status status";
 }
 
@@ -76,7 +77,7 @@
   display: none;
 }
 
-/* ───────────── Slots and cards ───────────── */
+/* ───────────── Slots ───────────── */
 
 .wb-slot {
   display: flex;
@@ -91,33 +92,30 @@
   min-height: 0;
 }
 
+/* Each pane names its surface, so the tooth of its tab strip can match it. */
 .wb-explorer {
-  background: var(--bg-chrome);
+  --pane-bg: var(--bg-panel);
+  background: var(--bg-panel);
 }
 
-.wb-card {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
+.wb-editor {
+  --pane-bg: var(--bg-editor);
   background: var(--bg-editor);
-  box-shadow: var(--shadow-sm);
 }
 
 .wb-preview {
+  --pane-bg: var(--bg-panel);
   background: var(--bg-panel);
 }
 
 .wb-terminal {
+  --pane-bg: var(--term-bg);
   background: var(--term-bg);
 }
 
 @media (min-width: 769px) {
   .workbench[data-explorer="closed"] .wb-explorer {
     visibility: hidden;
-  }
-
-  /* A closed preview leaves its handle at the right edge, to drag or press Enter on. */
-  .workbench[data-preview="closed"] {
-    --edge-gap: 0px;
   }
 
   .workbench[data-preview="closed"] .wb-preview {
@@ -134,37 +132,38 @@
   touch-action: none;
 }
 
-/* A hit area wider than the 6px gap it sits in. */
+/* A hit area wider than the hairline it sits on. */
 .wb-splitter::before {
   content: "";
   position: absolute;
-  inset: 0 -3px;
+  inset: 0 -4px;
 }
 
 .wb-splitter-terminal::before {
-  inset: -3px 0;
+  inset: -4px 0;
 }
 
 .wb-splitter::after {
   content: "";
   position: absolute;
-  top: var(--space-3);
-  bottom: var(--space-3);
+  top: 0;
+  bottom: 0;
   left: 50%;
-  width: 2px;
-  border-radius: 1px;
-  background: transparent;
+  width: 3px;
+  /* A short grip in the middle of the divider shows it can be dragged, before any hover. */
+  background: linear-gradient(var(--line-strong), var(--line-strong)) center / 3px 28px no-repeat;
   transform: translateX(-50%);
   transition: background-color var(--dur-fast) var(--ease-out);
 }
 
 .wb-splitter-terminal::after {
   top: 50%;
-  right: var(--space-3);
+  right: 0;
   bottom: auto;
-  left: var(--space-3);
+  left: 0;
   width: auto;
-  height: 2px;
+  height: 3px;
+  background-size: 28px 3px;
   transform: translateY(-50%);
 }
 
@@ -180,7 +179,7 @@
 @media (hover: hover) and (pointer: fine) {
   /* A short delay, so passing over a handle on the way elsewhere does not flash it. */
   .wb-splitter:hover::after {
-    background: var(--line-strong);
+    background-color: var(--line-strong);
     transition-delay: 120ms;
   }
 }
@@ -188,6 +187,7 @@
 .wb-splitter:focus-visible::after,
 .wb-splitter.is-dragging::after {
   background: var(--focus);
+  background-size: auto;
   transition-delay: 0ms;
 }
 
@@ -207,7 +207,8 @@
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
-  padding: 0 var(--space-2) 0 var(--space-2_5);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
   background: var(--bg-chrome);
 }
 
@@ -216,32 +217,33 @@
   flex: none;
   align-items: center;
   gap: var(--space-2);
-  height: 32px;
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-md);
+  height: 30px;
+  padding: 0 var(--space-1_5) 0 var(--space-0_5);
+  border-radius: var(--radius-sm);
   color: var(--fg);
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  font-stretch: var(--display-stretch);
   letter-spacing: -0.01em;
 }
 
 .wb-brand-mark {
   display: inline-grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--accent-fg);
-  transition: transform var(--dur-fast) var(--ease-out);
+  width: 24px;
+  height: 24px;
+  color: var(--fg);
+  transition: transform var(--dur-slow) var(--ease-detent);
 }
 
 .wb-brand-mark .ico {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
 }
 
+/* Pressing the mark indexes it one tooth. */
 .wb-brand:active .wb-brand-mark {
-  transform: scale(0.94);
+  transform: rotate(40deg);
 }
 
 .wb-crumbs {
@@ -256,8 +258,16 @@
 .wb-crumb-project {
   overflow: hidden;
   color: var(--fg);
-  font-weight: var(--weight-medium);
+  font: var(--weight-medium) var(--text-sm) / 1.2 var(--font-ui);
   text-overflow: ellipsis;
+}
+
+/* A slash between the product's name and the project's. */
+.wb-crumbs::before {
+  content: "/";
+  margin-right: var(--space-1);
+  color: var(--line-strong);
+  font-size: var(--text-md);
 }
 
 .wb-crumb-switch {
@@ -276,7 +286,7 @@
 }
 
 .wb-crumb-sep {
-  color: var(--fg-subtle);
+  color: var(--line-strong);
 }
 
 .wb-crumb-branch {
@@ -302,12 +312,14 @@
   width: min(440px, 34vw);
   height: var(--control-h);
   margin: 0 auto;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
   background: var(--bg-input);
   color: var(--fg-muted);
-  transition: border-color var(--dur-fast) var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
 }
 
 .wb-palette .ico {
@@ -328,7 +340,7 @@
   padding: 3px 5px;
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
-  background: var(--bg-panel);
+  background: var(--bg-chrome);
   color: var(--fg-muted);
 }
 
@@ -347,6 +359,7 @@
 @media (hover: hover) and (pointer: fine) {
   .wb-palette:hover {
     border-color: var(--line-strong);
+    background: var(--bg-input);
   }
 
   .wb-brand:hover,
@@ -355,23 +368,23 @@
   }
 }
 
-/* The dev server pill: the status, and a separate stop button. */
+/* The dev server: a pilot lamp with its label, and a separate stop button. */
 .wb-run {
   display: inline-flex;
   align-items: stretch;
   height: var(--control-h);
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
   color: var(--fg);
   font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono);
 }
 
 .wb-run[data-tone="ok"] {
-  border-color: color-mix(in oklab, var(--ok) 40%, var(--line));
-  background: var(--ok-soft);
-  color: var(--ok);
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }
 
 .wb-run[data-tone="danger"] {
@@ -382,7 +395,7 @@
 .wb-run-status {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1_5);
+  gap: var(--space-2);
   padding: 0 var(--space-2);
 }
 
@@ -397,7 +410,7 @@
   height: 7px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 22%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 20%, transparent);
 }
 
 .wb-run-action {
@@ -420,22 +433,22 @@
   }
 }
 
-/* The theme toggle: two states, the theme in effect is highlighted. */
+/* The theme toggle: two states, the theme in effect is the raised one. */
 .theme-toggle {
   display: inline-flex;
-  gap: 2px;
+  gap: 1px;
   padding: 2px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tabstrip);
 }
 
 .theme-option {
   display: inline-grid;
   place-items: center;
-  width: 22px;
+  width: 24px;
   height: 22px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   color: var(--fg-muted);
   transition:
     color var(--dur-fast) var(--ease-out),
@@ -448,8 +461,9 @@
 }
 
 .theme-option[aria-pressed="true"] {
-  background: var(--bg-active);
-  color: var(--accent-text);
+  background: var(--bg-elevated);
+  box-shadow: 0 0 0 1px var(--line-strong);
+  color: var(--fg);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -464,6 +478,7 @@
   display: flex;
   flex-direction: column;
   padding: var(--space-1) 0;
+  border-right: 1px solid var(--line);
   background: var(--bg-chrome);
 }
 
@@ -481,13 +496,68 @@
   height: var(--activity-icon);
 }
 
-/* Open panes read in the text color; closed ones recede. Rose stays for brand and primary. */
-.wb-act[aria-pressed="false"] {
-  color: color-mix(in oklab, var(--fg-subtle) 70%, transparent);
+/* Three states. A closed pane's icon is plain and quiet. An open pane's icon sits on a slightly
+   raised key. The pane that has the keyboard, and only that one, gets the lit key and the lamp
+   marker, which stands wholly inside the bar. */
+.wb-act::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 3px;
+  height: 20px;
+  border-radius: 1px;
+  background: var(--accent);
+  opacity: 0;
+  transform: translate(-4px, -50%);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-base) var(--ease-detent);
+}
+
+.wb-act::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  left: 50%;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
 }
 
 .wb-act[aria-pressed="true"] {
+  z-index: 0;
+  color: var(--fg-muted);
+}
+
+.wb-act[aria-pressed="true"]::after {
+  opacity: 1;
+}
+
+.workbench:has(.wb-explorer:focus-within) .wb-act[data-pane="explorer"],
+.workbench:has(.wb-preview:focus-within) .wb-act[data-pane="preview"],
+.workbench:has(.wb-terminal:focus-within) .wb-act[data-pane="terminal"] {
   color: var(--fg);
+}
+
+.workbench:has(.wb-explorer:focus-within) .wb-act[data-pane="explorer"]::before,
+.workbench:has(.wb-preview:focus-within) .wb-act[data-pane="preview"]::before,
+.workbench:has(.wb-terminal:focus-within) .wb-act[data-pane="terminal"]::before {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
+.workbench:has(.wb-explorer:focus-within) .wb-act[data-pane="explorer"]::after,
+.workbench:has(.wb-preview:focus-within) .wb-act[data-pane="preview"]::after,
+.workbench:has(.wb-terminal:focus-within) .wb-act[data-pane="terminal"]::after {
+  background: var(--bg-active);
 }
 
 .wb-act:focus-visible {
@@ -505,20 +575,21 @@
 .wb-status {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-4);
   min-width: 0;
   padding: 0 var(--space-3);
   overflow: hidden;
+  border-top: 1px solid var(--status-line);
   background: var(--status-bg);
   color: var(--status-fg);
-  font: var(--text-2xs) / 1 var(--font-mono);
+  font: var(--weight-medium) var(--text-xs) / 1 var(--font-ui);
   white-space: nowrap;
 }
 
 .sb-item {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-1_5);
 }
 
 .sb-item .ico {
@@ -542,7 +613,7 @@
 
 .sb-item[data-tone="ok"],
 .sb-live {
-  color: var(--ok);
+  color: var(--accent-text);
 }
 
 .sb-item[data-tone="warn"] {
@@ -566,7 +637,8 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--ok);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
 }
 
 /* ───────────── Boot progress and the moved notice ───────────── */
@@ -575,16 +647,17 @@
   display: grid;
   place-items: center;
   padding: var(--space-4);
+  background: var(--bg-chrome);
 }
 
 .wb-boot-card {
   display: grid;
   justify-items: start;
-  gap: var(--space-3);
-  width: min(360px, 100%);
+  gap: var(--space-4);
+  width: min(340px, 100%);
   padding: var(--space-6);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xl);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
   background: var(--bg-panel);
   box-shadow: var(--shadow-md);
   transition:
@@ -597,19 +670,23 @@
   }
 }
 
+/* The mark turns while the workspace boots: one tooth at a time, never a smooth spin. */
 .wb-boot-mark {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md);
-  background: var(--accent);
-  color: var(--accent-fg);
+  width: 40px;
+  height: 40px;
+  color: var(--fg);
+  animation: wb-index 2s steps(9, end) infinite;
 }
 
 .wb-boot-mark .ico {
-  width: 24px;
-  height: 24px;
+  width: 40px;
+  height: 40px;
+}
+
+.wb-boot-card:has([data-state="failed"]) .wb-boot-mark {
+  animation: none;
 }
 
 .wb-boot-title {
@@ -620,7 +697,7 @@
 
 .wb-boot-steps {
   display: grid;
-  gap: var(--space-2);
+  gap: var(--space-2_5);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -629,7 +706,7 @@
 .wb-boot-steps li {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-2_5);
   color: var(--fg-subtle);
 }
 
@@ -639,7 +716,7 @@
 
 .wb-boot-steps li[data-state="active"] {
   color: var(--fg);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
 }
 
 .wb-boot-steps li[data-state="failed"] {
@@ -659,23 +736,24 @@
 }
 
 [data-state="done"] .wb-boot-icon {
-  color: var(--ok);
+  color: var(--accent-text);
 }
 
 .wb-boot-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--line-strong);
 }
 
+/* A small sprocket, indexing tooth by tooth. */
 .wb-spinner {
-  width: 13px;
-  height: 13px;
-  border: 2px solid var(--line-strong);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: wb-spin 0.7s linear infinite;
+  width: 15px;
+  height: 15px;
+  background: var(--accent);
+  -webkit-mask: var(--sprocket-mask) center / contain no-repeat;
+  mask: var(--sprocket-mask) center / contain no-repeat;
+  animation: wb-index 1s steps(9, end) infinite;
 }
 
 .wb-boot-error {
@@ -699,14 +777,14 @@
   max-width: 36ch;
   margin: 0;
   padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-md);
   color: var(--fg);
 }
 
-@keyframes wb-spin {
+@keyframes wb-index {
   to {
     transform: rotate(360deg);
   }
@@ -722,9 +800,12 @@
   }
 }
 
+/* With reduced motion nothing turns: the mark and the step's sprocket stand still, and the
+   list of boot steps, with the current one named, is the progress cue. */
 @media (prefers-reduced-motion: reduce) {
-  .wb-spinner {
-    animation-duration: 2.4s;
+  .wb-spinner,
+  .wb-boot-mark {
+    animation: none;
   }
 
   .sb-save[data-state="saving"] .ico {
@@ -754,9 +835,33 @@
   }
 
   .workbench {
+    background: var(--bg-chrome);
     grid-template-columns: 100%;
     grid-template-rows: calc(var(--titlebar-h-phone) + env(safe-area-inset-top, 0px)) minmax(0, 1fr) auto;
     grid-template-areas: "title" "main" "switch";
+  }
+
+  /* The pane on screen names its surface for the switcher's tooth below it. */
+  .workbench[data-pane="files"] {
+    --shown-bg: var(--bg-panel);
+  }
+
+  .workbench[data-pane="code"] {
+    --shown-bg: var(--bg-editor);
+  }
+
+  .workbench[data-pane="preview"] {
+    --shown-bg: var(--bg-panel);
+  }
+
+  /* Under the terminal sits its key row, so the switcher's tooth meets that row's surface. */
+  .workbench[data-pane="terminal"] {
+    --shown-bg: var(--bg-panel);
+  }
+
+  /* The word "Sprockt" is dropped on a phone, and the slash after it with it. */
+  .wb-crumbs::before {
+    content: none;
   }
 
   .wb-activity,
@@ -779,7 +884,6 @@
     gap: var(--space-2);
     padding: env(safe-area-inset-top, 0px) max(var(--space-2), env(safe-area-inset-right, 0px)) 0
       max(var(--space-3), env(safe-area-inset-left, 0px));
-    border-bottom: 1px solid var(--line);
   }
 
   .wb-brand {
@@ -789,7 +893,11 @@
   .wb-brand-mark {
     width: 32px;
     height: 32px;
-    border-radius: var(--radius-md);
+  }
+
+  .wb-brand-mark .ico {
+    width: 28px;
+    height: 28px;
   }
 
   .wb-crumbs {
@@ -801,7 +909,7 @@
 
   .wb-crumb-project {
     max-width: 100%;
-    font-size: var(--text-md);
+    font-size: var(--text-sm);
   }
 
   .wb-crumb-switch {
@@ -809,8 +917,16 @@
     padding: 0;
   }
 
-  .wb-titlebar-right {
+  /* The workspace name stays left; its actions sit against the right edge. */
+  .wb-titlebar .wb-titlebar-right {
     gap: var(--space-1);
+    margin-left: auto;
+  }
+
+  /* The switcher below already names the pane on screen. The explorer keeps its header: it
+     holds the file actions. */
+  .wb-preview .pane-header {
+    display: none;
   }
 
   .wb-run {
@@ -828,7 +944,7 @@
     place-items: center;
     width: 40px;
     height: 40px;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     color: var(--fg-muted);
     transition: background-color var(--dur-fast) var(--ease-out);
   }
@@ -847,26 +963,30 @@
   .wb-slot {
     display: none;
     grid-area: main;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
   }
 
   .wb-slot[data-shown] {
     display: flex;
   }
 
+  /* The pane switcher is a rack of four teeth. The shown pane's tooth rises through the bar's
+     top edge and meets the pane above it in the pane's own color. */
   .wb-switcher {
+    --tooth-flank: 5px;
     display: grid;
     grid-area: switch;
     grid-template-columns: repeat(4, 1fr);
-    padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
-    border-top: 1px solid var(--line);
-    background: var(--bg-chrome);
+    /* Clear of the screen's edges and of the home indicator. */
+    padding: 0 max(var(--space-4), env(safe-area-inset-right, 0px))
+      max(var(--space-1), env(safe-area-inset-bottom, 0px))
+      max(var(--space-4), env(safe-area-inset-left, 0px));
+    border-top: 1px solid var(--line-strong);
+    background: var(--bg-tabstrip);
   }
 
   .wb-switch {
     position: relative;
+    z-index: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -879,9 +999,33 @@
     transition: color var(--dur-fast) var(--ease-out);
   }
 
+  .wb-switch::before,
+  .wb-switch::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: -1px 2px 7px;
+    clip-path: polygon(0 0, 100% 0, calc(100% - var(--tooth-flank)) 100%, var(--tooth-flank) 100%);
+    opacity: 0;
+  }
+
+  .wb-switch::before {
+    background: var(--line-strong);
+  }
+
+  .wb-switch::after {
+    inset: -1px 3px 8px;
+    background: var(--shown-bg, var(--bg-panel));
+  }
+
+  .wb-switch[aria-pressed="true"]::before,
+  .wb-switch[aria-pressed="true"]::after {
+    opacity: 1;
+  }
+
   .wb-switch .ico {
-    width: 22px;
-    height: 22px;
+    width: 21px;
+    height: 21px;
     transition: transform var(--dur-fast) var(--ease-out);
   }
 
@@ -890,6 +1034,11 @@
   }
 
   .wb-switch[aria-pressed="true"] {
+    color: var(--fg);
+    font-weight: var(--weight-semibold);
+  }
+
+  .wb-switch[aria-pressed="true"] .ico {
     color: var(--accent-text);
   }
 
@@ -901,7 +1050,7 @@
   .wb-switch-dot {
     position: absolute;
     top: 9px;
-    left: calc(50% + 9px);
+    left: calc(50% + 10px);
     width: 6px;
     height: 6px;
     border-radius: 50%;

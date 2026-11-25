@@ -24,6 +24,7 @@ export function ActivityBar(props: { layout: LayoutStore }) {
               aria-label={item.label}
               title={item.label}
               aria-pressed={open()}
+              data-pane={item.pane}
               data-testid={`toggle-${item.pane}`}
               onClick={() => props.layout.set(setOpen(props.layout.layout(), item.pane, !open()))}
             >

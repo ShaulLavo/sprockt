@@ -23,7 +23,19 @@ declare module "../app/debug" {
   }
 }
 
-const MONO = '"Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+const MONO = '"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+
+/** Fold markers are chevrons like the explorer's, down for an open region and right for a folded one. */
+const FOLD_OPEN = {
+  kind: "svg",
+  viewBox: "0 0 16 16",
+  path: "M3.2 5.6 8 10.4l4.8-4.8 1 1L8 12.4 2.2 6.6z",
+} as const;
+const FOLD_CLOSED = {
+  kind: "svg",
+  viewBox: "0 0 16 16",
+  path: "M5.6 3.2 10.4 8l-4.8 4.8 1 1L12.4 8 6.6 2.2z",
+} as const;
 
 /** Phones wrap long lines to the screen instead of scrolling sideways. */
 function createNarrow() {
@@ -81,7 +93,12 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
       theme: editorTheme(scheme()),
       plugins: [
         createLineGutterPlugin(),
-        createFoldGutterPlugin(),
+        // A phone has no room for a fold column; its markers are hidden there too (editor.css).
+        createFoldGutterPlugin({
+          width: narrow() ? 0 : 16,
+          expandedIcon: FOLD_OPEN,
+          collapsedIcon: FOLD_CLOSED,
+        }),
         createHighlightingPlugin(),
         createEditorFindPlugin(),
       ],
@@ -89,6 +106,7 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
       fontSize: 13,
       lineHeight: 20,
       gutterLeadingInset: 8,
+      wordWrapBreak: "word",
     });
     const unmount = mountEditorPlugins(
       {

@@ -17,8 +17,8 @@ export interface PaneLayout {
 }
 
 export const DEFAULT_LAYOUT: PaneLayout = {
-  explorer: 244,
-  preview: 0.42,
+  explorer: 232,
+  preview: 0.36,
   terminal: 236,
   explorerOpen: true,
   previewOpen: true,

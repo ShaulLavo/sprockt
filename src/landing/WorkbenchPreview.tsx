@@ -1,501 +1,363 @@
-// Lightweight static+interactive Circuit workbench showcase for the landing hero.
-// Renders the real Vite + React starter template source and output with zero runtime JS.
-import { createSignal } from "solid-js";
+// The workbench as it looks with the Vite + React starter open, drawn in plain markup so the
+// landing page loads no editor, terminal or runtime code. It shows the template's real source
+// and the real output of its install and dev commands. Wide, it is the desktop frame; under
+// 720px of its own width (a phone, or the narrow tab beside the browser list) it is the phone
+// frame, one pane at a time. Every copy on the page shares one Demo, as tabs share a workspace.
+import { createSignal, createUniqueId, For, Show, untrack } from "solid-js";
+import { DEMO_READY, type Demo } from "./demo";
 import { Icon } from "./icons";
-import { ReactMark } from "./logos";
+import { APP_TSX_LINES, type SourceLine } from "./starter-source";
 
-type PhonePane = "app" | "files" | "code" | "terminal";
+export type PhonePane = "files" | "code" | "preview" | "terminal";
 
-export function WorkbenchPreview() {
-  const [pane, setPane] = createSignal<PhonePane>("app");
-  const [count, setCount] = createSignal(3);
+/** The editor's current line, counted from 1: the heading. The keyboard is in the terminal. */
+const CARET_LINE = 9;
+
+function lineLength(line: SourceLine): number {
+  return line.tokens.reduce((length, token) => length + token[1].length, line.indent);
+}
+
+/** The column after the current line's last character, as the status bar counts it. */
+const CARET_COLUMN = lineLength(APP_TSX_LINES[CARET_LINE - 1]!) + 1;
+
+interface TreeRow {
+  readonly name: string;
+  readonly depth: number;
+  readonly kind: "dir" | "dir-open" | "tsx" | "ts" | "css" | "html" | "json" | "lock";
+  readonly dim?: boolean;
+  readonly selected?: boolean;
+}
+
+const TREE: readonly TreeRow[] = [
+  { name: "node_modules", depth: 0, kind: "dir", dim: true },
+  { name: "src", depth: 0, kind: "dir-open" },
+  { name: "App.css", depth: 1, kind: "css" },
+  { name: "App.tsx", depth: 1, kind: "tsx", selected: true },
+  { name: "main.tsx", depth: 1, kind: "tsx" },
+  { name: "bun.lock", depth: 0, kind: "lock" },
+  { name: "index.html", depth: 0, kind: "html" },
+  { name: "package.json", depth: 0, kind: "json" },
+  { name: "tsconfig.json", depth: 0, kind: "json" },
+  { name: "vite.config.ts", depth: 0, kind: "ts" },
+];
+
+const FILE_MARK: Readonly<Record<TreeRow["kind"], string>> = {
+  dir: "",
+  "dir-open": "",
+  tsx: "TX",
+  ts: "TS",
+  css: "#",
+  html: "<>",
+  json: "{}",
+  lock: "··",
+};
+
+const PANES: readonly { pane: PhonePane; label: string; icon: "files" | "code" | "globe" | "terminal" }[] = [
+  { pane: "files", label: "Files", icon: "files" },
+  { pane: "code", label: "Code", icon: "code" },
+  { pane: "preview", label: "Preview", icon: "globe" },
+  { pane: "terminal", label: "Terminal", icon: "terminal" },
+];
+
+/** The keys the real terminal adds on a phone (src/terminal/TerminalKeys.tsx). */
+const SOFT_KEYS = ["esc", "tab", "ctrl", "^C", "↑", "↓", "←", "→", "|", "~", "/", "-"] as const;
+
+function FileMark(props: { kind: TreeRow["kind"] }) {
+  return (
+    <Show when={FILE_MARK[props.kind]} fallback={<Icon name="folder" class="lp-wb-ft lp-ft-dir" />}>
+      {(mark) => (
+        <span class={`lp-wb-ft lp-ft-${props.kind}`} aria-hidden="true">
+          {mark()}
+        </span>
+      )}
+    </Show>
+  );
+}
+
+/** A prompt, with its command once that step of the boot has arrived. */
+function Prompt(props: { command: string; entered: boolean }) {
+  return (
+    <span class="lp-wb-tline">
+      <span class="a-path">~/vite-react</span> <span class="a-prompt">$</span>{" "}
+      <Show when={props.entered}>{props.command}</Show>
+    </span>
+  );
+}
+
+export interface WorkbenchPreviewProps {
+  readonly demo: Demo;
+  /** The pane the phone frame opens on. */
+  readonly pane: PhonePane;
+  /** What the frame is, for assistive technology. */
+  readonly label: string;
+}
+
+export function WorkbenchPreview(props: WorkbenchPreviewProps) {
+  // The pane a frame opens on is read once: after that the visitor picks.
+  const [pane, setPane] = createSignal<PhonePane>(untrack(() => props.pane));
+  const step = () => props.demo.step();
+  // Each pane is a panel named by its tab, so a screen reader reaches the same files, source
+  // and output a sighted visitor sees; only the drawn controls are hidden from it. Two renders
+  // share the page, so the ids are per render.
+  const uid = createUniqueId();
+  const tabId = (name: PhonePane) => `${uid}-tab-${name}`;
+  const panelId = (name: PhonePane) => `${uid}-panel-${name}`;
+  const panel = (name: PhonePane) =>
+    ({ id: panelId(name), role: "tabpanel", "aria-labelledby": tabId(name) }) as const;
 
   return (
-    <div
-      class="lp-app-frame lp-hero-frame"
-      data-phone-pane={pane()}
-      aria-label="Sprockt workbench running a Vite + React project"
-    >
-      <div class="lp-wb">
-        {/* Title bar */}
+    <div class="lp-wb-frame">
+      <div
+        class="lp-wb"
+        data-ui="workbench"
+        role="group"
+        aria-label={props.label}
+        data-phone-pane={pane()}
+        data-step={step()}
+      >
         <div class="lp-wb-titlebar">
-          <div class="lp-wb-brand">
-            <span class="lp-wb-brand-mark">
-              <Icon name="logo" />
-            </span>
+          <span class="lp-wb-brand">
+            <Icon name="logo" class="lp-wb-mark" />
             <span class="lp-wb-brand-word">Sprockt</span>
-          </div>
-          <div class="lp-wb-crumbs">
-            <span class="lp-wb-crumb-project">vite-react</span>
-            <span class="lp-wb-crumb-sep">/</span>
-            <span class="lp-wb-crumb-branch">
-              <Icon name="branch" />
-              main
-            </span>
-          </div>
-          <div class="lp-wb-palette" aria-hidden="true">
+          </span>
+          <span class="lp-wb-crumb">vite-react</span>
+          <span class="lp-wb-palette" aria-hidden="true">
             <Icon name="search" />
-            <span class="lp-wb-palette-text">Search files and commands</span>
+            <span>Search files and commands</span>
             <kbd>⌘K</kbd>
-          </div>
-          <div class="lp-wb-titlebar-right">
-            <span class="lp-wb-run-state">
-              <span class="lp-wb-pulse" aria-hidden="true" />
-              <span class="lp-wb-run-label">dev</span>
-              <span class="lp-wb-run-port">:5173</span>
+          </span>
+          <span class="lp-wb-titlebar-right">
+            <Show when={props.demo.ready()}>
+              <span class="lp-wb-run">
+                <span class="lp-wb-lamp" aria-hidden="true" />
+                dev :5173
+              </span>
+            </Show>
+            <span class="lp-wb-more" aria-hidden="true">
+              <Icon name="more" />
             </span>
-          </div>
+          </span>
         </div>
 
-        {/* Activity bar: badge 2 matches the 2 changed files (Counter.tsx U + App.tsx M) */}
-        <div class="lp-wb-activitybar" aria-hidden="true">
-          <span class="lp-wb-act is-active">
+        {/* All three panes are open; the lamp marks the one that has the keyboard. */}
+        <div class="lp-wb-activity" aria-hidden="true">
+          <span class="lp-wb-act is-open">
             <Icon name="files" />
           </span>
-          <span class="lp-wb-act">
-            <Icon name="search" />
+          <span class="lp-wb-act is-open">
+            <Icon name="globe" />
           </span>
-          <span class="lp-wb-act">
-            <Icon name="branch" />
-            <span class="lp-wb-badge">2</span>
-          </span>
-          <span class="lp-wb-act">
-            <Icon name="box" />
-          </span>
-          <span class="lp-wb-act">
-            <Icon name="play" />
-          </span>
-          <span class="lp-wb-act-spacer" />
-          <span class="lp-wb-act">
-            <Icon name="sliders" />
+          <span class="lp-wb-act is-open is-focus">
+            <Icon name="terminal" />
           </span>
         </div>
 
-        {/* Explorer */}
-        <div class="lp-wb-pane lp-wb-explorer">
-          <div class="lp-wb-pane-head">
-            <span class="lp-wb-pane-title">Explorer</span>
-            <span class="lp-wb-pane-actions" aria-hidden="true">
-              <span>
-                <Icon name="file-plus" />
-              </span>
-              <span>
-                <Icon name="folder-plus" />
-              </span>
-              <span>
-                <Icon name="collapse" />
-              </span>
-            </span>
-          </div>
-          <div class="lp-wb-tree-root">
-            <Icon name="chev-d" />
-            vite-react
+        <div class="lp-wb-pane lp-wb-explorer" {...panel("files")}>
+          <div class="lp-wb-head" aria-hidden="true">
+            Files
           </div>
           <ul class="lp-wb-tree">
-            <li class="lp-wb-row is-dir is-dim" style={{ "--depth": 0 }}>
-              <Icon name="chev-r" class="lp-wb-chev" />
-              <Icon name="folder" class="lp-wb-ft" />
-              <span class="lp-wb-name">node_modules</span>
-            </li>
-            <li class="lp-wb-row is-dir" style={{ "--depth": 0 }}>
-              <Icon name="chev-r" class="lp-wb-chev" />
-              <Icon name="folder" class="lp-wb-ft" />
-              <span class="lp-wb-name">public</span>
-            </li>
-            <li class="lp-wb-row is-dir" style={{ "--depth": 0 }}>
-              <Icon name="chev-d" class="lp-wb-chev" />
-              <Icon name="folder" class="lp-wb-ft" />
-              <span class="lp-wb-name">src</span>
-              <span class="lp-wb-git-dot" />
-            </li>
-            <li class="lp-wb-row is-selected" style={{ "--depth": 1 }}>
-              <span class="lp-wb-chev-space" />
-              <span class="lp-wb-badge-ft lp-ft-tsx">TX</span>
-              <span class="lp-wb-name">App.tsx</span>
-              <span class="lp-wb-git lp-git-m">M</span>
-            </li>
-            <li class="lp-wb-row" style={{ "--depth": 1 }}>
-              <span class="lp-wb-chev-space" />
-              <span class="lp-wb-badge-ft lp-ft-tsx">TX</span>
-              <span class="lp-wb-name">Counter.tsx</span>
-              <span class="lp-wb-git lp-git-u">U</span>
-            </li>
-            <li class="lp-wb-row" style={{ "--depth": 1 }}>
-              <span class="lp-wb-chev-space" />
-              <span class="lp-wb-badge-ft lp-ft-css">#</span>
-              <span class="lp-wb-name">App.css</span>
-            </li>
-            <li class="lp-wb-row" style={{ "--depth": 1 }}>
-              <span class="lp-wb-chev-space" />
-              <span class="lp-wb-badge-ft lp-ft-tsx">TX</span>
-              <span class="lp-wb-name">main.tsx</span>
-            </li>
-            <li class="lp-wb-row" style={{ "--depth": 0 }}>
-              <span class="lp-wb-chev-space" />
-              <span class="lp-wb-badge-ft lp-ft-ts">lk</span>
-              <span class="lp-wb-name">bun.lock</span>
-            </li>
-            <li class="lp-wb-row" style={{ "--depth": 0 }}>
-              <span class="lp-wb-chev-space" />
-              <span class="lp-wb-badge-ft lp-ft-html">&lt;&gt;</span>
-              <span class="lp-wb-name">index.html</span>
-            </li>
-            <li class="lp-wb-row" style={{ "--depth": 0 }}>
-              <span class="lp-wb-chev-space" />
-              <span class="lp-wb-badge-ft lp-ft-json">{"{}"}</span>
-              <span class="lp-wb-name">package.json</span>
-            </li>
-            <li class="lp-wb-row" style={{ "--depth": 0 }}>
-              <span class="lp-wb-chev-space" />
-              <span class="lp-wb-badge-ft lp-ft-json">{"{}"}</span>
-              <span class="lp-wb-name">tsconfig.json</span>
-            </li>
-            <li class="lp-wb-row" style={{ "--depth": 0 }}>
-              <span class="lp-wb-chev-space" />
-              <span class="lp-wb-badge-ft lp-ft-ts">TS</span>
-              <span class="lp-wb-name">vite.config.ts</span>
-            </li>
+            <For each={TREE}>
+              {(row) => (
+                <li
+                  class="lp-wb-row"
+                  classList={{ "is-dim": row.dim, "is-selected": row.selected }}
+                  style={{ "--depth": row.depth }}
+                >
+                  <Show
+                    when={row.kind === "dir" || row.kind === "dir-open"}
+                    fallback={<span class="lp-wb-chev" />}
+                  >
+                    <Icon name={row.kind === "dir" ? "chev-r" : "chev-d"} class="lp-wb-chev" />
+                  </Show>
+                  <FileMark kind={row.kind} />
+                  <span>{row.name}</span>
+                </li>
+              )}
+            </For>
           </ul>
-          <div class="lp-wb-explorer-foot">
-            <span class="lp-wb-foot-line is-muted">
-              <Icon name="drive" />
-              Saved in IndexedDB
-            </span>
-          </div>
         </div>
 
-        {/* Editor */}
-        <div class="lp-wb-pane lp-wb-editor">
-          <div class="lp-wb-tabs" aria-hidden="true">
-            <span class="lp-wb-tab is-active">
-              <span class="lp-wb-badge-ft lp-ft-tsx">TX</span>
-              <span>App.tsx</span>
-              <span class="lp-wb-tab-end">
-                <Icon name="x" class="lp-wb-tab-x" />
-              </span>
+        <div class="lp-wb-pane lp-wb-editor" {...panel("code")}>
+          <div class="lp-wb-strip" aria-hidden="true">
+            <span class="lp-wb-tooth is-active">
+              <FileMark kind="tsx" />
+              App.tsx
+              <Icon name="x" class="lp-wb-tooth-x" />
             </span>
-            <span class="lp-wb-tab">
-              <span class="lp-wb-badge-ft lp-ft-tsx">TX</span>
-              <span>Counter.tsx</span>
+            <span class="lp-wb-tooth">
+              <FileMark kind="css" />
+              App.css
             </span>
-            <span class="lp-wb-tab">
-              <span class="lp-wb-badge-ft lp-ft-ts">TS</span>
-              <span>vite.config.ts</span>
-            </span>
-            <span class="lp-wb-tabs-fill" />
-            <span class="lp-wb-tabs-actions">
-              <span>
-                <Icon name="split" />
-              </span>
+            <span class="lp-wb-tooth">
+              <FileMark kind="ts" />
+              vite.config.ts
             </span>
           </div>
-          <div class="lp-wb-crumbbar" aria-hidden="true">
-            <span>src</span>
-            <Icon name="chev-r" />
-            <span>App.tsx</span>
-            <Icon name="chev-r" />
-            <span class="lp-wb-crumb-sym">App</span>
-          </div>
-          <div class="lp-wb-code">
-            <ol class="lp-wb-lines">
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">1</span>
-                <code class="lp-wb-lc">
-                  <span class="sk">import</span> <span class="sp">{"{"}</span>{" "}
-                  <span class="sv">useState</span> <span class="sp">{"}"}</span> <span class="sk">from</span>{" "}
-                  <span class="ss">&quot;react&quot;</span>
-                  <span class="sp">;</span>
-                </code>
-              </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">2</span>
-                <code class="lp-wb-lc">
-                  <span class="sk">import</span> <span class="ss">&quot;./App.css&quot;</span>
-                  <span class="sp">;</span>
-                </code>
-              </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">3</span>
-                <code class="lp-wb-lc" />
-              </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">4</span>
-                <code class="lp-wb-lc">
-                  <span class="sk">export default function</span> <span class="sf">App</span>
-                  <span class="sp">() {"{"}</span>
-                </code>
-              </li>
-              <li class="lp-wb-line is-modified">
-                <span class="lp-wb-ln">5</span>
-                <code class="lp-wb-lc">
-                  {"  "}
-                  <span class="sk">const</span> <span class="sp">[</span>
-                  <span class="sv">n</span>
-                  <span class="sp">,</span> <span class="sv">setN</span>
-                  <span class="sp">]</span> <span class="so">=</span> <span class="sf">useState</span>
-                  <span class="sp">(</span>
-                  <span class="sn">{count()}</span>
-                  <span class="sp">);</span>
-                </code>
-              </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">6</span>
-                <code class="lp-wb-lc">
-                  {"  "}
-                  <span class="sk">return</span> <span class="sp">(</span>
-                </code>
-              </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">7</span>
-                <code class="lp-wb-lc">
-                  {"    "}
-                  <span class="sp">&lt;</span>
-                  <span class="stg">main</span> <span class="sa">className</span>
-                  <span class="so">=</span>
-                  <span class="ss">&quot;app&quot;</span>
-                  <span class="sp">&gt;</span>
-                </code>
-              </li>
-              <li class="lp-wb-line">
-                <span class="lp-wb-ln">8</span>
-                <code class="lp-wb-lc">
-                  {"      "}
-                  <span class="sp">&lt;</span>
-                  <span class="stg">h1</span>
-                  <span class="sp">&gt;</span>Hello from bun.wasm<span class="sp">&lt;/</span>
-                  <span class="stg">h1</span>
-                  <span class="sp">&gt;</span>
-                </code>
-              </li>
-              <li class="lp-wb-line is-current">
-                <span class="lp-wb-ln">9</span>
-                <code class="lp-wb-lc">
-                  {"      "}
-                  <span class="sp">&lt;</span>
-                  <span class="stg">button</span> <span class="sa">className</span>
-                  <span class="so">=</span>
-                  <span class="ss">&quot;counter&quot;</span>
-                  <span class="lp-wb-caret" aria-hidden="true" />
-                </code>
-              </li>
-              <li class="lp-wb-line is-added">
-                <span class="lp-wb-ln">10</span>
-                <code class="lp-wb-lc">
-                  {"        "}
-                  <span class="sa">onClick</span>
-                  <span class="so">=</span>
-                  <span class="sp">{"{() => "}</span>
-                  <span class="sf">setN</span>
-                  <span class="sp">(</span>
-                  <span class="sv">n</span> <span class="so">+</span> <span class="sn">1</span>
-                  <span class="sp">)</span>
-                  <span class="sp">{"}"}</span>
-                  <span class="sp">&gt;</span>
-                </code>
-              </li>
-              <li class="lp-wb-line lp-wb-line-extra">
-                <span class="lp-wb-ln">11</span>
-                <code class="lp-wb-lc">
-                  {"        "}count is <span class="sp">{"{"}</span>
-                  <span class="sv">n</span>
-                  <span class="sp">{"}"}</span>
-                </code>
-              </li>
-              <li class="lp-wb-line lp-wb-line-extra">
-                <span class="lp-wb-ln">12</span>
-                <code class="lp-wb-lc">
-                  {"      "}
-                  <span class="sp">&lt;/</span>
-                  <span class="stg">button</span>
-                  <span class="sp">&gt;</span>
-                </code>
-              </li>
-              <li class="lp-wb-line lp-wb-line-extra">
-                <span class="lp-wb-ln">13</span>
-                <code class="lp-wb-lc">
-                  {"    "}
-                  <span class="sp">&lt;/</span>
-                  <span class="stg">main</span>
-                  <span class="sp">&gt;</span>
-                </code>
-              </li>
-              <li class="lp-wb-line lp-wb-line-extra">
-                <span class="lp-wb-ln">14</span>
-                <code class="lp-wb-lc">
-                  {"  "}
-                  <span class="sp">);</span>
-                </code>
-              </li>
-              <li class="lp-wb-line lp-wb-line-extra">
-                <span class="lp-wb-ln">15</span>
-                <code class="lp-wb-lc">
-                  <span class="sp">{"}"}</span>
-                </code>
-              </li>
-            </ol>
-          </div>
+          <ol class="lp-wb-code">
+            <For each={APP_TSX_LINES}>
+              {(line, index) => (
+                <li classList={{ "is-current": index() + 1 === CARET_LINE }}>
+                  <span class="lp-wb-ln" aria-hidden="true">
+                    {index() + 1}
+                  </span>
+                  <code style={{ "--indent": line.indent }}>
+                    {" ".repeat(line.indent)}
+                    <For each={line.tokens}>
+                      {(token) => (
+                        <Show when={token[0]} fallback={token[1]}>
+                          <span class={token[0]}>{token[1]}</span>
+                        </Show>
+                      )}
+                    </For>
+                  </code>
+                </li>
+              )}
+            </For>
+          </ol>
         </div>
 
-        {/* Preview: real Vite + React starter output (no repeated Bun mascot) */}
-        <div class="lp-wb-pane lp-wb-preview">
-          <div class="lp-wb-preview-bar" aria-hidden="true">
-            <span class="lp-wb-nav-btns">
-              <span>
-                <Icon name="left" />
-              </span>
-              <span class="is-dim">
-                <Icon name="right" />
-              </span>
-              <span>
-                <Icon name="reload" />
-              </span>
-            </span>
+        <div class="lp-wb-pane lp-wb-preview" {...panel("preview")}>
+          <div class="lp-wb-head" aria-hidden="true">
+            Preview
             <span class="lp-wb-url">
-              <Icon name="globe" />
-              <span>localhost:5173/</span>
-            </span>
-            <span class="lp-wb-port">
-              <span>:5173</span>
-              <Icon name="chev-d" />
-            </span>
-            <span class="lp-wb-open-ext">
+              <Icon name="reload" />
+              <span>127.0.0.1:5173</span>
               <Icon name="external" />
             </span>
           </div>
-          <div class="lp-wb-preview-stage">
-            <div class="lp-wb-demo">
-              <div class="lp-wb-demo-brand">
-                <ReactMark class="lp-wb-demo-react" />
-              </div>
-              <div class="lp-wb-demo-title">Hello from bun.wasm</div>
-              <p class="lp-wb-demo-tagline">
+          <Show
+            when={props.demo.ready()}
+            fallback={
+              <p class="lp-wb-empty">
+                {step() >= DEMO_READY - 1
+                  ? "Starting the dev server. The preview will load once a port opens."
+                  : "No dev server is running yet. Start one in the terminal to preview it here."}
+              </p>
+            }
+          >
+            <div class="lp-wb-app">
+              <p class="lp-wb-app-title">Hello from bun.wasm</p>
+              <p class="lp-wb-app-tagline">
                 Vite serves this React app through Bun, running in your browser.
               </p>
-              <button type="button" class="lp-wb-demo-counter" onClick={() => setCount((value) => value + 1)}>
-                count is {count()}
+              <button type="button" class="lp-wb-app-counter" onClick={() => props.demo.bump()}>
+                count is {props.demo.count()}
               </button>
-              <p class="lp-wb-demo-hint">
+              <p class="lp-wb-app-hint">
                 Edit <code>src/App.tsx</code> and the page updates without losing the count.
               </p>
+            </div>
+          </Show>
+        </div>
+
+        <div class="lp-wb-pane lp-wb-terminal" {...panel("terminal")}>
+          <div class="lp-wb-strip" aria-hidden="true">
+            <span class="lp-wb-tooth is-active is-lit">
+              <Show when={props.demo.ready()} fallback={<Icon name="terminal" />}>
+                <span class="lp-wb-lamp" />
+              </Show>
+              bash
+              <Icon name="x" class="lp-wb-tooth-x" />
+            </span>
+            <span class="lp-wb-strip-add">
+              <Icon name="plus" />
+            </span>
+            <span class="lp-wb-strip-actions">
+              <Icon name="split" />
+              <Icon name="trash" />
+              <Icon name="chev-d" />
+            </span>
+          </div>
+          <div class="lp-wb-term">
+            <pre>
+              <Prompt command="bun install" entered={step() >= 1} />
+              <Show when={step() >= 2}>
+                <span class="lp-wb-tline">
+                  <span class="a-bold">bun install</span> <span class="a-dim">v1.4.4</span>
+                </span>
+                <span class="lp-wb-tline"> </span>
+                <span class="lp-wb-tline">
+                  <span class="a-ok">+</span> @types/react<span class="a-dim">@19.3.3</span>
+                </span>
+                <span class="lp-wb-tline">
+                  <span class="a-ok">+</span> @types/react-dom<span class="a-dim">@19.3.0</span>
+                </span>
+                <span class="lp-wb-tline">
+                  <span class="a-ok">+</span> @vitejs/plugin-react<span class="a-dim">@6.1.2</span>
+                </span>
+                <span class="lp-wb-tline">
+                  <span class="a-ok">+</span> vite<span class="a-dim">@8.3.5</span>
+                </span>
+                <span class="lp-wb-tline">
+                  <span class="a-ok">+</span> react<span class="a-dim">@19.3.1</span>
+                </span>
+                <span class="lp-wb-tline">
+                  <span class="a-ok">+</span> react-dom<span class="a-dim">@19.3.1</span>
+                </span>
+                <span class="lp-wb-tline"> </span>
+                <Prompt command="bun run dev" entered={step() >= 3} />
+              </Show>
+              <Show when={props.demo.ready()}>
+                {/* The script's echo is wider than a phone's terminal; the phone frame leaves it out. */}
+                <span class="lp-wb-tline is-wide">
+                  <span class="a-dim">$ vite --host 127.0.0.1 --port 5173 --strictPort</span>
+                </span>
+                <span class="lp-wb-tline"> </span>
+                <span class="lp-wb-tline">
+                  {"  "}
+                  <span class="a-ok a-bold">VITE</span> <span class="a-ok">v8.3.5</span>
+                  {"  "}
+                  <span class="a-dim">ready</span>
+                </span>
+                <span class="lp-wb-tline"> </span>
+                <span class="lp-wb-tline">
+                  {"  "}
+                  <span class="a-ok">➜</span>
+                  {"  "}
+                  <span class="a-bold">Local</span>:{"   "}
+                  <span class="a-link">http://127.0.0.1:5173/</span>
+                </span>
+              </Show>
+              <span class="lp-wb-tline">
+                <span class="lp-wb-tcur" aria-hidden="true" />
+              </span>
+            </pre>
+          </div>
+          <div class="lp-wb-keys" aria-hidden="true">
+            <div class="lp-wb-keys-row">
+              <For each={SOFT_KEYS}>{(key) => <span>{key}</span>}</For>
             </div>
           </div>
         </div>
 
-        {/* Terminal: bun install followed by dev server on http://localhost:5173/ */}
-        <div class="lp-wb-pane lp-wb-terminal">
-          <div class="lp-wb-term-tabs" aria-hidden="true">
-            <span class="lp-wb-ttab">
-              <Icon name="terminal" />
-              bash
-            </span>
-            <span class="lp-wb-ttab is-active">
-              <span class="lp-wb-pulse" />
-              bun run dev
-            </span>
-            <span class="lp-wb-ttab">
-              <Icon name="terminal" />
-              bun test
-            </span>
-            <span class="lp-wb-ttab-add">
-              <Icon name="plus" />
-            </span>
-            <span class="lp-wb-tabs-fill" />
-            <span class="lp-wb-tabs-actions">
-              <span>
-                <Icon name="split" />
-              </span>
-              <span>
-                <Icon name="trash" />
-              </span>
-            </span>
-          </div>
-          <div class="lp-wb-term-scroll">
-            <pre class="lp-wb-term-out">
-              <span class="a-prompt">~/vite-react</span> <span class="a-dim">$</span> bun install
-              {"\n"}
-              <span class="a-g">+</span> react@19.3.1{"  "}
-              <span class="a-g">+</span> vite@8.3.5{"  "}
-              <span class="a-g">+</span> @vitejs/plugin-react@6.1.2
-              {"\n"}
-              <span class="a-prompt">~/vite-react</span> <span class="a-dim">$</span> bun run dev
-              {"\n  "}
-              <span class="a-g a-b">VITE</span> <span class="a-g">v8.3.5</span>{" "}
-              <span class="a-dim">ready</span>
-              {"   "}
-              <span class="a-g">➜</span> <span class="a-b">Local</span>:{" "}
-              <span class="a-c">
-                http://localhost:<span class="a-b">5173</span>/
-              </span>
-              {"\n"}
-              <span class="a-dim">10:42:18</span> <span class="a-c a-b">[vite]</span>{" "}
-              <span class="a-g">hmr update</span> <span class="a-dim">/src/App.tsx</span>
-              {"\n"}
-              <span class="lp-wb-tcur" aria-hidden="true" />
-            </pre>
-          </div>
+        <div class="lp-wb-status" aria-hidden="true">
+          <span>
+            <Icon name="check" />
+            saved
+          </span>
+          <span class="lp-wb-status-end">
+            Ln {CARET_LINE}, Col {CARET_COLUMN}
+          </span>
+          <span>TypeScript JSX</span>
         </div>
 
-        {/* Status bar: single authoritative home for "2 tabs" */}
-        <div class="lp-wb-statusbar" aria-hidden="true">
-          <span class="lp-wb-sb-item">
-            <Icon name="branch" />
-            main*
-          </span>
-          <span class="lp-wb-sb-item">
-            <Icon name="cpu" />
-            Bun in WebAssembly
-          </span>
-          <span class="lp-wb-sb-fill" />
-          <span class="lp-wb-sb-item">Ln 9, Col 34</span>
-          <span class="lp-wb-sb-item">UTF-8</span>
-          <span class="lp-wb-sb-item">TypeScript JSX</span>
-          <span class="lp-wb-sb-item lp-wb-sb-live">
-            <span class="lp-wb-live-dot" />2 tabs
-          </span>
-        </div>
-
-        {/* Phone pane switcher: default "App" stacks running preview above 8 lines of code */}
-        <div class="lp-wb-pane-switch" role="tablist" aria-label="Preview panes">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={pane() === "app"}
-            class={pane() === "app" ? "is-active" : undefined}
-            onClick={() => setPane("app")}
-          >
-            <Icon name="globe" />
-            <span>Preview</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={pane() === "code"}
-            class={pane() === "code" ? "is-active" : undefined}
-            onClick={() => setPane("code")}
-          >
-            <Icon name="code" />
-            <span>Code</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={pane() === "files"}
-            class={pane() === "files" ? "is-active" : undefined}
-            onClick={() => setPane("files")}
-          >
-            <Icon name="files" />
-            <span>Files</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={pane() === "terminal"}
-            class={pane() === "terminal" ? "is-active" : undefined}
-            onClick={() => setPane("terminal")}
-          >
-            <Icon name="terminal" />
-            <span>Terminal</span>
-          </button>
+        <div class="lp-wb-switcher" role="tablist" aria-label="Panes">
+          <For each={PANES}>
+            {(item) => (
+              <button
+                type="button"
+                role="tab"
+                id={tabId(item.pane)}
+                aria-controls={panelId(item.pane)}
+                aria-selected={pane() === item.pane}
+                onClick={() => setPane(item.pane)}
+              >
+                <Icon name={item.icon} />
+                <span>{item.label}</span>
+              </button>
+            )}
+          </For>
         </div>
       </div>
     </div>

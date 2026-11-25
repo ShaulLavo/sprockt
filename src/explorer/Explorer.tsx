@@ -3,6 +3,7 @@ import { createStore, reconcile } from "solid-js/store";
 import type { EditorStore } from "../editor/store";
 import { baseName, parentOf, type NameProblem } from "../files/paths";
 import { isHeavyName } from "../files/tree";
+import { workspaceName } from "../workspace/hint";
 import { useWorkspace } from "../workspace/session";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -580,7 +581,7 @@ export function Explorer(props: { store: EditorStore }) {
       >
         <div class="tree-root">
           <Icon name="chevronDown" />
-          <span>{workspace.id}</span>
+          <span>{workspaceName(workspace.id)}</span>
         </div>
         <ul ref={(element) => (list = element)} class="tree" data-testid="file-tree" aria-label={copy.title}>
           <For each={rows}>

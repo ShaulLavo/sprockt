@@ -1,5 +1,6 @@
-/* Terminal panel. Tabs follow the workbench's one tab rule: inactive tabs sit on the darker
-   strip, the active tab is the panel surface with a rose bar on its top edge. */
+/* Terminal panel. Tabs follow the workbench's one tab rule: a tab is a tooth. Inactive tabs are
+   labels on the darker strip; the shown tab is a tooth of the panel's own surface, rising out of
+   it. Its flat top carries the lamp color only while the terminal has the keyboard. */
 
 .terminal-panel {
   background: var(--term-bg);
@@ -21,7 +22,9 @@
 .term-tabs {
   display: flex;
   flex: 0 1 auto;
+  align-items: flex-end;
   min-width: 0;
+  padding-left: var(--space-2);
   overflow-x: auto;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
@@ -33,67 +36,82 @@
 
 .ttab {
   position: relative;
+  z-index: 0;
   display: flex;
   flex: none;
   align-items: center;
+  height: calc(var(--tab-h) - var(--tooth-top));
+  margin-bottom: -1px;
   color: var(--fg-subtle);
   font-size: var(--text-xs);
 }
 
-.ttab + .ttab::before {
+.ttab::before,
+.ttab::after {
   content: "";
   position: absolute;
-  top: 9px;
-  bottom: 9px;
-  left: 0;
-  width: 1px;
-  background: var(--line);
+  z-index: -1;
+  inset: 0;
+  clip-path: var(--tooth-shape);
+  opacity: 0;
 }
 
-.ttab.is-active::before,
-.ttab.is-active + .ttab::before,
+.ttab::before {
+  background: var(--line-strong);
+}
+
+.ttab::after {
+  inset: 1px 1px 0;
+  background: var(--term-bg);
+}
+
 .ttab.is-shown::before,
-.ttab.is-shown + .ttab::before {
-  display: none;
+.ttab.is-shown::after {
+  opacity: 1;
 }
 
 /* The other half of a split: on screen, but not taking input. */
 .ttab.is-shown {
-  background: color-mix(in oklab, var(--term-bg) 55%, var(--bg-tabstrip));
   color: var(--fg-muted);
 }
 
 .ttab.is-shown::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: var(--tab-indicator);
-  background: var(--line-strong);
+  background: color-mix(in oklab, var(--term-bg) 60%, var(--bg-tabstrip));
 }
 
 .ttab.is-active {
-  background: var(--term-bg);
-  color: var(--fg);
-  font-weight: var(--weight-semibold);
-  box-shadow:
-    inset 1px 0 0 var(--line),
-    inset -1px 0 0 var(--line);
+  color: var(--fg-muted);
 }
 
-.ttab.is-active:first-child {
-  box-shadow: inset -1px 0 0 var(--line);
+/* Full ink and weight only while the terminal has the keyboard, as in the editor's strip. */
+.terminal-panel:focus-within .ttab.is-active {
+  color: var(--fg);
+  font-weight: var(--weight-semibold);
 }
 
 .ttab.is-active::after {
+  background: var(--term-bg);
+}
+
+/* The bar along the tooth's flat top: quiet while the terminal is not taking input, the lamp
+   color once it has the keyboard. It spans exactly the flat, so it meets the flanks squarely. */
+.ttab.is-active .ttab-main::before {
   content: "";
   position: absolute;
   top: 0;
-  right: 0;
-  left: 0;
+  right: var(--tooth-flank);
+  left: var(--tooth-flank);
   height: var(--tab-indicator);
+  background: var(--fg-subtle);
+}
+
+.terminal-panel:focus-within .ttab.is-active .ttab-main::before {
   background: var(--accent);
+}
+
+.terminal-panel.is-collapsed .ttab::before,
+.terminal-panel.is-collapsed .ttab::after {
+  bottom: 1px;
 }
 
 .ttab-main {
@@ -101,7 +119,7 @@
   align-items: center;
   gap: var(--space-1_5);
   height: 100%;
-  padding: 0 var(--space-1) 0 var(--space-3);
+  padding: 0 var(--space-1) 0 calc(var(--tooth-flank) + var(--space-2));
   border-radius: 0;
 }
 
@@ -142,7 +160,7 @@
   place-items: center;
   width: 20px;
   height: 20px;
-  margin-right: var(--space-1_5);
+  margin-right: calc(var(--tooth-flank) + var(--space-0_5));
   border-radius: var(--radius-xs);
   color: var(--fg-muted);
   opacity: 0;
@@ -308,6 +326,16 @@
     height: 44px;
   }
 
+  /* The one pane on screen is the one in use, so its open tab is lit and set in full ink. */
+  .ttab.is-active {
+    color: var(--fg);
+    font-weight: var(--weight-semibold);
+  }
+
+  .ttab.is-active .ttab-main::before {
+    background: var(--accent);
+  }
+
   .ttab {
     font-size: var(--text-sm);
   }
@@ -316,13 +344,13 @@
     padding-left: var(--space-3);
   }
 
-  .term-actions .term-split,
-  .term-actions .term-collapse {
+  /* A phone shows one way to close a shell: the × on its tab. Split, collapse and the bar's
+     own close button are for the desktop frame. */
+  .term-actions {
     display: none;
   }
 
-  .term-add,
-  .term-actions .icon-button {
+  .term-add {
     width: 40px;
     height: 40px;
   }
@@ -331,14 +359,19 @@
     font-size: 16px;
   }
 
+  /* The row shows whole keys only: eight across, and a swipe snaps to the rest. The gap equals
+     the side padding, so the ninth key starts exactly at the row's edge and none is ever cut. */
   .term-keys {
-    --fade-size: 44px;
+    --fade-size: 0px;
+    --key-gap: var(--space-2);
     display: flex;
     flex: none;
-    gap: var(--space-1);
-    padding: var(--space-1_5) var(--space-2);
+    gap: var(--key-gap);
+    padding: var(--space-1_5) var(--key-gap);
     overflow-x: auto;
     overscroll-behavior-x: contain;
+    scroll-padding-inline: var(--key-gap);
+    scroll-snap-type: x mandatory;
     border-top: 1px solid var(--line);
     background: var(--bg-panel);
     scrollbar-width: none;
@@ -349,10 +382,11 @@
   }
 
   .term-key {
-    flex: 1 0 auto;
-    min-width: 40px;
+    flex: 0 0 calc((100% - 7 * var(--key-gap)) / 8);
+    min-width: 0;
     height: 38px;
-    padding: 0 var(--space-2);
+    padding: 0;
+    scroll-snap-align: start;
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
     background: var(--bg-input);
@@ -368,11 +402,7 @@
     background: var(--bg-active);
   }
 
-  .term-key.is-mod {
-    color: var(--accent-text);
-    border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
-  }
-
+  /* Ctrl looks like any other key until it is armed. */
   .term-key.is-mod[aria-pressed="true"] {
     background: var(--accent);
     border-color: var(--accent);

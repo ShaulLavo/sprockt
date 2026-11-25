@@ -3,6 +3,7 @@ import { For, Match, Show, Switch } from "solid-js";
 import type { BootStage } from "../runtime/boot";
 import { fill } from "../ui/format";
 import { Icon } from "../ui/icons";
+import { workspaceName } from "../workspace/hint";
 import { bootSteps } from "./boot-steps";
 import { ui } from "./copy";
 
@@ -13,7 +14,7 @@ export function BootProgress(props: { workspaceId: string; stage: BootStage; err
         <span class="wb-boot-mark" aria-hidden="true">
           <Icon name="logo" />
         </span>
-        <p class="wb-boot-title">{props.workspaceId}</p>
+        <p class="wb-boot-title">{workspaceName(props.workspaceId)}</p>
         <ol class="wb-boot-steps">
           <For each={bootSteps(props.stage, Boolean(props.error))}>
             {(step) => (
