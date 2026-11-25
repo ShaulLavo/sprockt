@@ -47,6 +47,19 @@ const COALESCE_MS = 50;
 const parentOf = (absolute: string) => absolute.slice(0, absolute.lastIndexOf("/"));
 type Lookup = (path: string) => Promise<ResolvedEntry | undefined>;
 
+/** WASI error numbers for "no such file or directory" and "not a directory". */
+const MISSING: ReadonlySet<unknown> = new Set([44, 54]);
+
+/**
+ * The filesystem answers "nothing there" in two ways: no entry when only the last name is
+ * missing, and an error when a directory on the way is. Both mean the path does not exist yet.
+ */
+function absentWhenMissing(error: unknown): undefined {
+  const missing = typeof error === "object" && error !== null && "errno" in error && MISSING.has(error.errno);
+  if (!missing) throw error;
+  return undefined;
+}
+
 /**
  * Checks where a path really leads, right before it is used. The filesystem resolves the
  * path itself, so links are followed exactly as the operation will follow them; nothing about
@@ -61,7 +74,7 @@ type Lookup = (path: string) => Promise<ResolvedEntry | undefined>;
  */
 async function confirmInside(lookup: Lookup, absolute: string, through: boolean): Promise<void> {
   if (!isInsideProject(absolute)) throw new ProjectPathError(absolute, "it is outside the project");
-  const entry = await lookup(absolute);
+  const entry = await lookup(absolute).catch(absentWhenMissing);
   if (!entry) return confirmInside(lookup, parentOf(absolute), true);
   if (!isInsideProject(entry.path)) {
     throw new ProjectPathError(absolute, `it leads to ${entry.path}, outside the project`);

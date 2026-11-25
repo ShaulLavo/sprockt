@@ -69,7 +69,12 @@ function memoryFilesystem(setup: Setup = {}) {
       const target = links[canonical];
       if (target !== undefined) return { path: canonical, kind: "symlink", target };
       if (files.has(canonical)) return { path: canonical, kind: "file" };
-      return directories.has(canonical) ? { path: canonical, kind: "dir" } : undefined;
+      if (directories.has(canonical)) return { path: canonical, kind: "dir" };
+      // As Waffle does: a missing last name is "no entry", a missing directory on the way is
+      // an error.
+      const parent = canonical.slice(0, canonical.lastIndexOf("/")) || "/";
+      if (parent === "/" || directories.has(parent)) return undefined;
+      throw Object.assign(new Error("filesystem errno 44"), { errno: 44 });
     },
   };
   const text = (path: string) => new TextDecoder().decode(files.get(path));
@@ -98,6 +103,17 @@ test("paths that are absolute or climb out of the project are refused and nothin
     expect(outcome.status === "rejected" && outcome.reason).toBeInstanceOf(ProjectPathError);
   }
   expect(memory.files.size).toBe(0);
+});
+
+test("files are written into directories that do not exist yet", async () => {
+  const memory = memoryFilesystem();
+  const service = createProjectFiles(memory.filesystem, noWatch);
+  await service.write("src/deep/er/main.ts", "nested");
+  await service.writeMany({ "pkg/a/one.ts": "1", "pkg/b/two.ts": "2", "top.ts": "3" });
+  await service.mkdir("empty/inside");
+  expect(memory.text("/workspace/src/deep/er/main.ts")).toBe("nested");
+  expect(memory.text("/workspace/pkg/b/two.ts")).toBe("2");
+  expect(await service.read("not/there/at/all.ts")).toBeUndefined();
 });
 
 test("a bulk write with one bad path writes none of its files", async () => {
