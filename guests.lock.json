@@ -1,0 +1,16 @@
+{
+  "bunWasm": "7b25271e30bd41ca54d115d01d557084068cf930",
+  "bashWeb": "0.0.114",
+  "guests": {
+    "bun-browser.wasm": {
+      "source": "https://bun.sprockt.dev/bun-browser.wasm",
+      "sha256": "41c96d24d0c81f918571453b1d8b5abeb29288ea8d82beffb5a0cce0d89defad",
+      "bytes": 16376605
+    },
+    "shell-engine.wasm": {
+      "source": "https://bun.sprockt.dev/programs/shell-engine.wasm",
+      "sha256": "8d9ca9b78b8aa710972eff17975d6b1476ea913be1ddd13cd819d83b31afa841",
+      "bytes": 2309451
+    }
+  }
+}

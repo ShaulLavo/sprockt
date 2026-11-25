@@ -1,0 +1,31 @@
+.tree,
+.tree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tree {
+  overflow: auto;
+}
+
+.tree-row {
+  display: block;
+  width: 100%;
+  padding: 3px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tree-directory,
+.tree-empty {
+  color: var(--text-muted);
+}
+
+.tree-empty {
+  padding: 8px;
+}
+
+.tree-file.active {
+  background: var(--border);
+}
