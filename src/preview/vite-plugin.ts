@@ -2,14 +2,27 @@
 // at a fixed path above its scope, and both it and the client script must be classic scripts:
 // module service workers are not available in every browser we support, and the client script
 // has to run before the previewed page's own scripts.
+//
+// A build without previews publishes neither. In the worker's place it puts one that serves
+// nothing and removes itself (sw-off.ts), for browsers that still hold an earlier build's worker.
 import { resolve } from "node:path";
 import { build, type Plugin } from "vite";
+import { previewKind } from "./kind";
 import { CLIENT_SCRIPT_PATH, SERVICE_WORKER_PATH } from "./paths";
 
-const ENTRIES: Readonly<Record<string, string>> = {
+type Entries = Readonly<Record<string, string>>;
+
+const ENTRIES: Entries = {
   [SERVICE_WORKER_PATH]: "src/preview/sw.ts",
   [CLIENT_SCRIPT_PATH]: "src/preview/inject/client.ts",
 };
+
+const ENTRIES_OFF: Entries = { [SERVICE_WORKER_PATH]: "src/preview/sw-off.ts" };
+
+/** What a build publishes at the preview scripts' addresses, by whether it has previews. */
+export function publishedEntries(kind: "mounted" | "none"): Entries {
+  return kind === "mounted" ? ENTRIES : ENTRIES_OFF;
+}
 
 async function bundle(root: string, entry: string, minify: boolean): Promise<string> {
   const result = await build({
@@ -33,15 +46,23 @@ async function bundle(root: string, entry: string, minify: boolean): Promise<str
 
 export function previewScripts(): Plugin {
   let root = process.cwd();
+  let published = ENTRIES_OFF;
   const cache = new Map<string, Promise<string>>();
   return {
     name: "sprockt:preview-scripts",
     configResolved(config) {
       root = config.root;
+      // The same rule, from the same settings, as the app's own `import.meta.env` check.
+      published = publishedEntries(
+        previewKind({
+          DEV: config.env.DEV === true,
+          VITE_SPROCKT_PREVIEWS: config.env.VITE_SPROCKT_PREVIEWS,
+        }),
+      );
     },
     async generateBundle() {
-      const paths = Object.keys(ENTRIES);
-      const sources = await Promise.all(paths.map((path) => bundle(root, ENTRIES[path] ?? "", true)));
+      const paths = Object.keys(published);
+      const sources = await Promise.all(paths.map((path) => bundle(root, published[path] ?? "", true)));
       for (const [index, path] of paths.entries()) {
         this.emitFile({ type: "asset", fileName: path.slice(1), source: sources[index] ?? "" });
       }

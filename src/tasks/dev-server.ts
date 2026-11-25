@@ -24,9 +24,17 @@ export interface DevServer {
   readonly owned: Accessor<boolean>;
   /** Ports of a server another tab runs; the workspace's preview address reaches them. */
   readonly remotePorts: Accessor<readonly number[]>;
-  /** The end of the task's output in this tab, for showing why a start failed. */
+  /** The end of the task's output in this tab. It stays until the next start. */
   readonly output: Accessor<string>;
-  /** Asks for the dev server. Resolves false when the project has nothing to start. */
+  /**
+   * Whether the last run in this tab ended without being stopped: the command failed or
+   * finished. The pane then keeps `output` on screen, which says why.
+   */
+  readonly ended: Accessor<boolean>;
+  /**
+   * Asks for the dev server. Calls made while one is under way share it. Resolves false when
+   * the project has nothing to start.
+   */
   start(): Promise<boolean>;
   /** Stops the server this tab runs. */
   stop(): void;
@@ -64,6 +72,7 @@ async function pump(
 
 export function createDevServer(host: DevServerHost): DevServer {
   const [output, setOutput] = createSignal("");
+  const [ended, setEnded] = createSignal(false);
   const decoder = new TextDecoder();
 
   function append(bytes: Uint8Array): void {
@@ -82,30 +91,44 @@ export function createDevServer(host: DevServerHost): DevServer {
     return devCommand(project, modules !== undefined);
   }
 
-  /** Runs `script` in a shell of its own and copies its output until it ends. */
-  async function spawn(script: string): Promise<ServerProcess> {
-    const shell = await createShell({
+  function openShell(script: string): Promise<Shell> {
+    return createShell({
       runtime: host.runtime,
       wasmUrl: host.shell.wasmUrl,
       workerUrl: host.shell.workerUrl,
       cwd: host.shell.cwd,
       env: { ...host.shell.env },
       script,
+    }).catch((error: unknown) => {
+      // No shell, so no server: what went wrong is the output, and it stays on screen.
+      setEnded(true);
+      throw error;
     });
-    let ended = false;
+  }
+
+  /** Runs `script` in a shell of its own and copies its output until it ends. */
+  async function spawn(script: string): Promise<ServerProcess> {
+    setOutput("");
+    setEnded(false);
+    const shell = await openShell(script);
+    let over = false;
+    let stopped = false;
     const wake = () => {
-      ended = true;
+      over = true;
       shell.terminal.signal();
     };
     shell.done.then(wake, wake);
-    const exited = pump(shell, append, () => ended)
+    const exited = pump(shell, append, () => over)
       .then(() => shell.dispose())
-      .catch(report);
+      .catch(report)
+      // It ended without being asked to: its last output says why, and the pane keeps it.
+      .finally(() => setEnded(!stopped));
     return {
       command: script,
       exited,
       stop() {
-        if (!ended) shell.interrupt();
+        stopped = true;
+        if (!over) shell.interrupt();
       },
     };
   }
@@ -116,13 +139,8 @@ export function createDevServer(host: DevServerHost): DevServer {
       current: () => host.preview.servers().map((server) => server.port),
       subscribe: (listener) => host.preview.subscribe(listener),
     },
-    // Detected again here: a tab that takes the server over was never asked to start it.
-    async launch() {
-      const script = await command();
-      if (!script) return undefined;
-      setOutput("");
-      return spawn(script);
-    },
+    command,
+    spawn,
   });
   const [state, setState] = createSignal(line.state());
   line.subscribe(setState);
@@ -132,13 +150,9 @@ export function createDevServer(host: DevServerHost): DevServer {
     owned: () => state().owned,
     remotePorts: () => state().remotePorts,
     output,
+    ended,
+    start: () => line.start(),
     stop: () => line.stop(),
-    async start() {
-      if (state().status !== "stopped") return true;
-      if (!(await command())) return false;
-      line.start();
-      return true;
-    },
     dispose: () => line.dispose(),
   };
 }

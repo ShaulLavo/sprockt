@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# The build without previews that the end-to-end suite makes (playwright.config.ts).
+dist-previews-off/
 .wrangler/
 .DS_Store
 *.log

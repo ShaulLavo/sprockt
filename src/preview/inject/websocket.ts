@@ -44,6 +44,32 @@ function toBytes(data: Exclude<Sendable, Blob>): Uint8Array {
   return new Uint8Array(data).slice();
 }
 
+/**
+ * Hands the far end of a socket's channel to whatever reaches the server on `port`. False when
+ * nothing can, and the socket then fails as a refused connection does.
+ */
+export type TunnelConnect = (far: MessagePort, port: number) => boolean;
+
+/** The way a previewed page reaches its server: through the service worker that serves it. */
+const throughServiceWorker: TunnelConnect = (far, port) => {
+  const controller = navigator.serviceWorker?.controller;
+  if (!controller) return false;
+  controller.postMessage({ type: "preview-socket", port }, [far]);
+  return true;
+};
+
+/** Sockets of this document that are not closed yet. */
+const live = new Set<TunnelWebSocket>();
+
+/**
+ * Ends every socket of this document, for when the document goes away. The server learns that a
+ * socket is gone only from its channel's `end` message; a page that was reloaded or removed
+ * without sending it would leave the connection open on the server for good.
+ */
+export function endTunnels(): void {
+  for (const socket of Array.from(live)) socket.abandon();
+}
+
 export class TunnelWebSocket extends EventTarget {
   static readonly CONNECTING = CONNECTING;
   static readonly OPEN = OPEN;
@@ -70,6 +96,12 @@ export class TunnelWebSocket extends EventTarget {
   private readonly key = handshakeKey();
   private readonly protocols: readonly string[];
   private handshake: Uint8Array | undefined = new Uint8Array();
+  /**
+   * Bytes that arrived after the handshake's answer, while that answer is being checked. They
+   * are frames, and they wait here so that none is read before the socket is open or ahead of
+   * an earlier one. Undefined at every other time.
+   */
+  private early: Uint8Array[] | undefined;
   private fragments: Uint8Array[] = [];
   private fragmentOpcode = 0;
   private sends: Promise<void> = Promise.resolve();
@@ -78,6 +110,7 @@ export class TunnelWebSocket extends EventTarget {
   constructor(
     private readonly tunnel: TunnelTarget,
     protocols: string | readonly string[] = [],
+    connect: TunnelConnect = throughServiceWorker,
   ) {
     super();
     this.url = tunnel.url;
@@ -86,12 +119,13 @@ export class TunnelWebSocket extends EventTarget {
       this.receive(event.data),
     );
     this.channel.port1.start();
-    const controller = navigator.serviceWorker?.controller;
-    if (!controller) {
-      queueMicrotask(() => this.fail());
-      return;
-    }
-    controller.postMessage({ type: "preview-socket", port: tunnel.port }, [this.channel.port2]);
+    live.add(this);
+    if (!connect(this.channel.port2, tunnel.port)) queueMicrotask(() => this.fail());
+  }
+
+  /** Closes the socket at once because its document is going away. */
+  abandon(): void {
+    this.finish(1001, "", false);
   }
 
   override dispatchEvent(event: Event): boolean {
@@ -153,26 +187,28 @@ export class TunnelWebSocket extends EventTarget {
   }
 
   private data(chunk: Uint8Array): void {
+    if (this.early) return void this.early.push(chunk);
     if (this.handshake === undefined) return this.handleFrames(chunk);
     this.handshake = concat(this.handshake, chunk);
     const response = parseHandshakeResponse(this.handshake);
     if (!response) return;
     this.handshake = undefined;
-    void this.accept(response.status, response.headers, response.rest);
+    // Checking the answer takes a moment (a digest). What follows it waits in `early`.
+    this.early = [response.rest];
+    void this.accept(response.status, response.headers);
   }
 
-  private async accept(
-    status: number,
-    headers: ReadonlyMap<string, string>,
-    rest: Uint8Array,
-  ): Promise<void> {
+  private async accept(status: number, headers: ReadonlyMap<string, string>): Promise<void> {
     const expected = await acceptFor(this.key);
+    const waiting = this.early ?? [];
+    this.early = undefined;
     if (status !== 101 || headers.get("sec-websocket-accept") !== expected) return this.fail();
     if (this.readyState !== CONNECTING) return;
     this.protocol = headers.get("sec-websocket-protocol") ?? "";
     this.readyState = OPEN;
     this.dispatchEvent(new Event("open"));
-    if (rest.length > 0) this.handleFrames(rest);
+    // Open first, then the frames in the order they arrived.
+    for (const chunk of waiting) this.handleFrames(chunk);
   }
 
   private handleFrames(chunk: Uint8Array): void {
@@ -218,6 +254,8 @@ export class TunnelWebSocket extends EventTarget {
   private finish(code: number, reason: string, wasClean: boolean): void {
     if (this.readyState === CLOSED) return;
     this.readyState = CLOSED;
+    live.delete(this);
+    this.early = undefined;
     clearTimeout(this.closeTimer);
     this.channel.port1.postMessage({ type: "end" });
     this.channel.port1.close();

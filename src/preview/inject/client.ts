@@ -3,7 +3,7 @@
 // where the page is and what went wrong in it.
 import { frameMessage, isFrameCommand, type FrameMessage } from "../bridge";
 import { tunnelTarget, type PageServer } from "./tunnel";
-import { TunnelWebSocket } from "./websocket";
+import { endTunnels, TunnelWebSocket } from "./websocket";
 
 type Body = Parameters<typeof frameMessage>[0];
 
@@ -32,6 +32,8 @@ function installWebSocket(): void {
     configurable: true,
     writable: true,
   });
+  // A reload, a navigation or the removal of the frame: the page's sockets end with it.
+  addEventListener("pagehide", endTunnels);
 }
 
 const text = (value: unknown) => (value instanceof Error ? value.message : String(value));

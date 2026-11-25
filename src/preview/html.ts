@@ -35,9 +35,16 @@ export function headInsertion(html: string): number | undefined {
   return endOf(html, /<head(?:\s[^>]*)?>/i);
 }
 
-/** Where the script goes in a document without <head>: after <html>, else after the doctype. */
+/** A UTF-8 byte order mark, as the one-character-per-byte text below shows it. */
+const BYTE_ORDER_MARK = "ï»¿";
+
+/**
+ * Where the script goes in a document without <head>: after <html>, else after the doctype,
+ * else at the start (after a byte order mark, which has to stay first).
+ */
 export function fallbackInsertion(html: string): number {
-  return endOf(html, /<html(?:\s[^>]*)?>/i) ?? endOf(html, /<!doctype[^>]*>/i) ?? 0;
+  const start = html.startsWith(BYTE_ORDER_MARK) ? BYTE_ORDER_MARK.length : 0;
+  return endOf(html, /<html(?:\s[^>]*)?>/i) ?? endOf(html, /<!doctype[^>]*>/i) ?? start;
 }
 
 /** True once waiting for <head> is pointless: the body or a script began, or enough was read. */
@@ -45,33 +52,53 @@ function pastHead(html: string): boolean {
   return html.length > SEARCH_LIMIT || /<(?:body|script)[\s>]/i.test(html);
 }
 
-const insertAt = (html: string, index: number, tag: string) => html.slice(0, index) + tag + html.slice(index);
+function joined(chunks: readonly Uint8Array[]): Uint8Array {
+  const whole = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    whole.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return whole;
+}
 
-/** A stream transform that inserts `tag` once and then passes the rest through untouched. */
+/**
+ * A stream transform that inserts `tag` once and then passes the rest through untouched.
+ *
+ * The document's bytes are never decoded and encoded again: a chunk may end in the middle of a
+ * character, and the bytes after the insertion pass through as they came. The place is found in
+ * a one-character-per-byte reading of what arrived, so an index into that text is an index into
+ * the bytes; the tags looked for are ASCII, which reads the same in UTF-8.
+ */
 export function injectTag(tag: string): TransformStream<Uint8Array, Uint8Array> {
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  let pending = "";
+  const tagBytes = new TextEncoder().encode(tag);
+  const byteText = new TextDecoder("latin1");
+  let pending: Uint8Array[] = [];
+  let seen = "";
   let done = false;
 
   function release(controller: TransformStreamDefaultController<Uint8Array>, index: number): void {
     done = true;
-    controller.enqueue(encoder.encode(insertAt(pending, index, tag)));
-    pending = "";
+    const bytes = joined(pending);
+    if (index > 0) controller.enqueue(bytes.subarray(0, index));
+    controller.enqueue(tagBytes);
+    if (index < bytes.length) controller.enqueue(bytes.subarray(index));
+    pending = [];
+    seen = "";
   }
 
   return new TransformStream({
     transform(chunk, controller) {
       if (done) return controller.enqueue(chunk);
-      pending += decoder.decode(chunk, { stream: true });
-      const head = headInsertion(pending);
+      pending.push(chunk);
+      seen += byteText.decode(chunk);
+      const head = headInsertion(seen);
       if (head !== undefined) return release(controller, head);
-      if (pastHead(pending)) release(controller, fallbackInsertion(pending));
+      if (pastHead(seen)) release(controller, fallbackInsertion(seen));
     },
     flush(controller) {
       if (done) return;
-      pending += decoder.decode();
-      release(controller, headInsertion(pending) ?? fallbackInsertion(pending));
+      release(controller, headInsertion(seen) ?? fallbackInsertion(seen));
     },
   });
 }

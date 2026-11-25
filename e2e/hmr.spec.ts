@@ -1,9 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { expect, newWorkspace, retryLostFrames, test, writeFile } from "./helpers";
-
-retryLostFrames();
+import { expect, newWorkspace, test, writeFile } from "./helpers";
 
 /** The Vite + React starter that bun-wasm tests against, read from the installed package. */
 const TEMPLATE = join(import.meta.dirname, "../node_modules/bun-wasm/sandbox/template");

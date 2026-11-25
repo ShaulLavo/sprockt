@@ -14,3 +14,11 @@ export interface PreviewBuild {
 export function previewKind(build: PreviewBuild): "mounted" | "none" {
   return build.DEV || build.VITE_SPROCKT_PREVIEWS === "mounted" ? "mounted" : "none";
 }
+
+/** What the running build has. Only for code Vite bundles; the build plugin reads its config. */
+export function buildPreviewKind(): "mounted" | "none" {
+  return previewKind({
+    DEV: import.meta.env.DEV,
+    VITE_SPROCKT_PREVIEWS: import.meta.env.VITE_SPROCKT_PREVIEWS,
+  });
+}

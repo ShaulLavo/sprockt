@@ -65,6 +65,47 @@ test("text of more than one byte per character passes through intact", async () 
   expect(output).toBe(page.replace("<head>", `<head>${TAG}`));
 });
 
+async function injectBytes(chunks: readonly Uint8Array[]): Promise<Uint8Array> {
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  });
+  return new Uint8Array(await new Response(source.pipeThrough(injectTag(TAG))).arrayBuffer());
+}
+
+test("a chunk that ends inside a character, in the chunk where the tag goes in, loses nothing", async () => {
+  const page = "<html><head><title>café</title></head><body>日本語 🎉</body></html>";
+  const bytes = new TextEncoder().encode(page);
+  const expected = new TextEncoder().encode(page.replace("<head>", `<head>${TAG}`));
+  // The first chunk holds <head>, so the tag goes in there, and ends between the two bytes of "é".
+  const inside = new TextEncoder().encode("<html><head><title>caf").length + 1;
+  expect(await injectBytes([bytes.subarray(0, inside), bytes.subarray(inside)])).toEqual(expected);
+  // And the same for a cut at every other byte of the document.
+  for (let cut = 1; cut < bytes.length; cut++) {
+    // oxlint-disable-next-line no-await-in-loop
+    expect(await injectBytes([bytes.subarray(0, cut), bytes.subarray(cut)])).toEqual(expected);
+  }
+});
+
+test("bytes that are not text at all come out unchanged around the tag", async () => {
+  const head = new TextEncoder().encode("<html><head>");
+  const junk = new Uint8Array([0xff, 0xfe, 0x80, 0x00, 0xc3]);
+  const output = await injectBytes([head, junk]);
+  expect(output.slice(0, head.length)).toEqual(head);
+  expect(output.slice(output.length - junk.length)).toEqual(junk);
+  expect(output.length).toBe(head.length + new TextEncoder().encode(TAG).length + junk.length);
+});
+
+test("a byte order mark stays first in a document with nothing to put the tag after", async () => {
+  const mark = new Uint8Array([0xef, 0xbb, 0xbf]);
+  const body = new TextEncoder().encode("<p>fragment</p>");
+  const output = await injectBytes([new Uint8Array([...mark, ...body])]);
+  expect(output.slice(0, 3)).toEqual(mark);
+  expect(new TextDecoder().decode(output)).toBe(`${TAG}<p>fragment</p>`);
+});
+
 test("only HTML in UTF-8 is rewritten", () => {
   expect(isHtml("text/html; charset=utf-8")).toBe(true);
   expect(isHtml("TEXT/HTML")).toBe(true);

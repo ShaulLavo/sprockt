@@ -191,6 +191,11 @@ export function PreviewPane() {
     setNoScript(!(await devServer.start()));
   }
 
+  function emptyText(): string {
+    if (devServer.status() === "starting") return ui.starting;
+    return devServer.ended() ? ui.serverEnded : ui.empty;
+  }
+
   function taskLabel(): string {
     if (devServer.status() === "stopped") return ui.startServer;
     return elsewhere() ? ui.stopElsewhere : fill(ui.stopServer, { port: port() ?? "…" });
@@ -311,12 +316,15 @@ export function PreviewPane() {
         </Show>
         <Show when={port() === undefined && !unavailable()}>
           <div class="preview-empty" data-testid="preview-empty">
-            <p>{devServer.status() === "starting" ? ui.starting : ui.empty}</p>
+            <p>{emptyText()}</p>
             <Show when={noScript()}>
               <p>{ui.nothingToStart}</p>
             </Show>
-            <Show when={devServer.status() === "starting" && devServer.output()}>
-              <pre class="preview-task-output">{devServer.output().slice(-2000)}</pre>
+            {/* The output stays after a server that ended by itself: it says why. */}
+            <Show when={(devServer.status() === "starting" || devServer.ended()) && devServer.output()}>
+              <pre class="preview-task-output" data-testid="preview-task-output">
+                {devServer.output().slice(-2000)}
+              </pre>
             </Show>
           </div>
         </Show>

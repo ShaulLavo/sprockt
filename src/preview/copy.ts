@@ -26,4 +26,5 @@ export const ui = {
   starting: "Starting the dev server. The preview will load once a port opens.",
   empty: "No dev server is running yet. Start one in the terminal to preview it here.",
   nothingToStart: "Nothing to start in this project.",
+  serverEnded: "The dev server stopped. Its last output:",
 } as const;

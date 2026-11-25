@@ -41,15 +41,22 @@ export interface LineState {
 export interface DevServerLineOptions {
   readonly coordinator: DevServerCoordinator;
   readonly ports: LocalPorts;
-  /** Starts the server in this tab. Resolves with nothing when the project has nothing to start. */
-  launch(): Promise<ServerProcess | undefined>;
+  /** The command that starts the project's server, or nothing when it has none. */
+  command(): Promise<string | undefined>;
+  /** Runs `command` in this tab. */
+  spawn(command: string): Promise<ServerProcess>;
 }
 
 export interface DevServerLine {
   state(): LineState;
   subscribe(listener: (state: LineState) => void): () => void;
-  /** Wants a dev server for the workspace: starts one here unless another tab runs one. */
-  start(): void;
+  /**
+   * Wants a dev server for the workspace: starts one here unless another tab runs one. The
+   * start is claimed before anything is awaited, so a second call joins the first instead of
+   * starting again, and `stop` or `dispose` cancel it at whatever point it has reached.
+   * Resolves false when the project has nothing to start.
+   */
+  start(): Promise<boolean>;
   /** Stops the server this tab runs, for every tab. Another tab's server is stopped in that tab. */
   stop(): void;
   /** Stops this tab's server without telling the others to give up, and closes the coordinator. */
@@ -75,11 +82,18 @@ export function createDevServerLine(options: DevServerLineOptions): DevServerLin
   let requested = false;
   /** The lease whose "down" this tab already acted on. */
   let downLease: string | undefined;
+  /** The start that is under way, which every `start` call until it settles shares. */
+  let starting: Promise<boolean> | undefined;
+  /** Moved on by `stop` and `dispose`: a start that was still looking for its command gives up. */
+  let generation = 0;
+  /** The command a start found, for the lease that start is about to get. */
+  let found: string | undefined;
 
   function state(): LineState {
     const current = coordinator.current();
     if (!current || current.phase === "down") {
-      return { status: requested ? "starting" : "stopped", owned: false, remotePorts: [] };
+      // A start this tab asked for is this tab's to stop, before it has a lease too.
+      return { status: requested ? "starting" : "stopped", owned: requested, remotePorts: [] };
     }
     const owned = coordinator.role() === "owner";
     return {
@@ -96,6 +110,7 @@ export function createDevServerLine(options: DevServerLineOptions): DevServerLin
 
   function leaveLine(): void {
     requested = false;
+    found = undefined;
     leave?.();
     leave = undefined;
   }
@@ -120,8 +135,13 @@ export function createDevServerLine(options: DevServerLineOptions): DevServerLin
   async function own(current: DevServerLease): Promise<void> {
     requested = false;
     lease = current;
+    // A tab that takes the server over was never asked to start it, and looks the command up now.
+    const known = found;
+    found = undefined;
     try {
-      const process = await options.launch();
+      const command = known ?? (await options.command());
+      // The process is this lease's from here on: `serve` stops it if the lease ended meanwhile.
+      const process = command === undefined ? undefined : await options.spawn(command);
       if (process) await serve(current, process);
       else current.announce(DOWN);
     } catch (error) {
@@ -150,7 +170,38 @@ export function createDevServerLine(options: DevServerLineOptions): DevServerLin
     // Once per lease: a later `start` here stands in line again while that lease winds down.
     if (downLease === current.lease) return;
     downLease = current.lease;
+    // A start asked for in this tab stays: it is for the next server, not the one that went down.
+    if (!starting) leaveLine();
+  }
+
+  /** Ends whatever this tab has under way: a start still looking for its command, or its lease. */
+  function giveUp(): void {
+    generation++;
     leaveLine();
+  }
+
+  async function begin(): Promise<boolean> {
+    if (state().status !== "stopped") return true;
+    const mine = generation;
+    // Claimed here, before the first await: the status is "starting" from this moment.
+    requested = true;
+    emit();
+    let command: string | undefined;
+    try {
+      command = await options.command();
+    } finally {
+      // Nothing to start, or the lookup failed: the claim is given back.
+      if (mine === generation && command === undefined) {
+        requested = false;
+        emit();
+      }
+    }
+    // Stopped or disposed while the command was looked up: nothing starts.
+    if (mine !== generation) return true;
+    if (command === undefined) return false;
+    found = command;
+    standBy();
+    return true;
   }
 
   const unsubscribe = coordinator.subscribe((current, role) => {
@@ -165,20 +216,21 @@ export function createDevServerLine(options: DevServerLineOptions): DevServerLin
       return () => listeners.delete(listener);
     },
     start() {
-      requested = true;
-      standBy();
-      emit();
+      starting ??= begin().finally(() => {
+        starting = undefined;
+      });
+      return starting;
     },
     stop() {
       // Said before the lease ends, so the tabs behind this one leave instead of taking over.
       lease?.announce(DOWN);
-      leaveLine();
+      giveUp();
       emit();
     },
     async dispose() {
       unsubscribe();
       listeners.clear();
-      leaveLine();
+      giveUp();
       await coordinator.dispose();
     },
   };

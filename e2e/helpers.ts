@@ -29,7 +29,10 @@ async function workbenchState(page: Page): Promise<string> {
   const state = await Promise.race([read, silent]).catch(
     (error: Error) => `the page could not be read: ${error.message}`,
   );
-  // The frames as the test runner has them, which is what a frame locator searches.
+  // The frames as the test runner has them, which is what a frame locator searches. Playwright's
+  // Firefox driver has lost a frame that sat on a blank document before it navigated: the page
+  // showed the preview and this list still said about:blank. The pane no longer makes such a
+  // frame; if this line shows the difference again, that driver problem is back.
   const frames = page.frames().map((frame) => frame.url());
   return `${state} runner-frames=${frames.join(",")}`;
 }
@@ -58,20 +61,6 @@ export const test = base.extend<{ pageErrors: string[] }>({
 });
 
 export { expect };
-
-/**
- * For a spec that looks inside the preview frame; call it at the top of the file.
- *
- * Playwright's Firefox driver can lose a frame that navigates away from a blank document it sat
- * on for a while: the page shows the preview, the driver still has the frame at about:blank, and
- * a frame locator finds nothing until the test times out. The failure line printed above showed
- * exactly that in 3 of 30 Firefox runs on a loaded machine. The pane now creates its frame only
- * when it has a page to load, and the next 96 runs kept their frame. The retry stays as a guard:
- * a second attempt gets a new frame, and the report still lists the test as flaky.
- */
-export function retryLostFrames(): void {
-  test.describe.configure({ retries: 1 });
-}
 
 /** Opens a new workspace from the landing page and returns its id. */
 export async function newWorkspace(page: Page): Promise<string> {

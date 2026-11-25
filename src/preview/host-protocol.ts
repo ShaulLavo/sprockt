@@ -11,6 +11,16 @@ export interface HostAnnouncement {
   readonly workspace: string;
 }
 
+/**
+ * Page to worker, from a build without previews: "stop serving and remove yourself". A worker
+ * that an earlier build registered would otherwise keep routing to that build's open tabs.
+ */
+export const PREVIEWS_OFF = "previews-off";
+
+export function isPreviewsOff(value: unknown): boolean {
+  return hasType(value) && value.type === PREVIEWS_OFF;
+}
+
 /** A Waffle preview request, tagged with the workspace it is for. */
 export type HostAsk = PreviewMessage & { readonly workspace: string };
 

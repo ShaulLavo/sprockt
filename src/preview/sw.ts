@@ -3,36 +3,39 @@
 // asking a tab that has that workspace open. Waffle does the routing; this file sets our
 // policy: which tabs may answer, what is added to HTML, and the isolation headers.
 import { createPreviewServiceWorker, type PreviewClient } from "waffle/browser/service-worker";
-import { HOST_QUERY, isHostAnnouncement, type HostAsk } from "./host-protocol";
+import { HOST_QUERY, isHostAnnouncement, isPreviewsOff, type HostAsk } from "./host-protocol";
 import { clientScriptTag, injectTag, isHtml, isUtf8 } from "./html";
-import { CLIENT_SCRIPT_PATH, serverMount, workspaceMount, workspaceOfPath } from "./paths";
+import { isolationHeaders } from "./isolation";
+import {
+  CLIENT_SCRIPT_PATH,
+  mountedRedirect,
+  parseMountedUrl,
+  workspaceMount,
+  workspaceOfPath,
+  type MountedLocation,
+} from "./paths";
 
 declare const self: ServiceWorkerGlobalScope;
 
 type Router = ReturnType<typeof createPreviewServiceWorker>;
 
-/** The IDE is cross-origin isolated, so a framed preview document has to opt in as well. */
-function isolated(headers: Headers): Headers {
-  if (!headers.has("cross-origin-embedder-policy"))
-    headers.set("cross-origin-embedder-policy", "require-corp");
-  if (!headers.has("cross-origin-resource-policy"))
-    headers.set("cross-origin-resource-policy", "same-origin");
-  return headers;
-}
-
 /**
- * A redirect to `/login` means the server's `/login`. Followed as it is, the browser would
- * leave the mount and load the IDE's own page, so the mount is put in front.
+ * A redirect to `/login`, or to `../login`, means a place on the server. Followed as the server
+ * wrote it, the browser would leave the mount, for the IDE's own page or another server's
+ * mount, so it is rewritten to the same place under this server's mount.
  */
-function mountRedirect(headers: Headers, mount: string): void {
-  const location = headers.get("location");
-  const absolute = location?.startsWith("/") && !location.startsWith("//");
-  if (location && absolute && !location.startsWith(`${mount}/`)) headers.set("location", mount + location);
+function keepRedirectMounted(response: Response, asked: MountedLocation): Response {
+  const location = response.headers.get("location");
+  if (location === null) return response;
+  const mounted = mountedRedirect(asked.workspace, asked.port, location, asked.path);
+  if (mounted === undefined) return response;
+  const headers = new Headers(response.headers);
+  headers.set("location", mounted);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 function transformResponse(workspace: string, response: Response, port: number): Response {
-  const headers = isolated(new Headers(response.headers));
-  mountRedirect(headers, serverMount(workspace, port));
+  const headers = isolationHeaders(new Headers(response.headers));
   const type = headers.get("content-type");
   const inject = response.body && isHtml(type) && isUtf8(type);
   const body = inject
@@ -98,17 +101,33 @@ async function askHosts(): Promise<void> {
   for (const client of windows) client.postMessage({ type: HOST_QUERY });
 }
 
+/**
+ * Set when a page of a build without previews said so (retire.ts). From then on this worker
+ * answers nothing: pages it still controls go to the network like any other page.
+ */
+let retired = false;
+
+function retire(): Promise<boolean> {
+  retired = true;
+  routers.clear();
+  hosts.clear();
+  return self.registration.unregister();
+}
+
 self.addEventListener("install", () => void self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 void askHosts();
 
 self.addEventListener("fetch", (event) => {
+  if (retired) return;
   const url = new URL(event.request.url);
   // Our own client script is a real file; everything else a preview asks for is the server's.
   if (url.origin !== location.origin || url.pathname === CLIENT_SCRIPT_PATH) return;
   const workspace = workspaceOfPath(url.pathname);
   const routed = workspace ? routerFor(workspace).fetch(event.request, event.clientId) : undefined;
-  if (routed) event.respondWith(routed);
+  const asked = routed && parseMountedUrl(event.request.url, location.origin);
+  if (routed && asked) event.respondWith(routed.then((response) => keepRedirectMounted(response, asked)));
+  else if (routed) event.respondWith(routed);
   else if (event.clientId) event.respondWith(fromPreviewPage(event.request, event.clientId));
 });
 
@@ -117,7 +136,8 @@ self.addEventListener("message", (event) => {
   const socket = event.ports[0];
   const source = event.source;
   const data: unknown = event.data;
-  if (!source || !("url" in source)) return;
+  if (isPreviewsOff(data)) return void event.waitUntil(retire());
+  if (retired || !source || !("url" in source)) return;
   if (isHostAnnouncement(data)) return void hosts.set(source.id, data.workspace);
   if (!socket) return;
   if (!data || typeof data !== "object" || !("type" in data) || data.type !== "preview-socket") return;

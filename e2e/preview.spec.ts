@@ -1,15 +1,19 @@
 import type { Page } from "@playwright/test";
-import { expect, newWorkspace, retryLostFrames, runInTerminal, test, writeFile } from "./helpers";
+import { expect, newWorkspace, runInTerminal, test, writeFile } from "./helpers";
+import { PREVIEWS_OFF } from "../src/preview/host-protocol";
 import { TAB_POLICY } from "../src/runtime/tab-policy";
 
-retryLostFrames();
-
-/** A small site with links, an error button and a WebSocket echo, served by Bun.serve. */
+/**
+ * A small site served by Bun.serve: links, an error button, a WebSocket echo that counts its open
+ * connections, and redirects that try to leave the server.
+ */
 const SERVER = `
 const page = (title: string, body: string) =>
   new Response("<!doctype html><html><head><title>" + title + "</title></head><body>" + body + "</body></html>", {
     headers: { "content-type": "text/html; charset=utf-8" },
   });
+const redirect = (location: string) => new Response(null, { status: 302, headers: { location } });
+let sockets = 0;
 
 Bun.serve({
   port: 3000,
@@ -17,10 +21,20 @@ Bun.serve({
     const url = new URL(request.url);
     if (url.pathname === "/ws") return server.upgrade(request) ? undefined : new Response("no upgrade", { status: 400 });
     if (url.pathname === "/about") return page("About", "<h1>About page</h1><a href='/'>Home</a>");
+    if (url.pathname === "/sockets") return page("Sockets", "<h1>open sockets: " + sockets + "</h1>");
+    if (url.pathname === "/old/place") return redirect("/about");
+    if (url.pathname === "/deep/inside/up") return redirect("../../../../../about");
+    if (url.pathname === "/to-other-port") return redirect("/../5174/about");
     if (url.pathname === "/echo") return page("Echo", "<h1 id='echo'>waiting</h1><script>const socket = new WebSocket('ws://' + location.host + '/ws'); socket.onopen = () => socket.send('ping'); socket.onmessage = (event) => { document.getElementById('echo').textContent = 'echo: ' + event.data; };</script>");
     return page("Home", "<h1>Hello from Bun.serve</h1><a href='/about'>About</a><button id='boom' onclick='console.error(\\"kaboom\\")'>Boom</button>");
   },
   websocket: {
+    open() {
+      sockets++;
+    },
+    close() {
+      sockets--;
+    },
     message(socket, message) {
       socket.send(String(message).toUpperCase());
     },
@@ -74,6 +88,49 @@ test("a server started in the terminal shows in the preview, and the toolbar dri
   await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
   await expect(page.getByRole("button", { name: "Forward" })).toBeDisabled();
   // Going back and forth never left the workbench.
+  await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
+});
+
+test("typed paths and the server's redirects stay on the server they belong to", async ({ page }) => {
+  const id = await newWorkspace(page);
+  await writeFile(page, "server.ts", SERVER);
+  await runInTerminal(page, "bun server.ts");
+  await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
+  const mount = `/__preview/${id}/3000`;
+  const framePath = () =>
+    frame(page)
+      .locator("html")
+      .evaluate(() => location.pathname);
+
+  // A path that climbs is resolved on the server, as in its own address bar: it cannot reach
+  // another port's mount, another workspace's, or the IDE.
+  await navigate(page, "/../5174/about");
+  await expect(urlBar(page)).toHaveValue("/5174/about");
+  await expect(page.getByTestId("preview-port")).toHaveValue("3000");
+  expect(await framePath()).toBe(`${mount}/5174/about`);
+  await navigate(page, "/%2e%2e/%2e%2e/%2e%2e/about");
+  await expect(frame(page).getByRole("heading")).toHaveText("About page");
+  await expect(urlBar(page)).toHaveValue("/about");
+
+  // A redirect to a path on the server, and one that climbs past the server's root. Each starts
+  // from the home page, so that arriving at the About page is the redirect's doing.
+  await navigate(page, "/");
+  await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
+  await navigate(page, "/old/place");
+  await expect(frame(page).getByRole("heading")).toHaveText("About page");
+  await expect(urlBar(page)).toHaveValue("/about");
+  await navigate(page, "/");
+  await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
+  await navigate(page, "/deep/inside/up");
+  await expect(frame(page).getByRole("heading")).toHaveText("About page");
+  await expect(urlBar(page)).toHaveValue("/about");
+  expect(await framePath()).toBe(`${mount}/about`);
+
+  // A redirect aimed at another port's mount ends on this server.
+  await navigate(page, "/to-other-port");
+  await expect(urlBar(page)).toHaveValue("/5174/about");
+  await expect(page.getByTestId("preview-port")).toHaveValue("3000");
+  expect(await framePath()).toBe(`${mount}/5174/about`);
   await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
 });
 
@@ -199,6 +256,36 @@ test("a WebSocket in the previewed page reaches the server", async ({ page }) =>
   await expect(frame(page).getByRole("heading")).toHaveText("echo: PING");
 });
 
+test("reloading or leaving a page closes its WebSockets on the server", async ({ page }) => {
+  await newWorkspace(page);
+  await writeFile(page, "server.ts", SERVER);
+  await runInTerminal(page, "bun server.ts");
+  await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
+  await navigate(page, "/echo");
+  await expect(frame(page).getByRole("heading")).toHaveText("echo: PING");
+
+  // Three reloads: each page opens a socket, and each one before it has to go.
+  const reload = page.getByRole("button", { name: "Reload preview" });
+  const reloadEcho = async () => {
+    await frame(page)
+      .getByRole("heading")
+      .evaluate((heading) => (heading.textContent = "reloading"));
+    await reload.click();
+    await expect(frame(page).getByRole("heading")).toHaveText("echo: PING");
+  };
+  await reloadEcho();
+  await reloadEcho();
+  await reloadEcho();
+
+  // Leaving for a page without a socket: the server ends up with none open. The page shows the
+  // count as it was when it was served, so it is asked again until the last close has landed.
+  await navigate(page, "/sockets");
+  await expect(async () => {
+    await reload.click();
+    await expect(frame(page).getByRole("heading")).toHaveText("open sockets: 0", { timeout: 2000 });
+  }).toPass({ timeout: 60_000 });
+});
+
 test("the preview opens in its own tab", async ({ page, context }) => {
   await newWorkspace(page);
   await writeFile(page, "server.ts", SERVER);
@@ -212,6 +299,59 @@ test("the preview opens in its own tab", async ({ page, context }) => {
   const tab = await opened;
   await expect(tab.getByRole("heading")).toHaveText("About page");
   expect(new URL(tab.url()).pathname).toMatch(/^\/__preview\/[a-z0-9]+\/3000\/about$/);
+  // On its own in a tab the page is as isolated as in the frame, so it has SharedArrayBuffer.
+  expect(await tab.evaluate(() => crossOriginIsolated)).toBe(true);
+  expect(await tab.evaluate(() => typeof SharedArrayBuffer)).toBe("function");
+});
+
+test("a worker told that previews are off stops serving, with the hosting tab still open", async ({
+  page,
+  context,
+}) => {
+  const id = await newWorkspace(page);
+  await writeFile(page, "server.ts", SERVER);
+  await runInTerminal(page, "bun server.ts");
+  await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
+  const address = `/__preview/${id}/3000/`;
+  const direct = await context.newPage();
+  await direct.goto(address);
+  await expect(direct.getByRole("heading")).toHaveText("Hello from Bun.serve");
+  await direct.close();
+
+  // What a page of a build without previews sends (src/preview/retire.ts), sent by hand here.
+  const other = await context.newPage();
+  await other.goto("/");
+  await other.evaluate(async (type) => {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    for (const registration of registrations) registration.active?.postMessage({ type });
+  }, PREVIEWS_OFF);
+  // The worker removed its own registration.
+  await expect
+    .poll(() => other.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length))
+    .toBe(0);
+
+  // The tab that hosts the server is still open, and the address no longer reaches it.
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "ready");
+  const visit = await context.newPage();
+  await visit.goto(address);
+  await expect(visit.locator("#app")).toBeAttached();
+  await expect(visit.getByText("Hello from Bun.serve")).toHaveCount(0);
+  expect(await visit.evaluate(() => navigator.serviceWorker.controller)).toBeNull();
+});
+
+test("a dev command that fails leaves its output on screen", async ({ page }) => {
+  await newWorkspace(page);
+  await writeFile(page, "package.json", JSON.stringify({ scripts: { dev: "bun not-there.ts" } }));
+  // With a node_modules folder the task runs the script without installing first.
+  await writeFile(page, "node_modules/.keep", "");
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+  const task = page.getByTestId("preview-task");
+  await task.click();
+  await expect(page.getByTestId("preview-task-output")).toContainText("not-there.ts");
+  // The command ended, and what it said is still there.
+  await expect(task).toHaveAttribute("data-status", "stopped");
+  await expect(page.getByTestId("preview-task-output")).toContainText("not-there.ts");
+  await expect(page.getByTestId("dev-server")).toHaveCount(0);
 });
 
 test("two workspaces on the same port do not see each other's server", async ({ page, context }) => {

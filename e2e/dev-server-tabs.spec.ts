@@ -1,8 +1,6 @@
 import type { Page } from "@playwright/test";
-import { expect, newWorkspace, retryLostFrames, test, writeFile } from "./helpers";
+import { expect, newWorkspace, test, writeFile } from "./helpers";
 import { TAB_POLICY } from "../src/runtime/tab-policy";
-
-retryLostFrames();
 
 // One tab of a workspace runs its dev server (src/tasks/dev-server-line.ts); the others show the
 // same preview. Tabs share a workspace only with the attach policy; with takeover there is one

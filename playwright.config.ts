@@ -1,8 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
+import { E2E_PORT as port, TWO_BUILDS_ORIGIN, TWO_BUILDS_PORT } from "./e2e/origins";
 
 // The suite runs against the production build on the persistent IndexedDB filesystem, the same
 // path a visitor takes. SPROCKT_E2E_PORT picks the port when the default is taken.
-const port = Number(process.env.SPROCKT_E2E_PORT ?? 4173);
 
 export default defineConfig({
   testDir: "e2e",
@@ -17,11 +17,23 @@ export default defineConfig({
     baseURL: `http://localhost:${port}`,
     trace: "retain-on-failure",
   },
-  webServer: {
-    command: `bun run preview --port ${port}`,
-    url: `http://localhost:${port}`,
-    reuseExistingServer: false,
-  },
+  webServer: [
+    {
+      command: `bun run preview --port ${port}`,
+      url: `http://localhost:${port}`,
+      reuseExistingServer: false,
+    },
+    // For e2e/previews-off.spec.ts: the app built a second time, without previews, and one
+    // origin that serves either build (scripts/serve-builds.ts). The spec moves a browser from
+    // the build with previews to the one without, as a new deploy would.
+    {
+      command: `env VITE_SPROCKT_PREVIEWS= bunx vite build --outDir dist-previews-off --logLevel warn && bun scripts/serve-builds.ts --port ${TWO_BUILDS_PORT}`,
+      url: TWO_BUILDS_ORIGIN,
+      reuseExistingServer: false,
+      // A hang cap for the second build, not a speed target.
+      timeout: 300_000,
+    },
+  ],
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
     { name: "firefox", use: { ...devices["Desktop Firefox"] } },

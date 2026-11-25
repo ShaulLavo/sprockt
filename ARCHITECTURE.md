@@ -211,6 +211,11 @@ a server on port 5173 never see each other's HTTP or WebSocket traffic.
   workbench and its IndexedDB. **It is a development stopgap for trusted, local projects
   only.** It exists under `vite dev` and in a build made with `VITE_SPROCKT_PREVIEWS=mounted`
   (the test build in CI). A public build does not set that and gets the inactive transport.
+  A build without previews also takes down what a build with them left on the origin: every
+  page removes the preview worker's registration when it loads and tells the worker to stop
+  answering (`preview/retire.ts`), and where the worker's file was it publishes one that serves
+  nothing and removes itself (`preview/sw-off.ts`). Otherwise a tab of the earlier build that
+  is still open would keep answering `/__preview/…` through the old worker.
 - `isolated` (preview-origins lane): bun-wasm's planned `RootPreviews`, whose `url(port, path)`
   returns `https://<id>-<port>-pv.sprockt.dev/…`, where `<id>` is derived from the workspace.
   Each server gets its own origin, which is what keeps a previewed project away from the IDE.
@@ -231,13 +236,24 @@ How the mounted transport works:
 - **Requests outside the mount.** A previewed page asks for `/src/main.tsx` or `/@vite/client`
   at the root of our origin. The worker sees which page asked and sends the request to that
   page's server.
+- **Paths stay on their server.** A path from the URL bar is resolved against the server's own
+  root, as a browser resolves it, before the mount is put in front (`preview/paths.ts`): `..`
+  segments, written out or encoded, stop at that root and cannot reach another port's mount,
+  another workspace's or the IDE. A redirect is resolved the same way, against the path that
+  was asked for, and rewritten to the same place under the mount.
+- **Isolation headers.** Every response carries the opener, embedder and resource policies
+  (`preview/isolation.ts`), so a preview opened in its own tab is cross-origin isolated like
+  the framed one and has `SharedArrayBuffer`.
 - **The client script.** The worker adds `/preview-client.js` to every HTML response, right
-  after `<head>` (`preview/html.ts`). It gives the page a `WebSocket` that reaches its own
-  server: the worker hands it a byte channel, and `preview/websocket-frames.ts` speaks the
-  WebSocket protocol over it. That is what makes hot reload work. It also reports the page's
-  location and errors to the pane and takes "reload" and "go to" from it (`preview/bridge.ts`,
-  `window.postMessage`, the same for an isolated origin), and keeps links and redirects to
-  `/path` inside the mount.
+  after `<head>` (`preview/html.ts`). The tag is spliced into the response's bytes, which are
+  never decoded and encoded again, so a chunk that ends inside a character loses nothing. The
+  script gives the page a `WebSocket` that reaches its own server: the worker hands it a byte
+  channel, and `preview/websocket-frames.ts` speaks the WebSocket protocol over it. That is
+  what makes hot reload work. Frames that arrive while the handshake is being checked wait
+  until the socket is open, and a page that is reloaded or removed ends its sockets, because
+  the server learns that only from the channel. It also reports the page's location and
+  errors to the pane and takes "reload" and "go to" from it (`preview/bridge.ts`,
+  `window.postMessage`, the same for an isolated origin), and keeps links inside the mount.
 - **The pane** (`preview/PreviewPane.tsx`) keeps its own back and forward list
   (`preview/history.ts`). A frame's browser history is shared with the IDE page, so stepping
   through it could walk the IDE itself back.
@@ -376,7 +392,10 @@ where the bytes live.
   guests (keyed on `guests.lock.json`) and Playwright's browsers. The browser job builds with
   `VITE_SPROCKT_PREVIEWS=mounted`, so `e2e/preview.spec.ts` and `e2e/hmr.spec.ts` have a
   transport; run them locally the same way. The hot-reload test installs React and Vite from
-  the npm registry inside the browser, so it needs the network.
+  the npm registry inside the browser, so it needs the network. The suite also builds the app
+  once more without previews (`dist-previews-off`) and serves both builds on a second port,
+  picked per browser context by a cookie (`scripts/serve-builds.ts`): `e2e/previews-off.spec.ts`
+  moves a browser from one build to the other, as a deploy does under open tabs.
 
 ## Known gaps
 
@@ -433,6 +452,11 @@ where the bytes live.
    `import` or `export` ("--hot requires an ESM graph") and for a server with routes or
    WebSocket handlers ("--hot does not support routes, WebSockets, TLS or Unix listeners"), and
    then waits for an edit, so the task stays on "starting" with the error under it.
+8. **Waffle's preview router does not close a server connection whose page vanished.** A
+   WebSocket tunnel ends on the server only when the page's end says `end`. The client script
+   says it when the page is reloaded, navigated or removed. A page that dies without running
+   that (a crashed tab) leaves the connection open on the server; closing it when the peer
+   port goes away belongs in Waffle's router.
 
 6. **A save is unsaved until storage holds it.** Waffle acknowledges a write from memory. If its
    flush fails, or the files come back from storage (a hosting tab closed) without it, the
