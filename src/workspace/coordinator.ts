@@ -3,13 +3,14 @@
 //
 // - Tabs stand in line on a Web Lock (`sprockt:<id>:dev-server`). The holder owns the server, and
 //   keeps the lock until its server has fully stopped, so two servers never run at once.
-// - Each ownership is a lease with an epoch (when it was granted). The owner announces the lease's
-//   state on a BroadcastChannel of the same name; a new lease starts with no ports. Peers ignore
-//   states from a lease older than the newest one they know has ended or is running.
-// - Liveness is a second lock that the owner holds for exactly its lease. Peers wait on it in
-//   shared mode: when they get it, the owner is gone, whether it said so or its tab closed or
-//   crashed. Messages carry state only, never liveness, so a background tab whose timers the
-//   browser throttles keeps its preview.
+// - Each ownership is a lease with its own lock, which the owner holds for exactly as long as the
+//   lease lasts; only one lease lock is ever held at a time. The owner announces the lease's state
+//   on a BroadcastChannel of the same name, and a new lease starts with no ports.
+// - Peers trust locks, not clocks or timers. A state from a lease they don't follow yet is taken
+//   only if that lease's lock is held right now (it is then the live owner, and the one before it
+//   has ended); otherwise it is a late message from a lease that is gone. Peers then wait on the
+//   lease lock in shared mode: when they get it, the owner is gone, whether it said so or its tab
+//   closed or crashed. A background tab whose timers the browser throttles keeps its preview.
 //
 // Ported in spirit from bun-wasm's `sandbox/src/dev-server-coordinator.ts`, without its reset and
 // handover machinery. No Solid and no DOM import: panes wrap `subscribe` in a signal.
@@ -22,8 +23,6 @@ export interface DevServerState {
   readonly ownerTab: string;
   /** The ownership this state belongs to. A tab that takes over starts a new lease. */
   readonly lease: string;
-  /** When the lease was granted; a later lease has a larger epoch. */
-  readonly epoch: number;
   readonly phase: DevServerPhase;
   /** Ports the server listens on inside the owner's Waffle network, most important first. */
   readonly ports: readonly number[];
@@ -82,7 +81,7 @@ export interface CoordinatorOptions {
 
 type Message =
   | { readonly type: "state"; readonly state: DevServerState }
-  | { readonly type: "stopped"; readonly lease: string; readonly epoch: number }
+  | { readonly type: "stopped"; readonly lease: string }
   | { readonly type: "hello" };
 
 export function devServerLockName(workspaceId: string): string {
@@ -92,16 +91,7 @@ export function devServerLockName(workspaceId: string): string {
 const leaseLockName = (workspaceId: string, lease: string) =>
   `${devServerLockName(workspaceId)}:lease:${lease}`;
 
-/** Wall-clock milliseconds with sub-millisecond precision, comparable across this origin's tabs. */
-const now = () => performance.timeOrigin + performance.now();
-
 const isAbort = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
-
-/** Whether `next` is a later lease than `current`. */
-function isLater(next: DevServerState, current: DevServerState): boolean {
-  if (next.epoch !== current.epoch) return next.epoch > current.epoch;
-  return next.lease > current.lease;
-}
 
 export function createDevServerCoordinator(options: CoordinatorOptions): DevServerCoordinator {
   const tabId = options.tabId ?? crypto.randomUUID();
@@ -113,14 +103,16 @@ export function createDevServerCoordinator(options: CoordinatorOptions): DevServ
   const listeners = new Set<(state: DevServerState | undefined, role: DevServerRole) => void>();
   const lines = new Set<AbortController>();
   const owning = new Set<Promise<void>>();
+  /** Leases known to be over. Small: one entry per ownership change this tab has seen. */
+  const endedLeases = new Set<string>();
+  /** The latest state of each lease whose lock is being checked. */
+  const checking = new Map<string, DevServerState>();
   let state: DevServerState | undefined;
   let role: DevServerRole = "follower";
   let ownLease: string | undefined;
-  /** Every lease with an epoch up to this one has ended. */
-  let floor = 0;
   let leases = 0;
   let ownerWatch: AbortController | undefined;
-  let disposed = false;
+  let disposal: Promise<void> | undefined;
 
   const emit = () => {
     for (const listener of listeners) listener(state, role);
@@ -130,37 +122,60 @@ export function createDevServerCoordinator(options: CoordinatorOptions): DevServ
     // oxlint-disable-next-line unicorn/require-post-message-target-origin
     channel.postMessage(message);
   };
+  const leaseLock = (lease: string) => leaseLockName(options.workspaceId, lease);
 
-  /** A lease has ended: forget it and everything older. */
-  function ended(lease: string, epoch: number): void {
-    floor = Math.max(floor, epoch);
+  function ended(lease: string): void {
+    endedLeases.add(lease);
+    checking.delete(lease);
     if (state?.lease !== lease) return;
     state = undefined;
     emit();
   }
 
   /** Learns when another tab's lease ends, however its tab went away. */
-  function watchOwner(owner: DevServerState): void {
+  function watchOwner(lease: string): void {
     ownerWatch?.abort();
     const watch = new AbortController();
     ownerWatch = watch;
     locks
-      .request(
-        leaseLockName(options.workspaceId, owner.lease),
-        { mode: "shared", signal: watch.signal },
-        () => ended(owner.lease, owner.epoch),
-      )
+      .request(leaseLock(lease), { mode: "shared", signal: watch.signal }, () => ended(lease))
       .catch((error: unknown) => {
         if (!isAbort(error)) onError(error);
       });
   }
 
-  function adopt(next: DevServerState): void {
-    if (next.epoch <= floor || ownLease !== undefined) return;
-    if (state && state.lease !== next.lease && !isLater(next, state)) return;
-    if (state?.lease !== next.lease) watchOwner(next);
+  /** Whether the lease's lock is held right now, which only its live owner does. */
+  function isLive(lease: string): Promise<boolean> {
+    return locks.request(leaseLock(lease), { mode: "shared", ifAvailable: true }, (lock) => lock === null);
+  }
+
+  /** A lease proved live: it is the owner now, and whatever this tab followed before is over. */
+  function follow(next: DevServerState): void {
+    if (state && state.lease !== next.lease) endedLeases.add(state.lease);
     state = next;
+    watchOwner(next.lease);
     emit();
+  }
+
+  async function check(lease: string): Promise<void> {
+    const live = await isLive(lease).catch(() => false);
+    const next = checking.get(lease);
+    checking.delete(lease);
+    if (!next || endedLeases.has(lease) || ownLease !== undefined) return;
+    if (live) follow(next);
+    else ended(lease);
+  }
+
+  function adopt(next: DevServerState): void {
+    if (ownLease !== undefined || endedLeases.has(next.lease)) return;
+    if (state?.lease === next.lease) {
+      state = next;
+      emit();
+      return;
+    }
+    const pending = checking.has(next.lease);
+    checking.set(next.lease, next);
+    if (!pending) void check(next.lease);
   }
 
   const onMessage = (event: MessageEvent<Message>) => {
@@ -170,36 +185,44 @@ export function createDevServerCoordinator(options: CoordinatorOptions): DevServ
       return;
     }
     if (message.type === "state") adopt(message.state);
-    else ended(message.lease, message.epoch);
+    else ended(message.lease);
   };
   channel.addEventListener("message", onMessage);
 
-  /** Takes the lease's own lock; resolves with its release once it is held. */
-  async function holdLease(lease: string): Promise<() => void> {
-    const held = Promise.withResolvers<void>();
+  /**
+   * Takes the lease's own lock. Resolves with its release once held, or with nothing when the
+   * line was cancelled first.
+   */
+  function holdLease(lease: string, signal: AbortSignal): Promise<(() => void) | undefined> {
+    const held = Promise.withResolvers<(() => void) | undefined>();
     const released = Promise.withResolvers<void>();
-    void locks.request(leaseLockName(options.workspaceId, lease), { mode: "exclusive" }, () => {
-      held.resolve();
-      return released.promise;
-    });
-    await held.promise;
-    return released.resolve;
+    locks
+      .request(leaseLock(lease), { mode: "exclusive", signal }, () => {
+        held.resolve(released.resolve);
+        return released.promise;
+      })
+      .catch(() => held.resolve(undefined));
+    return held.promise;
   }
 
   /** Runs inside the main lock: the lock is released when this settles. */
   async function own(run: DevServerRun, line: AbortController): Promise<void> {
+    // A line cancelled while it waited gives the lock straight back and starts nothing.
+    if (line.signal.aborted) return;
     const lease = `${tabId}:${++leases}`;
-    const epoch = now();
-    const releaseLease = await holdLease(lease);
+    const releaseLease = await holdLease(lease, line.signal);
+    if (!releaseLease) return;
+    if (line.signal.aborted) return releaseLease();
     const stop = new AbortController();
     const onLineAbort = () => stop.abort();
     line.signal.addEventListener("abort", onLineAbort, { once: true });
     ownerWatch?.abort();
+    checking.clear();
     ownLease = lease;
     role = "owner";
     const announce = (update: DevServerUpdate) => {
       if (stop.signal.aborted) return;
-      state = { ...update, ownerTab: tabId, lease, epoch };
+      state = { ...update, ownerTab: tabId, lease };
       post({ type: "state", state });
       emit();
     };
@@ -212,29 +235,37 @@ export function createDevServerCoordinator(options: CoordinatorOptions): DevServ
     } finally {
       stop.abort();
       line.signal.removeEventListener("abort", onLineAbort);
-      lines.delete(line);
       ownLease = undefined;
       role = "follower";
-      post({ type: "stopped", lease, epoch });
+      post({ type: "stopped", lease });
       releaseLease();
-      ended(lease, epoch);
+      ended(lease);
       emit();
     }
   }
 
   function standBy(run: DevServerRun): () => void {
-    if (disposed) return () => {};
+    if (disposal) return () => {};
     const line = new AbortController();
     lines.add(line);
     const owned = locks
       .request(name, { signal: line.signal }, () => own(run, line))
       .catch((error: unknown) => {
-        lines.delete(line);
         if (!isAbort(error)) onError(error);
-      });
+      })
+      .finally(() => lines.delete(line));
     owning.add(owned);
     void owned.finally(() => owning.delete(owned));
     return () => line.abort();
+  }
+
+  async function tearDown(): Promise<void> {
+    for (const line of lines) line.abort();
+    await Promise.all(owning);
+    ownerWatch?.abort();
+    listeners.clear();
+    channel.removeEventListener("message", onMessage);
+    channel.close();
   }
 
   post({ type: "hello" });
@@ -248,15 +279,6 @@ export function createDevServerCoordinator(options: CoordinatorOptions): DevServ
       return () => listeners.delete(listener);
     },
     standBy,
-    async dispose() {
-      if (disposed) return;
-      disposed = true;
-      for (const line of lines) line.abort();
-      await Promise.all(owning);
-      ownerWatch?.abort();
-      listeners.clear();
-      channel.removeEventListener("message", onMessage);
-      channel.close();
-    },
+    dispose: () => (disposal ??= tearDown()),
   };
 }

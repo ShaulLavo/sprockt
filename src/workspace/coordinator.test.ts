@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import {
   createDevServerCoordinator,
   type CoordinatorOptions,
@@ -12,16 +12,36 @@ interface Waiting {
   begin(): void;
 }
 
-/** A stand-in for `navigator.locks` with exclusive and shared modes, FIFO, and abortable waits. */
+/**
+ * A stand-in for `navigator.locks`: exclusive and shared modes, FIFO, abortable waits and
+ * `ifAvailable`. `pause` holds back every grant for names that start with a prefix, as a busy
+ * browser might, until `resume`.
+ */
 class FakeLocks {
   private readonly holders = new Map<string, LockMode[]>();
   private readonly queues = new Map<string, Waiting[]>();
+  private paused: string | undefined;
 
-  readonly request = ((name: string, options: LockOptions, callback: LockGrantedCallback<unknown>) =>
+  pause(prefix: string): void {
+    this.paused = prefix;
+  }
+
+  resume(): void {
+    this.paused = undefined;
+    for (const name of this.queues.keys()) this.pump(name);
+  }
+
+  readonly request = ((name: string, options: LockOptions, onGranted: LockGrantedCallback<unknown>) =>
     new Promise<unknown>((resolve, reject) => {
       if (options.signal?.aborted) return reject(new DOMException("aborted", "AbortError"));
       const mode = options.mode ?? "exclusive";
-      const waiting: Waiting = { mode, begin: () => this.grant(name, mode, callback, resolve, reject) };
+      if (options.ifAvailable && !this.available(name, mode)) {
+        void Promise.resolve()
+          .then(() => onGranted(null))
+          .then(resolve, reject);
+        return;
+      }
+      const waiting: Waiting = { mode, begin: () => this.grant(name, mode, onGranted, resolve, reject) };
       const onAbort = () => this.leaveQueue(name, waiting, reject);
       options.signal?.addEventListener("abort", onAbort, { once: true });
       this.queue(name).push(waiting);
@@ -45,7 +65,7 @@ class FakeLocks {
     this.holders.set(name, held);
     held.push(mode);
     void Promise.resolve()
-      .then(() => onGranted(null))
+      .then(() => onGranted({ name, mode } as Lock))
       .then(resolve, reject)
       .finally(() => {
         held.splice(held.indexOf(mode), 1);
@@ -61,7 +81,12 @@ class FakeLocks {
     reject(new DOMException("aborted", "AbortError"));
   }
 
+  private available(name: string, mode: LockMode): boolean {
+    return this.queue(name).length === 0 && this.compatible(name, mode);
+  }
+
   private pump(name: string): void {
+    if (this.paused !== undefined && name.startsWith(this.paused)) return;
     const queue = this.queue(name);
     while (queue.length > 0 && this.compatible(name, queue[0]!.mode)) queue.shift()!.begin();
   }
@@ -137,7 +162,7 @@ function browser() {
     created.push(coordinator);
     return coordinator;
   };
-  return { channels, open };
+  return { channels, locks, open };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
@@ -287,4 +312,69 @@ test("a run that throws gives ownership to the next tab", async () => {
   await settle();
   expect(healthy.role()).toBe("owner");
   expect(broken.current()).toMatchObject({ ownerTab: "tab-1", ports: [1234] });
+});
+
+for (const how of ["cancelled", "disposed"] as const) {
+  test(`a tab ${how} while it takes the lock starts nothing and lets the next tab in`, async () => {
+    const { open, locks } = browser();
+    const [first, second] = [open("tab-0"), open("tab-1")];
+    let firstStarted = false;
+    // The lease lock is slow to come, so the cancel arrives between the two locks.
+    locks.pause("sprockt:demo:dev-server:lease:");
+    const leave = first.standBy(async (lease) => {
+      firstStarted = true;
+      await aborted(lease.signal);
+    });
+    second.standBy(serve([5000]));
+    await settle();
+
+    if (how === "cancelled") leave();
+    else void first.dispose();
+    locks.resume();
+    await settle();
+
+    expect(firstStarted).toBe(false);
+    expect(second.role()).toBe("owner");
+    expect(second.current()).toMatchObject({ ownerTab: "tab-1", ports: [5000] });
+  });
+}
+
+test("leases granted at the same clock reading are still told apart", async () => {
+  // Firefox coarsens the clock; nothing may depend on two grants reading different times.
+  const clock = spyOn(performance, "now").mockReturnValue(1000);
+  try {
+    const { open } = browser();
+    const [first, second, follower] = [open("tab-0"), open("tab-1"), open("tab-2")];
+    const leases: DevServerLease[] = [];
+    first.standBy(serve([3000], leases));
+    second.standBy(serve([4000]));
+    await settle();
+    expect(follower.current()?.ports).toEqual([3000]);
+
+    leases[0]!.release();
+    await settle();
+    expect(second.role()).toBe("owner");
+    expect(follower.current()).toMatchObject({ ownerTab: "tab-1", ports: [4000] });
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test("dispose called twice waits for the same teardown", async () => {
+  const { open } = browser();
+  const owner = open("tab-0");
+  const shutdown = Promise.withResolvers<void>();
+  owner.standBy(async (lease) => {
+    await aborted(lease.signal);
+    await shutdown.promise;
+  });
+  await settle();
+  let done = 0;
+  void owner.dispose().then(() => done++);
+  void owner.dispose().then(() => done++);
+  await settle();
+  expect(done).toBe(0);
+  shutdown.resolve();
+  await settle();
+  expect(done).toBe(2);
 });
