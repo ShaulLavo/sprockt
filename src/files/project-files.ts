@@ -233,6 +233,24 @@ export function createProjectFiles(
     return filesystem.readFile(absolute);
   }
 
+  /** Writes a file that must not exist yet. False when the name is taken; nothing is replaced. */
+  async function writeExclusive(path: string, content: string | Uint8Array): Promise<boolean> {
+    const absolute = projectPath(path);
+    await confiner()(absolute, true);
+    await filesystem.mkdirp(parentOf(absolute));
+    // Looked at first, so the common clash fails without a failed write at all.
+    if (await found(absolute)) return false;
+    try {
+      await filesystem.writeFile(absolute, content, { exclusive: true });
+      return true;
+    } catch (error) {
+      remember(error);
+      // Whatever the filesystem called it, a name that is taken is the answer the caller needs.
+      if (await found(absolute)) return false;
+      throw error;
+    }
+  }
+
   async function readText(path: string): Promise<string | undefined> {
     const bytes = await readConfined(path);
     return bytes && decoder.decode(bytes);
@@ -329,8 +347,14 @@ export function createProjectFiles(
       mutate(async (): Promise<WriteOutcome> => {
         const current = await readText(path);
         if (current !== expected) return { written: false, current };
-        await writeConfined(confiner(), path, content);
-        return { written: true };
+        if (expected !== undefined) {
+          await writeConfined(confiner(), path, content);
+          return { written: true };
+        }
+        // Expected absent: create it exclusively, so a file that appears between the check and
+        // the write (the shell, another tab) is reported, never replaced.
+        if (await writeExclusive(path, content)) return { written: true };
+        return { written: false, current: await readText(path) };
       }, [path]),
     async writeMany(files) {
       const entries = Object.entries(files);
@@ -354,19 +378,7 @@ export function createProjectFiles(
       }, [path]),
     create: (path, content = "") =>
       mutate(async () => {
-        const absolute = projectPath(path);
-        await confiner()(absolute, true);
-        await filesystem.mkdirp(parentOf(absolute));
-        // Looked at first, so the common clash fails without a failed write at all.
-        if (await found(absolute)) throw new DestinationExistsError(path);
-        try {
-          await filesystem.writeFile(absolute, content, { exclusive: true });
-        } catch (error) {
-          remember(error);
-          // Whatever the filesystem called it, a name that is taken is the answer the caller needs.
-          if (await found(absolute)) throw new DestinationExistsError(path);
-          throw error;
-        }
+        if (!(await writeExclusive(path, content))) throw new DestinationExistsError(path);
       }, [path]),
     remove: (path) =>
       mutate(

@@ -255,6 +255,27 @@ test("a write is skipped when the file changed since it was read", async () => {
   expect(await service.writeIfUnchanged("new.txt", "fresh", undefined)).toEqual({ written: true });
 });
 
+test("a write expecting no file never replaces one that appeared after the check", async () => {
+  const memory = memoryFilesystem();
+  // The shell creates the file right after the service looked and found nothing.
+  const readFile = memory.filesystem.readFile;
+  let raced = false;
+  memory.filesystem.readFile = async (path) => {
+    const bytes = await readFile(path);
+    if (path === "/workspace/new.txt" && !raced) {
+      raced = true;
+      await memory.filesystem.writeFile(path, "from the shell");
+    }
+    return bytes;
+  };
+  const service = createProjectFiles(memory.filesystem, noWatch);
+  expect(await service.writeIfUnchanged("new.txt", "mine", undefined)).toEqual({
+    written: false,
+    current: "from the shell",
+  });
+  expect(memory.text("/workspace/new.txt")).toBe("from the shell");
+});
+
 test("after the workspace moved to another tab every write is refused", async () => {
   const memory = memoryFilesystem();
   const service = createProjectFiles(memory.filesystem, noWatch);

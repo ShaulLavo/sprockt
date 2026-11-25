@@ -175,3 +175,54 @@ test("deleted files keep their tabs and unsaved text, marked deleted", async () 
   expect(store.tabs().map((tab) => tab.path)).toEqual(["docs/a.txt", "top.txt"]);
   expect(store.buffers.get("top.txt")?.missing()).toBe(false);
 });
+
+test("moves the explorer already applied are not applied again when their event arrives", async () => {
+  const { store, disk, emit } = setUpStore({ "a.txt": "same", "c.txt": "same" });
+  store.open("a.txt");
+  store.open("c.txt");
+  await store.buffers.load("a.txt");
+  await store.buffers.load("c.txt");
+  type(store, "c.txt", "draft ");
+  // The explorer renames a.txt to b.txt, then the edited c.txt to a.txt, following each at once.
+  disk.set("b.txt", "same");
+  disk.set("a.txt", "same");
+  disk.delete("c.txt");
+  store.rename("a.txt", "b.txt");
+  store.rename("c.txt", "a.txt");
+  // One coalesced event then reports both moves.
+  emit({
+    moves: [
+      { from: "a.txt", to: "b.txt" },
+      { from: "c.txt", to: "a.txt" },
+    ],
+  });
+  await tick();
+  expect(store.buffers.get("a.txt")?.session.materializeFullText()).toBe("draft same");
+  expect(store.buffers.get("b.txt")?.session.materializeFullText()).toBe("same");
+  expect(store.hasUnsaved("b.txt")).toBe(false);
+});
+
+test("a folder moved onto a deleted folder whose file had unsaved text keeps both files open", async () => {
+  const { store, disk, emit } = setUpStore({ "target/a.txt": "old", "src/a.txt": "new" });
+  store.open("target/a.txt");
+  await store.buffers.load("target/a.txt");
+  type(store, "target/a.txt", "draft ");
+  disk.delete("target/a.txt");
+  emit({ removed: ["target", "target/a.txt"] });
+  store.open("src/a.txt");
+  await store.buffers.load("src/a.txt");
+  disk.set("target/a.txt", "new");
+  disk.delete("src/a.txt");
+  emit({
+    moves: [
+      { from: "src", to: "target" },
+      { from: "src/a.txt", to: "target/a.txt" },
+    ],
+  });
+  await tick();
+  expect(store.tabs().map((tab) => tab.path)).toEqual(["target/a (unsaved).txt", "target/a.txt"]);
+  expect(store.active()).toBe("target/a.txt");
+  expect(store.buffers.get("target/a (unsaved).txt")?.session.materializeFullText()).toBe("draft old");
+  expect(store.hasUnsaved("target/a (unsaved).txt")).toBe(true);
+  expect(store.buffers.get("target/a.txt")?.session.materializeFullText()).toBe("new");
+});

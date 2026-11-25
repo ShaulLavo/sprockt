@@ -44,6 +44,8 @@ export interface ExplorerOptions {
   openPaths(): readonly string[];
   /** Makes the editor follow a file or folder that moved. */
   rename(from: string, to: string): void;
+  /** Resolves once the editor's saves to these paths (or files inside them) have finished. */
+  settle(paths: readonly string[]): Promise<void>;
   /**
    * Closes the tab of a file that was deleted. Only called for files without unsaved edits: the
    * editor keeps an edited file open, marked deleted, so its text is not lost.
@@ -349,6 +351,8 @@ export function createExplorerState(options: ExplorerOptions) {
   async function runDraft(current: Draft, name: string): Promise<string> {
     if (current.mode === "rename") {
       const to = joinPath(parentOf(current.path), name);
+      // A save still writing to the old path would recreate it after the move.
+      await options.settle([current.path]);
       await files.move(current.path, to);
       followMove(current.path, to);
       return to;
@@ -430,6 +434,8 @@ export function createExplorerState(options: ExplorerOptions) {
       const names = moving.map(baseName);
       const clash = names.find((name, index) => existing.has(name) || names.indexOf(name) !== index);
       if (clash !== undefined) return say(fill(copy.notices.moveExists, { name: clash }));
+      // A save still writing to an old path would recreate it after the move.
+      await options.settle(moving);
       await Promise.all(
         moving.map(async (path) => {
           const to = joinPath(directory, baseName(path));

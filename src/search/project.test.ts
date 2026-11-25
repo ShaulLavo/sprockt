@@ -215,3 +215,25 @@ test("a file over the size limit is skipped without being read", async () => {
   expect(found.map((result) => result.path)).toEqual(["small.js"]);
   expect(files.read).toEqual(["small.js"]);
 });
+
+test("a file whose size cannot be looked up is still read and searched", async () => {
+  const files = {
+    list: async () => ["a.txt", "b.txt", "big.txt"],
+    size: async (path: string): Promise<number | undefined> => {
+      if (path === "a.txt") throw new Error("stat failed");
+      return undefined;
+    },
+    readBytes: async (path: string) =>
+      path === "big.txt" ? new Uint8Array(3 * 1024 * 1024).fill(0x68) : encoder.encode("hit"),
+  };
+  const found: FileMatches[] = [];
+  await searchProject(files, {
+    query: query("hit"),
+    include: "",
+    exclude: "",
+    signal: new AbortController().signal,
+    onFile: (result) => found.push(result),
+  });
+  // Unknown sizes are read; the byte count still keeps the 3 MiB file out.
+  expect(found.map((result) => result.path)).toEqual(["a.txt", "b.txt"]);
+});

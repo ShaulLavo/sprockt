@@ -29,6 +29,25 @@ export interface Conflict {
 
 const isSameOrInside = (path: string, other: string) => path === other || path.startsWith(`${other}/`);
 
+/** An unsaved draft moved out of the way of a file that moved onto its path. */
+export interface Displacement {
+  readonly from: string;
+  readonly to: string;
+}
+
+/** `dir/a.txt` becomes `dir/a (unsaved).txt`, then `dir/a (unsaved 2).txt`, until one is free. */
+export function freeName(path: string, taken: (path: string) => boolean): string {
+  const slash = path.lastIndexOf("/");
+  const dot = path.lastIndexOf(".");
+  const split = dot > slash + 1 ? dot : path.length;
+  const stem = path.slice(0, split);
+  const extension = path.slice(split);
+  for (let count = 1; ; count += 1) {
+    const candidate = `${stem} (unsaved${count === 1 ? "" : ` ${count}`})${extension}`;
+    if (!taken(candidate)) return candidate;
+  }
+}
+
 export interface Buffer {
   /** Project-relative path. Changes only through `BufferSet.rename`. */
   readonly path: string;
@@ -47,7 +66,13 @@ export interface BufferSet {
   /** The buffer for a file, read on first use. Undefined when the file does not exist. */
   load(path: string): Promise<Buffer | undefined>;
   release(path: string): void;
-  rename(from: string, to: string): void;
+  /**
+   * Buffers follow a move. A buffer with unsaved text already at a destination is moved aside to
+   * a free name rather than dropped; the returned list says where each went.
+   */
+  rename(from: string, to: string): Displacement[];
+  /** Resolves once every save already queued for these paths, or files inside them, settled. */
+  settled(roots: readonly string[]): Promise<void>;
   /** Files (and everything inside folders) deleted: their buffers stay, marked deleted, text kept. */
   markRemoved(paths: readonly string[]): void;
   /**
@@ -206,6 +231,31 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     entry.setConflict({ diskText: text });
   }
 
+  /**
+   * Before buffers move onto paths, a buffer already at one of those paths gives way: a clean
+   * one is let go (its file was replaced), one with unsaved text moves aside to a free name and is
+   * marked deleted, so no draft is dropped. Returns where the drafts went.
+   */
+  function makeRoom(moving: readonly Entry[], from: string, to: string): Displacement[] {
+    const movingSet = new Set(moving);
+    const displaced: Displacement[] = [];
+    for (const entry of moving) {
+      const target = renamedPath(entry.buffer.path, from, to);
+      const occupant = entries.get(target);
+      if (!occupant || movingSet.has(occupant)) continue;
+      entries.delete(target);
+      if (!occupant.buffer.dirty()) {
+        occupant.unsubscribe();
+        continue;
+      }
+      occupant.buffer.path = freeName(target, (path) => entries.has(path));
+      markGone(occupant);
+      entries.set(occupant.buffer.path, occupant);
+      displaced.push({ from: target, to: occupant.buffer.path });
+    }
+    return displaced;
+  }
+
   /** A deleted file stays open, marked, with any unsaved text; saving writes it again. */
   function markGone(entry: Entry): void {
     entry.disk = undefined;
@@ -267,15 +317,19 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
   /** One save, run when the file's earlier saves have finished: it captures its text and baseline now. */
   async function saveNow(entry: Entry): Promise<void> {
     if (!live(entry)) return;
+    const target = entry.buffer.path;
     const snapshot = entry.buffer.session.getSnapshot();
     const text = entry.buffer.session.materializeFullText();
     entry.saving += 1;
     entry.inflight = snapshot;
     refreshDirty(entry);
     try {
-      const outcome = await files.writeIfUnchanged(entry.buffer.path, text, entry.disk);
+      const outcome = await files.writeIfUnchanged(target, text, entry.disk);
+      if (outcome.written) void untilDurable(target, { text, baseText: entry.disk });
+      // The file moved while the write ran: what was written went to the old path, so it says
+      // nothing about this buffer's file. The buffer stays unsaved.
+      if (entry.buffer.path !== target) return;
       if (outcome.written) {
-        void untilDurable(entry.buffer.path, { text, baseText: entry.disk });
         entry.persisted = snapshot;
         entry.disk = text;
         entry.setConflict(undefined);
@@ -350,13 +404,21 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       const moved = Array.from(entries.values()).filter(
         (entry) => renamedPath(entry.buffer.path, from, to) !== entry.buffer.path,
       );
+      const displaced = makeRoom(moved, from, to);
       for (const entry of moved) entries.delete(entry.buffer.path);
       for (const entry of moved) {
         entry.buffer.path = renamedPath(entry.buffer.path, from, to);
         entries.set(entry.buffer.path, entry);
       }
       membershipChanged();
+      return displaced;
     },
+    settled: (roots) =>
+      Promise.all(
+        Array.from(pathQueues, ([path, queue]) =>
+          roots.some((root) => isSameOrInside(path, root)) ? queue.tail : undefined,
+        ),
+      ).then(() => undefined),
     sync() {
       if (syncing) {
         syncAgain = true;

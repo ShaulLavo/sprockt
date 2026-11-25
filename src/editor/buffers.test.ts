@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createBufferSet, type BufferSetOptions } from "./buffers";
+import { createBufferSet, freeName, type BufferSetOptions } from "./buffers";
 import type { Draft } from "./recovery";
 
 /**
@@ -444,4 +444,59 @@ test("unsaved() works for any file name", async () => {
   await buffers.load("constructor");
   type(buffers, "constructor", " edited");
   expect(Array.from(buffers.unsaved())).toEqual([["constructor", { text: "C edited", baseText: "C" }]]);
+});
+
+test("a save whose file moved while it was writing does not mark the moved buffer saved", async () => {
+  const { files, buffers } = setUp({ "a.txt": "one" });
+  await buffers.load("a.txt");
+  type(buffers, "a.txt", " more");
+  files.gateWrites();
+  const saving = buffers.save("a.txt");
+  await tick();
+  // The explorer moves the file while the write is between its check and the write itself.
+  files.disk.set("b.txt", files.disk.get("a.txt") as string);
+  files.disk.delete("a.txt");
+  buffers.rename("a.txt", "b.txt");
+  files.gates.shift()?.resolve();
+  await saving;
+  const buffer = buffers.get("b.txt");
+  expect(buffer?.dirty()).toBe(true);
+  expect(files.disk.get("b.txt")).toBe("one");
+});
+
+test("waiting for saves covers every file inside the folders asked about", async () => {
+  const { files, buffers } = setUp({ "docs/a.txt": "one", "other.txt": "x" });
+  await buffers.load("docs/a.txt");
+  type(buffers, "docs/a.txt", "!");
+  files.gateWrites();
+  const saving = buffers.save("docs/a.txt");
+  let settled = false;
+  void buffers.settled(["docs"]).then(() => (settled = true));
+  await tick();
+  expect(settled).toBe(false);
+  files.gates.shift()?.resolve();
+  await saving;
+  await tick();
+  expect(settled).toBe(true);
+});
+
+test("a move onto a path whose buffer has unsaved text moves that draft aside instead of dropping it", async () => {
+  const { buffers } = setUp({ "target/a.txt": "old", "src/a.txt": "new" });
+  await buffers.load("target/a.txt");
+  type(buffers, "target/a.txt", "draft ");
+  buffers.markRemoved(["target"]);
+  await buffers.load("src/a.txt");
+  const displaced = buffers.rename("src", "target");
+  expect(displaced).toEqual([{ from: "target/a.txt", to: "target/a (unsaved).txt" }]);
+  expect(textOf(buffers, "target/a.txt")).toBe("new");
+  expect(textOf(buffers, "target/a (unsaved).txt")).toBe("olddraft ");
+  expect(buffers.get("target/a (unsaved).txt")?.dirty()).toBe(true);
+  expect(Array.from(buffers.unsaved().keys())).toEqual(["target/a (unsaved).txt"]);
+});
+
+test("free names keep the extension and count up", () => {
+  const taken = new Set(["a (unsaved).txt", "dir.v2/Makefile (unsaved)"]);
+  expect(freeName("a.txt", (path) => taken.has(path))).toBe("a (unsaved 2).txt");
+  expect(freeName("dir.v2/Makefile", (path) => taken.has(path))).toBe("dir.v2/Makefile (unsaved 2)");
+  expect(freeName(".env", () => false)).toBe(".env (unsaved)");
 });

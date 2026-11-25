@@ -60,9 +60,10 @@ export async function searchProject(
 
   async function searchOne(path: string, limit: number): Promise<FileMatches | null> {
     // A file that cannot be read is skipped; a matcher that fails ends the whole search.
-    // Its size is checked first, so a large generated file is never read at all.
+    // A known size over the limit skips the file unread. An unknown size (the lookup failed or
+    // could not tell) never drops a file: it is read and the byte count decides.
     const size = await files.size(path).catch(() => undefined);
-    if (size === undefined || size > MAX_FILE_BYTES) return null;
+    if (size !== undefined && size > MAX_FILE_BYTES) return null;
     const bytes = await files.readBytes(path).catch(() => undefined);
     if (!bytes || bytes.length > MAX_FILE_BYTES || request.signal.aborted) return null;
     const matches = await match(bytes, request.query, limit);

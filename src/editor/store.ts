@@ -2,7 +2,7 @@
 // and whether quick open or project search is showing. Other panes (the explorer, the title bar)
 // drive the editor only through this store.
 import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-js";
-import type { FileService } from "../files/service";
+import type { FileChange, FileService } from "../files/service";
 import { createBufferSet, type BufferSet } from "./buffers";
 import { loadTabs, saveTabs } from "./persist";
 import { discardRecovered, leaveForRecovery, recovered } from "./recovery";
@@ -55,7 +55,10 @@ export interface EditorStore {
   close(path: string): void;
   move(from: number, to: number): void;
   pin(path: string): void;
-  /** Follows a file or directory the explorer moved. */
+  /**
+   * Follows a file or directory the explorer just moved. The change event that later reports
+   * the same move is not applied a second time.
+   */
   rename(from: string, to: string): void;
   /** Saves the file on screen, or `path` when given. Never the file merely selected. */
   save(path?: string): Promise<void>;
@@ -135,29 +138,81 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     if (path !== undefined) await buffers.save(path);
   };
 
-  /** Tabs, the file on screen and buffers (with unsaved text and undo) follow a move. */
-  function rename(from: string, to: string): void {
+  /** Moves a single tab, the file on screen and the selection from one exact path to another. */
+  function retarget(from: string, to: string, current: string | undefined): string | undefined {
+    commit(
+      tabs().map((tab) => (tab.path === from ? { path: to, preview: false } : tab)),
+      current === from ? to : current,
+    );
+    if (displayed() === from) setDisplayed(to);
+    return current === from ? to : current;
+  }
+
+  /**
+   * Tabs, the file on screen and buffers (with unsaved text and undo) follow a move. A draft
+   * already open at a destination is not dropped: it moves aside to a free name first.
+   */
+  function applyRename(from: string, to: string): void {
     const follows = (path: string) => renamedPath(path, from, to) !== path;
     const shown = displayed();
     const affected = tabs().some((tab) => follows(tab.path)) || buffers.paths().some(follows);
     if (!affected && (shown === undefined || !follows(shown))) return;
-    const current = active();
+    let current = active();
+    for (const aside of buffers.rename(from, to)) current = retarget(aside.from, aside.to, current);
+    const moved = displayed();
     commit(renameTabs(tabs(), from, to), current === undefined ? undefined : renamedPath(current, from, to));
-    if (shown !== undefined) setDisplayed(renamedPath(shown, from, to));
-    buffers.rename(from, to);
+    if (moved !== undefined) setDisplayed(renamedPath(moved, from, to));
+  }
+
+  /**
+   * Moves the explorer already applied, waiting for the change event that reports them. That
+   * event is not applied again: replaying `a → b` after `c → a` would carry c's draft to b.
+   */
+  const applied: { readonly from: string; readonly to: string; readonly at: number }[] = [];
+  /** A move never reported (a revoked workspace) stops being remembered after this long. */
+  const APPLIED_TTL_MS = 10_000;
+
+  function rename(from: string, to: string): void {
+    applyRename(from, to);
+    applied.push({ from, to, at: Date.now() });
+  }
+
+  /** Whether a reported move was applied already: itself, or a file inside a folder move applied. */
+  function alreadyApplied(
+    move: { from: string; to: string },
+    roots: readonly { from: string; to: string }[],
+  ) {
+    const index = applied.findIndex((entry) => entry.from === move.from && entry.to === move.to);
+    if (index >= 0) {
+      applied.splice(index, 1);
+      return { root: move };
+    }
+    const inside = roots.some(
+      (root) => renamedPath(move.from, root.from, root.to) === move.to && move.from !== root.from,
+    );
+    return inside ? { root: undefined } : undefined;
+  }
+
+  function applyChange(change: FileChange): void {
+    const now = Date.now();
+    for (let index = applied.length - 1; index >= 0; index -= 1) {
+      if (now - (applied[index] as { at: number }).at > APPLIED_TTL_MS) applied.splice(index, 1);
+    }
+    const roots: { from: string; to: string }[] = [];
+    for (const move of change.moves) {
+      const seen = alreadyApplied(move, roots);
+      if (seen?.root) roots.push(seen.root);
+      if (!seen) applyRename(move.from, move.to);
+    }
+    if (change.removed.length > 0) buffers.markRemoved(change.removed);
+    if (change.moves.length > 0) void buffers.sync();
   }
 
   createEffect(on(workspace.files.revision, () => void buffers.sync(), { defer: true }));
   // Moves and deletes made through FileService (the explorer, another pane) say exactly what
-  // happened: a folder lists every file inside it. Changes by the shell or another tab only
-  // arrive as changed paths, and the revision sync marks a vanished file deleted.
-  onCleanup(
-    workspace.files.subscribe((change) => {
-      for (const move of change.moves) rename(move.from, move.to);
-      if (change.removed.length > 0) buffers.markRemoved(change.removed);
-      if (change.moves.length > 0) void buffers.sync();
-    }),
-  );
+  // happened, in order: a folder lists every file inside it. Changes by the shell or another tab
+  // only arrive as changed paths, and the revision sync marks a vanished file deleted.
+  onCleanup(workspace.files.subscribe(applyChange));
   // Once another tab owns the workspace this tab cannot save. Its unsaved text is left where
   // that tab finds it when it opens the file.
   createEffect(() => {
