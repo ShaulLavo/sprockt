@@ -24,9 +24,11 @@ async function bundle(root: string, entry: string, minify: boolean): Promise<str
     },
   });
   const [output] = Array.isArray(result) ? result : [result];
-  const chunk = output && "output" in output ? output.output[0] : undefined;
-  if (!chunk) throw new Error(`Building ${entry} produced no output`);
-  return chunk.code;
+  const files = output && "output" in output ? output.output : [];
+  // Each script is one file: a second chunk would be dropped here, and a split worker entry is
+  // evaluated twice by WebKit (see `worker` in vite.config.ts).
+  if (files.length !== 1) throw new Error(`Building ${entry} produced ${files.length} files, not one`);
+  return files[0].code;
 }
 
 export function previewScripts(): Plugin {
