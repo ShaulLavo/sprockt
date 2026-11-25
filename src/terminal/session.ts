@@ -1,10 +1,11 @@
 // Joins one Ghostty terminal view to one bash-web shell on the workspace's runtime.
 import { BrowserSession, type SessionState } from "bash-web/session";
-import { Terminal } from "ghostty-webgpu";
+import { Terminal, type TerminalAppearanceOptions } from "ghostty-webgpu";
 import terminalBridge from "ghostty-webgpu/bridge.wasm?url";
 import terminalWasm from "ghostty-webgpu/ghostty-vt.wasm?url";
 import type { Runtime } from "waffle";
 import type { ShellSettings } from "../runtime/boot";
+import { TERMINAL_FONT } from "./theme";
 
 export type { SessionState };
 
@@ -12,6 +13,17 @@ export interface TerminalHandle {
   /** The text on screen, one string per row, for tests and diagnostics. */
   lines(): string[];
   focus(): void;
+  /** Types a command line and presses Enter, replacing anything half typed. */
+  submit(command: string): Promise<void>;
+  /** Sends raw input, as if typed: a soft key such as Escape or an arrow. */
+  input(data: string): void;
+  /**
+   * Turns the next typed letter into its Control chord (a phone keyboard has no Ctrl key).
+   * `onUsed` runs when that letter arrives.
+   */
+  armControl(onUsed: () => void): void;
+  disarmControl(): void;
+  setAppearance(appearance: TerminalAppearanceOptions): void;
   dispose(): Promise<void>;
 }
 
@@ -20,12 +32,81 @@ export interface TerminalStart {
   readonly runtime: Runtime;
   readonly shell: ShellSettings;
   readonly label: string;
+  /** Colors and color scheme; the font is the workbench's code face. */
+  readonly appearance: TerminalAppearanceOptions;
+  /** Aborted when the tab closes, so a shell still starting stops too. */
+  readonly signal: AbortSignal;
   onState(state: SessionState, detail?: string): void;
+  onTitle?(title: string): void;
 }
 
+/** The Control chord of one typed letter or `@[\]^_`, such as Ctrl+C for "c"; else undefined. */
+export function controlChord(bytes: Uint8Array): Uint8Array | undefined {
+  const byte = bytes.length === 1 ? bytes[0] : undefined;
+  if (byte === undefined) return undefined;
+  const upper = byte >= 0x61 && byte <= 0x7a ? byte - 0x20 : byte;
+  if (upper < 0x40 || upper > 0x5f) return undefined;
+  return Uint8Array.of(upper & 0x1f);
+}
+
+/** Room around the text, so it does not touch the panel's rounded edges. */
+const PADDING = { top: 6, right: 6, bottom: 6, left: 14 };
+
+/**
+ * Waits for the code face before the terminal measures its cells. Ghostty refits when a font
+ * loads later, but starting with the right metrics avoids one visible reflow.
+ */
+function codeFontReady(): Promise<unknown> {
+  const family = TERMINAL_FONT.family ?? "monospace";
+  return document.fonts.load(`${TERMINAL_FONT.size ?? 13}px ${family}`).catch(() => []);
+}
+
+/** Ties a started shell to its view. Disposal runs once, and frees the view even if the shell fails to stop. */
+function terminalHandle(view: Terminal, session: BrowserSession, start: TerminalStart): TerminalHandle {
+  let control: (() => void) | undefined;
+  const typed = (bytes: Uint8Array) => {
+    const chord = control && controlChord(bytes);
+    if (!chord) return session.input(bytes);
+    const used = control;
+    control = undefined;
+    session.input(chord);
+    used?.();
+  };
+  const subscriptions = [
+    view.onData((event) => typed(event.bytes)),
+    view.onResize(({ cols, rows }) => session.resize(cols, rows)),
+    view.onFrame(() => session.markRendered()),
+    view.on("title", (title) => start.onTitle?.(title)),
+  ];
+  let disposal: Promise<void> | undefined;
+  async function dispose(): Promise<void> {
+    for (const subscription of subscriptions) subscription.dispose();
+    try {
+      await session.dispose();
+    } finally {
+      view.dispose();
+    }
+  }
+  return {
+    lines: () => view.visibleLines().map((line) => line.trimEnd()),
+    focus: () => view.focus(),
+    submit: (command) => session.submit(command),
+    input: (data) => session.input(data),
+    armControl: (onUsed) => void (control = onUsed),
+    disarmControl: () => void (control = undefined),
+    setAppearance: (appearance) => void view.setAppearance(appearance),
+    dispose: () => (disposal ??= dispose()),
+  };
+}
+
+/** Starts a terminal; aborting `start.signal` cancels a start still in progress. */
 export async function startTerminal(start: TerminalStart): Promise<TerminalHandle> {
+  await codeFontReady();
+  start.signal.throwIfAborted();
   const view = await Terminal.create({
     accessibility: { label: start.label },
+    appearance: { ...start.appearance, font: TERMINAL_FONT },
+    padding: PADDING,
     runtime: {
       kind: "owned",
       options: {
@@ -36,6 +117,7 @@ export async function startTerminal(start: TerminalStart): Promise<TerminalHandl
   });
   try {
     await view.open(start.host);
+    start.signal.throwIfAborted();
     const geometry = view.geometry();
     const session = await BrowserSession.create({
       runtime: start.runtime,
@@ -45,23 +127,11 @@ export async function startTerminal(start: TerminalStart): Promise<TerminalHandl
       env: { ...start.shell.env },
       cols: geometry.columns,
       rows: geometry.rows,
+      signal: start.signal,
       onOutput: (bytes) => view.write(bytes),
       onState: (state, detail) => start.onState(state, detail),
     });
-    const subscriptions = [
-      view.onData((event) => session.input(event.bytes)),
-      view.onResize(({ cols, rows }) => session.resize(cols, rows)),
-      view.onFrame(() => session.markRendered()),
-    ];
-    return {
-      lines: () => view.visibleLines().map((line) => line.trimEnd()),
-      focus: () => view.focus(),
-      async dispose() {
-        for (const subscription of subscriptions) subscription.dispose();
-        await session.dispose();
-        view.dispose();
-      },
-    };
+    return terminalHandle(view, session, start);
   } catch (error) {
     view.dispose();
     throw error;

@@ -3,7 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#eef1f5" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d1117" />
+    <!-- The saved theme, applied before the first paint. src/workbench/theme.ts owns the same
+         key and colors and takes over once the app loads. -->
+    <script>
+      try {
+        var theme = localStorage.getItem("sprockt:theme");
+        if (theme === "light" || theme === "dark") {
+          document.documentElement.dataset.theme = theme;
+          document.querySelectorAll('meta[name="theme-color"]').forEach(function (meta) {
+            meta.content = theme === "light" ? "#eef1f5" : "#0d1117";
+          });
+        }
+      } catch (error) {}
+    </script>
     <meta
       name="description"
       content="Sprockt: an open-source development environment that runs in your browser."
