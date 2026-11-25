@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, on, onCleanup, Show, type JSX } from "
 import { createDevServer } from "../tasks/dev-server";
 import { useWorkspace } from "../workspace/session";
 import { frameCommand, isFrameMessage, type FrameMessage } from "./bridge";
+import { ui } from "./copy";
 import { canGoBack, canGoForward, currentPath, emptyHistory, stepped, visited } from "./history";
 import {
   AlertIcon,
@@ -23,9 +24,9 @@ import type { PreviewServer } from "./transport";
 type Viewport = "desktop" | "tablet" | "phone";
 
 const VIEWPORTS: readonly { id: Viewport; label: string; icon: () => JSX.Element }[] = [
-  { id: "desktop", label: "Desktop viewport", icon: DesktopIcon },
-  { id: "tablet", label: "Tablet viewport", icon: TabletIcon },
-  { id: "phone", label: "Phone viewport", icon: PhoneIcon },
+  { id: "desktop", label: ui.desktop, icon: DesktopIcon },
+  { id: "tablet", label: ui.tablet, icon: TabletIcon },
+  { id: "phone", label: ui.phone, icon: PhoneIcon },
 ];
 
 /** How many error messages of a page are kept for the list. */
@@ -160,21 +161,26 @@ export function PreviewPane() {
   }
 
   return (
-    <section class="pane preview-pane" aria-label="Preview">
+    <section class="pane preview-pane" aria-label={ui.preview}>
       <form class="preview-bar" onSubmit={submitUrl} data-testid="preview-bar">
         <span class="preview-nav">
-          <button type="button" aria-label="Back" disabled={!canGoBack(history())} onClick={() => step(-1)}>
+          <button
+            type="button"
+            aria-label={ui.back}
+            disabled={!canGoBack(history())}
+            onClick={() => step(-1)}
+          >
             <BackIcon />
           </button>
           <button
             type="button"
-            aria-label="Forward"
+            aria-label={ui.forward}
             disabled={!canGoForward(history())}
             onClick={() => step(1)}
           >
             <ForwardIcon />
           </button>
-          <button type="button" aria-label="Reload preview" disabled={port() === undefined} onClick={reload}>
+          <button type="button" aria-label={ui.reload} disabled={port() === undefined} onClick={reload}>
             <ReloadIcon />
           </button>
         </span>
@@ -182,7 +188,7 @@ export function PreviewPane() {
           <GlobeIcon />
           <input
             type="text"
-            aria-label="Preview URL"
+            aria-label={ui.url}
             data-testid="preview-url"
             spellcheck={false}
             autocomplete="off"
@@ -193,17 +199,17 @@ export function PreviewPane() {
         </label>
         <select
           class="preview-port"
-          aria-label="Switch preview port"
+          aria-label={ui.switchPort}
           data-testid="preview-port"
           disabled={servers().length === 0}
           value={port() ?? ""}
           onChange={(event) => setSelected(Number(event.currentTarget.value))}
         >
-          <For each={servers()} fallback={<option value="">No open ports</option>}>
+          <For each={servers()} fallback={<option value="">{ui.noPorts}</option>}>
             {(server) => <option value={server.port}>{server.port}</option>}
           </For>
         </select>
-        <span class="preview-viewports" role="group" aria-label="Viewport">
+        <span class="preview-viewports" role="group" aria-label={ui.viewport}>
           <For each={VIEWPORTS}>
             {(option) => (
               <button
@@ -224,7 +230,7 @@ export function PreviewPane() {
             class="preview-errors-toggle"
             data-testid="preview-errors"
             aria-expanded={showErrors()}
-            aria-label={`Errors in the preview: ${errors().length}`}
+            aria-label={ui.errors.replace("{count}", String(errors().length))}
             onClick={() => setShowErrors((shown) => !shown)}
           >
             <AlertIcon />
@@ -238,8 +244,8 @@ export function PreviewPane() {
           data-status={devServer.status()}
           aria-label={
             devServer.status() === "stopped"
-              ? "Start dev server"
-              : `Dev server running on port ${port() ?? "…"}. Click to stop.`
+              ? ui.startServer
+              : ui.stopServer.replace("{port}", String(port() ?? "…"))
           }
           onClick={() => void toggleDevServer()}
         >
@@ -249,7 +255,7 @@ export function PreviewPane() {
         </button>
         <button
           type="button"
-          aria-label="Open preview in new tab"
+          aria-label={ui.openInTab}
           data-testid="preview-open"
           disabled={port() === undefined}
           onClick={openInNewTab}
@@ -264,17 +270,13 @@ export function PreviewPane() {
       </Show>
       <div class="preview-stage" data-viewport={viewport()}>
         <Show when={unavailable()}>
-          <p class="pane-error">Previews are not available in this browser.</p>
+          <p class="pane-error">{ui.unavailable}</p>
         </Show>
         <Show when={port() === undefined && !unavailable()}>
           <div class="preview-empty" data-testid="preview-empty">
-            <p>
-              {devServer.status() === "starting"
-                ? "Starting the dev server. The preview will load once a port opens."
-                : "No dev server is running yet. Start one in the terminal to preview it here."}
-            </p>
+            <p>{devServer.status() === "starting" ? ui.starting : ui.empty}</p>
             <Show when={noScript()}>
-              <p>Nothing to start in this project.</p>
+              <p>{ui.nothingToStart}</p>
             </Show>
             <Show when={devServer.status() === "starting" && devServer.output()}>
               <pre class="preview-task-output">{devServer.output().slice(-2000)}</pre>
@@ -286,7 +288,7 @@ export function PreviewPane() {
         <Show when={port() !== undefined && usable()}>
           <iframe
             class="preview-frame"
-            title="Preview"
+            title={ui.preview}
             data-testid="preview-frame"
             onLoad={onFrameLoad}
             ref={mountFrame}

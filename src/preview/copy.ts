@@ -1,0 +1,22 @@
+// Preview pane strings. Placeholders until the copy pass; `{…}` marks a value filled in at use.
+export const ui = {
+  preview: "Preview",
+  back: "Back",
+  forward: "Forward",
+  reload: "Reload preview",
+  url: "Preview URL",
+  switchPort: "Switch preview port",
+  noPorts: "No open ports",
+  viewport: "Viewport",
+  desktop: "Desktop viewport",
+  tablet: "Tablet viewport",
+  phone: "Phone viewport",
+  errors: "Errors in the preview: {count}",
+  startServer: "Start dev server",
+  stopServer: "Dev server running on port {port}. Click to stop.",
+  openInTab: "Open preview in new tab",
+  unavailable: "Previews are not available in this browser.",
+  starting: "Starting the dev server. The preview will load once a port opens.",
+  empty: "No dev server is running yet. Start one in the terminal to preview it here.",
+  nothingToStart: "Nothing to start in this project.",
+} as const;
