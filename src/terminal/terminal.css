@@ -1,0 +1,391 @@
+/* Terminal panel. Tabs follow the workbench's one tab rule: inactive tabs sit on the darker
+   strip, the active tab is the panel surface with a rose bar on its top edge. */
+
+.terminal-panel {
+  background: var(--term-bg);
+}
+
+.term-bar {
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  height: var(--tab-h);
+  background: var(--bg-tabstrip);
+  border-bottom: 1px solid var(--line);
+}
+
+.terminal-panel.is-collapsed .term-bar {
+  border-bottom: 0;
+}
+
+.term-tabs {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.term-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.ttab {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.ttab + .ttab::before {
+  content: "";
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 0;
+  width: 1px;
+  background: var(--line);
+}
+
+.ttab.is-active::before,
+.ttab.is-active + .ttab::before,
+.ttab.is-shown::before,
+.ttab.is-shown + .ttab::before {
+  display: none;
+}
+
+/* The other half of a split: on screen, but not taking input. */
+.ttab.is-shown {
+  background: color-mix(in oklab, var(--term-bg) 55%, var(--bg-tabstrip));
+  color: var(--fg-muted);
+}
+
+.ttab.is-shown::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--tab-indicator);
+  background: var(--line-strong);
+}
+
+.ttab.is-active {
+  background: var(--term-bg);
+  color: var(--fg);
+  font-weight: var(--weight-semibold);
+  box-shadow:
+    inset 1px 0 0 var(--line),
+    inset -1px 0 0 var(--line);
+}
+
+.ttab.is-active:first-child {
+  box-shadow: inset -1px 0 0 var(--line);
+}
+
+.ttab.is-active::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--tab-indicator);
+  background: var(--accent);
+}
+
+.ttab-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1_5);
+  height: 100%;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-radius: 0;
+}
+
+.ttab-main .ico {
+  width: 14px;
+  height: 14px;
+}
+
+.ttab-main:focus-visible {
+  outline-offset: -3px;
+}
+
+.ttab-title {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ttab-dot {
+  width: 7px;
+  height: 7px;
+  margin: 0 var(--space-0_5);
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.ttab-dot[data-state="failed"] {
+  background: var(--danger);
+}
+
+.ttab-dot[data-state="exited"] {
+  background: var(--fg-subtle);
+}
+
+.ttab-close {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: var(--space-1_5);
+  border-radius: var(--radius-xs);
+  color: var(--fg-muted);
+  opacity: 0;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.ttab-close .ico {
+  width: 13px;
+  height: 13px;
+}
+
+.ttab.is-active .ttab-close,
+.ttab-close:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ttab:hover {
+    color: var(--fg-muted);
+  }
+
+  .ttab.is-active:hover {
+    color: var(--fg);
+  }
+
+  .ttab:hover .ttab-close {
+    opacity: 1;
+  }
+
+  .ttab-close:hover {
+    background: var(--bg-hover);
+    color: var(--fg);
+  }
+}
+
+.ttab-rename {
+  width: 16ch;
+  height: 24px;
+  margin: 0 var(--space-1) 0 var(--space-2);
+  padding: 0 var(--space-1_5);
+  border: 1px solid var(--focus);
+  border-radius: var(--radius-xs);
+  outline: none;
+  background: var(--bg-input);
+  font-size: var(--text-xs);
+}
+
+.term-add {
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  margin-left: var(--space-1);
+}
+
+.term-fill {
+  flex: 1;
+  min-width: var(--space-2);
+}
+
+.term-state {
+  align-self: center;
+  margin-right: var(--space-1_5);
+  color: var(--fg-subtle);
+  font: var(--text-2xs) / 1 var(--font-mono);
+}
+
+.term-state[data-state="failed"] {
+  color: var(--danger);
+}
+
+/* A ready shell needs no label; the text stays for assistive technology and tests. */
+.term-state[data-state="ready"],
+.term-state[data-state="running"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.term-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 1px;
+  padding: 0 var(--space-1_5) 0 var(--space-1);
+}
+
+.term-split[aria-pressed="true"] {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
+.terminal-host {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  background: var(--term-bg);
+}
+
+.terminal-host[data-split] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.terminal-panel.is-collapsed .terminal-host,
+.terminal-panel.is-collapsed .term-keys {
+  display: none;
+}
+
+.term-view {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.term-view[data-position="hidden"] {
+  display: none;
+}
+
+.term-view[data-position="right"] {
+  border-left: 1px solid var(--line);
+}
+
+.term-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.term-failure {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: color-mix(in oklab, var(--danger) 10%, var(--term-bg));
+}
+
+.term-empty {
+  display: grid;
+  grid-column: 1 / -1;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  color: var(--fg-muted);
+  text-align: center;
+}
+
+.term-empty p {
+  max-width: 36ch;
+  margin: 0;
+}
+
+.term-keys {
+  display: none;
+}
+
+/* ───────────── Phone ───────────── */
+@media (max-width: 768px) {
+  .term-bar {
+    height: 44px;
+  }
+
+  .ttab {
+    font-size: var(--text-sm);
+  }
+
+  .ttab-main {
+    padding-left: var(--space-3);
+  }
+
+  .term-actions .term-split,
+  .term-actions .term-collapse {
+    display: none;
+  }
+
+  .term-add,
+  .term-actions .icon-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .ttab-rename {
+    font-size: 16px;
+  }
+
+  .term-keys {
+    --fade-size: 44px;
+    display: flex;
+    flex: none;
+    gap: var(--space-1);
+    padding: var(--space-1_5) var(--space-2);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    border-top: 1px solid var(--line);
+    background: var(--bg-panel);
+    scrollbar-width: none;
+  }
+
+  .term-keys::-webkit-scrollbar {
+    display: none;
+  }
+
+  .term-key {
+    flex: 1 0 auto;
+    min-width: 40px;
+    height: 38px;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--fg);
+    font: var(--weight-medium) var(--text-sm) / 1 var(--font-mono);
+    transition:
+      transform var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out);
+  }
+
+  .term-key:active {
+    transform: scale(0.95);
+    background: var(--bg-active);
+  }
+
+  .term-key.is-mod {
+    color: var(--accent-text);
+    border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+  }
+
+  .term-key.is-mod[aria-pressed="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+}
+
+/* Every close button is visible where there is no hover to reveal it. */
+@media (pointer: coarse) {
+  .ttab-close {
+    width: 32px;
+    height: 32px;
+    margin-right: var(--space-1);
+    opacity: 1;
+  }
+}

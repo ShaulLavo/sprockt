@@ -1,0 +1,1029 @@
+/* The workbench frame, Circuit style: chrome around floating rounded cards for the editor,
+   preview and terminal. Sizes come from custom properties Workbench.tsx sets on .workbench
+   (--explorer-col, --preview-col, --terminal-row): the saved layout fitted to the window, so
+   the editor keeps its room. */
+
+.workbench {
+  --edge-gap: var(--card-gap);
+  display: grid;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--bg-chrome);
+  grid-template-columns:
+    var(--activity-w) var(--explorer-col) var(--card-gap) minmax(0, 1fr)
+    var(--card-gap) var(--preview-col) var(--edge-gap);
+  grid-template-rows:
+    var(--titlebar-h) minmax(0, 1fr) var(--card-gap) var(--terminal-row)
+    var(--statusbar-h);
+  grid-template-areas:
+    "title title title title title title title"
+    "act files sx code sp preview ."
+    "act files sx st st st ."
+    "act files sx term term term ."
+    "status status status status status status status";
+}
+
+.wb-titlebar {
+  grid-area: title;
+}
+
+.wb-activity {
+  grid-area: act;
+}
+
+.wb-explorer {
+  grid-area: files;
+}
+
+.wb-editor {
+  grid-area: code;
+}
+
+.wb-preview {
+  grid-area: preview;
+}
+
+.wb-terminal {
+  grid-area: term;
+}
+
+.wb-status {
+  grid-area: status;
+}
+
+.wb-splitter-explorer {
+  grid-area: sx;
+}
+
+.wb-splitter-preview {
+  grid-area: sp;
+}
+
+.wb-splitter-terminal {
+  grid-area: st;
+}
+
+.wb-boot,
+.wb-notice {
+  grid-row: 2 / 5;
+  grid-column: 2 / -1;
+}
+
+.wb-switcher,
+.wb-phone-button,
+.wb-menu {
+  display: none;
+}
+
+/* ───────────── Slots and cards ───────────── */
+
+.wb-slot {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wb-slot > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.wb-explorer {
+  background: var(--bg-chrome);
+}
+
+.wb-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--bg-editor);
+  box-shadow: var(--shadow-sm);
+}
+
+.wb-preview {
+  background: var(--bg-panel);
+}
+
+.wb-terminal {
+  background: var(--term-bg);
+}
+
+@media (min-width: 769px) {
+  .workbench[data-explorer="closed"] .wb-explorer {
+    visibility: hidden;
+  }
+
+  /* A closed preview leaves its handle at the right edge, to drag or press Enter on. */
+  .workbench[data-preview="closed"] {
+    --edge-gap: 0px;
+  }
+
+  .workbench[data-preview="closed"] .wb-preview {
+    display: none;
+  }
+}
+
+/* ───────────── Drag handles ───────────── */
+
+.wb-splitter {
+  position: relative;
+  z-index: 2;
+  outline: none;
+  touch-action: none;
+}
+
+/* A hit area wider than the 6px gap it sits in. */
+.wb-splitter::before {
+  content: "";
+  position: absolute;
+  inset: 0 -3px;
+}
+
+.wb-splitter-terminal::before {
+  inset: -3px 0;
+}
+
+.wb-splitter::after {
+  content: "";
+  position: absolute;
+  top: var(--space-3);
+  bottom: var(--space-3);
+  left: 50%;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transform: translateX(-50%);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.wb-splitter-terminal::after {
+  top: 50%;
+  right: var(--space-3);
+  bottom: auto;
+  left: var(--space-3);
+  width: auto;
+  height: 2px;
+  transform: translateY(-50%);
+}
+
+.wb-splitter-explorer,
+.wb-splitter-preview {
+  cursor: col-resize;
+}
+
+.wb-splitter-terminal {
+  cursor: row-resize;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  /* A short delay, so passing over a handle on the way elsewhere does not flash it. */
+  .wb-splitter:hover::after {
+    background: var(--line-strong);
+    transition-delay: 120ms;
+  }
+}
+
+.wb-splitter:focus-visible::after,
+.wb-splitter.is-dragging::after {
+  background: var(--focus);
+  transition-delay: 0ms;
+}
+
+.workbench.is-dragging {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.workbench.is-dragging iframe {
+  pointer-events: none;
+}
+
+/* ───────────── Title bar ───────────── */
+
+.wb-titlebar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 0 var(--space-2) 0 var(--space-2_5);
+  background: var(--bg-chrome);
+}
+
+.wb-brand {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-md);
+  color: var(--fg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+.wb-brand-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-fg);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.wb-brand-mark .ico {
+  width: 18px;
+  height: 18px;
+}
+
+.wb-brand:active .wb-brand-mark {
+  transform: scale(0.94);
+}
+
+.wb-crumbs {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1_5);
+  min-width: 0;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.wb-crumb-project {
+  overflow: hidden;
+  color: var(--fg);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+}
+
+.wb-crumb-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 28px;
+  padding: 0 var(--space-1_5);
+  border-radius: var(--radius-sm);
+}
+
+.wb-crumb-switch .ico {
+  width: 14px;
+  height: 14px;
+  color: var(--fg-subtle);
+}
+
+.wb-crumb-sep {
+  color: var(--fg-subtle);
+}
+
+.wb-crumb-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font: var(--text-xs) / 1 var(--font-mono);
+}
+
+.wb-crumb-branch .ico {
+  width: 14px;
+  height: 14px;
+}
+
+.wb-titlebar-fill {
+  flex: 1;
+}
+
+.wb-palette {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: min(440px, 34vw);
+  height: var(--control-h);
+  margin: 0 auto;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--fg-muted);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.wb-palette .ico {
+  width: 15px;
+  height: 15px;
+}
+
+.wb-palette-text {
+  flex: 1;
+  overflow: hidden;
+  font-size: var(--text-xs);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-palette kbd {
+  padding: 3px 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--bg-panel);
+  color: var(--fg-muted);
+}
+
+.wb-titlebar-right {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.wb-palette + .wb-titlebar-right {
+  margin-left: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .wb-palette:hover {
+    border-color: var(--line-strong);
+  }
+
+  .wb-brand:hover,
+  .wb-crumb-switch:hover {
+    background: var(--bg-hover);
+  }
+}
+
+/* The dev server pill: the status, and a separate stop button. */
+.wb-run {
+  display: inline-flex;
+  align-items: stretch;
+  height: var(--control-h);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono);
+}
+
+.wb-run[data-tone="ok"] {
+  border-color: color-mix(in oklab, var(--ok) 40%, var(--line));
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.wb-run[data-tone="danger"] {
+  border-color: color-mix(in oklab, var(--danger) 40%, var(--line));
+  color: var(--danger);
+}
+
+.wb-run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1_5);
+  padding: 0 var(--space-2);
+}
+
+.wb-run-status:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.wb-pulse {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 22%, transparent);
+}
+
+.wb-run-action {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  border-left: 1px solid color-mix(in oklab, currentColor 30%, transparent);
+  color: inherit;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.wb-run-action .ico {
+  width: 12px;
+  height: 12px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .wb-run-action:hover {
+    background: color-mix(in oklab, currentColor 14%, transparent);
+  }
+}
+
+/* The theme toggle: two states, the theme in effect is highlighted. */
+.theme-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+}
+
+.theme-option {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.theme-option .ico {
+  width: 14px;
+  height: 14px;
+}
+
+.theme-option[aria-pressed="true"] {
+  background: var(--bg-active);
+  color: var(--accent-text);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .theme-option:hover {
+    color: var(--fg);
+  }
+}
+
+/* ───────────── Activity bar ───────────── */
+
+.wb-activity {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1) 0;
+  background: var(--bg-chrome);
+}
+
+.wb-act {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: var(--activity-w);
+  color: var(--fg-subtle);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.wb-act .ico {
+  width: var(--activity-icon);
+  height: var(--activity-icon);
+}
+
+/* Open panes read in the text color; closed ones recede. Rose stays for brand and primary. */
+.wb-act[aria-pressed="false"] {
+  color: color-mix(in oklab, var(--fg-subtle) 70%, transparent);
+}
+
+.wb-act[aria-pressed="true"] {
+  color: var(--fg);
+}
+
+.wb-act:focus-visible {
+  outline-offset: -6px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .wb-act:hover {
+    color: var(--fg);
+  }
+}
+
+/* ───────────── Status bar ───────────── */
+
+.wb-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 0 var(--space-3);
+  overflow: hidden;
+  background: var(--status-bg);
+  color: var(--status-fg);
+  font: var(--text-2xs) / 1 var(--font-mono);
+  white-space: nowrap;
+}
+
+.sb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.sb-item .ico {
+  width: 13px;
+  height: 13px;
+}
+
+.sb-button {
+  height: 20px;
+  padding: 0 var(--space-1);
+  margin: 0 calc(-1 * var(--space-1));
+  border-radius: var(--radius-xs);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sb-button:hover {
+    background: var(--bg-hover);
+    color: var(--fg);
+  }
+}
+
+.sb-item[data-tone="ok"],
+.sb-live {
+  color: var(--ok);
+}
+
+.sb-item[data-tone="warn"] {
+  color: var(--warn);
+}
+
+.sb-item[data-tone="danger"],
+.sb-save[data-state="failed"] {
+  color: var(--danger);
+}
+
+.sb-save[data-state="saving"] .ico {
+  animation: wb-breathe 1.2s var(--ease-in-out) infinite alternate;
+}
+
+.sb-fill {
+  flex: 1;
+}
+
+.wb-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+/* ───────────── Boot progress and the moved notice ───────────── */
+
+.wb-boot {
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+}
+
+.wb-boot-card {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  width: min(360px, 100%);
+  padding: var(--space-6);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-md);
+  transition:
+    opacity var(--dur-slow) var(--ease-out),
+    transform var(--dur-slow) var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.wb-boot-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.wb-boot-mark .ico {
+  width: 24px;
+  height: 24px;
+}
+
+.wb-boot-title {
+  margin: 0;
+  color: var(--fg);
+  font: var(--weight-semibold) var(--text-md) / 1.2 var(--font-mono);
+}
+
+.wb-boot-steps {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wb-boot-steps li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg-subtle);
+}
+
+.wb-boot-steps li[data-state="done"] {
+  color: var(--fg-muted);
+}
+
+.wb-boot-steps li[data-state="active"] {
+  color: var(--fg);
+  font-weight: var(--weight-medium);
+}
+
+.wb-boot-steps li[data-state="failed"] {
+  color: var(--danger);
+}
+
+.wb-boot-icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+
+.wb-boot-icon .ico {
+  width: 15px;
+  height: 15px;
+}
+
+[data-state="done"] .wb-boot-icon {
+  color: var(--ok);
+}
+
+.wb-boot-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.wb-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: wb-spin 0.7s linear infinite;
+}
+
+.wb-boot-error {
+  padding: 0;
+}
+
+.wb-notice {
+  z-index: 40;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--scrim);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  text-align: center;
+}
+
+.wb-notice p {
+  max-width: 36ch;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  color: var(--fg);
+}
+
+@keyframes wb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes wb-breathe {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-spinner {
+    animation-duration: 2.4s;
+  }
+
+  .sb-save[data-state="saving"] .ico {
+    animation: none;
+  }
+}
+
+/* ───────────── Narrow desktop ───────────── */
+
+@media (max-width: 1180px) {
+  .wb-palette {
+    width: auto;
+    margin: 0 0 0 auto;
+  }
+
+  .wb-palette-text,
+  .wb-palette kbd {
+    display: none;
+  }
+}
+
+/* ───────────── Phone and small tablet: one pane at a time ───────────── */
+
+@media (max-width: 768px) {
+  body {
+    font-size: var(--text-md);
+  }
+
+  .workbench {
+    grid-template-columns: 100%;
+    grid-template-rows: calc(var(--titlebar-h-phone) + env(safe-area-inset-top, 0px)) minmax(0, 1fr) auto;
+    grid-template-areas: "title" "main" "switch";
+  }
+
+  .wb-activity,
+  .wb-status,
+  .wb-splitter,
+  .wb-brand-word,
+  .wb-crumb-sep,
+  .wb-palette,
+  .wb-theme-desktop,
+  .wb-action {
+    display: none;
+  }
+
+  .wb-boot,
+  .wb-notice {
+    grid-area: main;
+  }
+
+  .wb-titlebar {
+    gap: var(--space-2);
+    padding: env(safe-area-inset-top, 0px) max(var(--space-2), env(safe-area-inset-right, 0px)) 0
+      max(var(--space-3), env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--line);
+  }
+
+  .wb-brand {
+    padding: 0;
+  }
+
+  .wb-brand-mark {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-md);
+  }
+
+  .wb-crumbs {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    line-height: 1.25;
+  }
+
+  .wb-crumb-project {
+    max-width: 100%;
+    font-size: var(--text-md);
+  }
+
+  .wb-crumb-switch {
+    height: auto;
+    padding: 0;
+  }
+
+  .wb-titlebar-right {
+    gap: var(--space-1);
+  }
+
+  .wb-run {
+    height: 32px;
+    margin-right: var(--space-1);
+  }
+
+  .wb-run-action {
+    width: 32px;
+  }
+
+  .wb-phone-button {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    color: var(--fg-muted);
+    transition: background-color var(--dur-fast) var(--ease-out);
+  }
+
+  .wb-phone-button .ico {
+    width: 20px;
+    height: 20px;
+  }
+
+  .wb-phone-button:active,
+  .wb-phone-button[aria-expanded="true"] {
+    background: var(--bg-active);
+    color: var(--fg);
+  }
+
+  .wb-slot {
+    display: none;
+    grid-area: main;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .wb-slot[data-shown] {
+    display: flex;
+  }
+
+  .wb-switcher {
+    display: grid;
+    grid-area: switch;
+    grid-template-columns: repeat(4, 1fr);
+    padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    border-top: 1px solid var(--line);
+    background: var(--bg-chrome);
+  }
+
+  .wb-switch {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: 56px;
+    color: var(--fg-subtle);
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-medium);
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+
+  .wb-switch .ico {
+    width: 22px;
+    height: 22px;
+    transition: transform var(--dur-fast) var(--ease-out);
+  }
+
+  .wb-switch:active .ico {
+    transform: scale(0.92);
+  }
+
+  .wb-switch[aria-pressed="true"] {
+    color: var(--accent-text);
+  }
+
+  .wb-switch:focus-visible {
+    outline-offset: -4px;
+    border-radius: var(--radius-md);
+  }
+
+  .wb-switch-dot {
+    position: absolute;
+    top: 9px;
+    left: calc(50% + 9px);
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--dirty);
+  }
+
+  /* The `…` menu: workspace actions and the theme, over a scrim. */
+  .wb-menu {
+    position: relative;
+    display: block;
+  }
+
+  .wb-menu-dot {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 7px;
+    height: 7px;
+    border: 1.5px solid var(--bg-chrome);
+    border-radius: 50%;
+    background: var(--accent);
+    box-sizing: content-box;
+  }
+
+  .wb-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: var(--scrim);
+    transition: opacity var(--dur-base) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
+
+  .wb-menu-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 31;
+    display: grid;
+    width: 240px;
+    padding: var(--space-1);
+    border-radius: var(--radius-lg);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-pop);
+    transform-origin: top right;
+    transition:
+      opacity var(--dur-base) var(--ease-out),
+      transform var(--dur-base) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+  }
+
+  .wb-menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 44px;
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-md);
+    color: var(--fg);
+    font-size: var(--text-md);
+    text-align: left;
+  }
+
+  .wb-menu-item:active {
+    background: var(--bg-hover);
+  }
+
+  .wb-menu-item .ico {
+    width: 18px;
+    height: 18px;
+    color: var(--fg-muted);
+  }
+
+  .wb-menu-badge {
+    min-width: 20px;
+    height: 20px;
+    margin-left: auto;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: var(--accent-fg);
+    font: var(--weight-semibold) 11px / 20px var(--font-ui);
+    text-align: center;
+  }
+
+  .wb-menu-theme {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+    color: var(--fg-muted);
+    font-size: var(--text-sm);
+  }
+
+  .wb-menu-item + .wb-menu-theme {
+    margin-top: var(--space-1);
+    border-top: 1px solid var(--line);
+    padding-top: var(--space-2);
+  }
+
+  .wb-menu-theme > span {
+    margin-right: auto;
+  }
+
+  .wb-menu-theme .theme-toggle {
+    padding: 3px;
+  }
+
+  .wb-menu-theme .theme-option {
+    width: 40px;
+    height: 36px;
+  }
+
+  .wb-menu-theme .theme-option .ico {
+    width: 18px;
+    height: 18px;
+  }
+}

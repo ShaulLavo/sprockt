@@ -4,11 +4,19 @@ import { createContext, useContext } from "solid-js";
 import { createFileService, type FileService } from "../files/service";
 import { createInactivePreviewTransport, type PreviewTransport } from "../preview/transport";
 import { bootWorkspace, type BootOptions, type BootStage, type WorkspaceRuntime } from "../runtime/boot";
+import { createTerminalStore, type TerminalStore } from "../terminal/store";
+import { createCommands, createStatusItems, type Commands, type StatusItems } from "../workbench/slots";
 import { tearDownAll } from "./lifecycle";
 
 export interface WorkspaceSession extends WorkspaceRuntime {
   readonly files: FileService;
   readonly preview: PreviewTransport;
+  /** Terminal tabs; `terminals.create({ run })` opens a shell that runs a command. */
+  readonly terminals: TerminalStore;
+  /** Status bar items other slices fill (`STATUS_SLOT` in workbench/slots.ts). */
+  readonly status: StatusItems;
+  /** Commands the title bar offers a button for, once registered (`COMMAND`). */
+  readonly commands: Commands;
 }
 
 const movedError = () => new Error("This workspace is open in another tab, so this tab can no longer save.");
@@ -31,12 +39,25 @@ export async function openWorkspace(
   );
   const preview = createInactivePreviewTransport();
   const files = createFileService(booted.runtime);
-  revoke = () => files.revoke(movedError());
+  const terminals = createTerminalStore();
+  // Revoking saves first leaves the editor's unsaved text for the new owner; then this tab's
+  // shells stop and its runtime goes, so nothing here keeps running against storage it lost.
+  revoke = () => {
+    files.revoke(movedError());
+    void terminals
+      .shutdown()
+      .then(() => booted.dispose())
+      .catch((error: unknown) => console.error("Releasing a workspace taken by another tab failed", error));
+  };
   if (moved) revoke();
+  terminals.create();
   return {
     ...booted,
     files,
     preview,
+    terminals,
+    status: createStatusItems(),
+    commands: createCommands(),
     // Every step runs even if an earlier one fails: the runtime must not outlive its session.
     dispose: () => tearDownAll([() => files.dispose(), () => preview.dispose(), () => booted.dispose()]),
   };

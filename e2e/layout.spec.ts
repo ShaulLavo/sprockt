@@ -1,0 +1,366 @@
+import type { Page } from "@playwright/test";
+import { expect, newWorkspace, runInTerminal, terminalText, test, writeFile } from "./helpers";
+
+async function width(page: Page, selector: string): Promise<number> {
+  const box = await page.locator(selector).boundingBox();
+  if (!box) throw new Error(`${selector} is not on screen`);
+  return box.width;
+}
+
+async function height(page: Page, selector: string): Promise<number> {
+  const box = await page.locator(selector).boundingBox();
+  if (!box) throw new Error(`${selector} is not on screen`);
+  return box.height;
+}
+
+/** Drags a handle by `dx`, `dy` CSS pixels with the mouse. */
+async function drag(page: Page, testId: string, dx: number, dy: number): Promise<void> {
+  const box = await page.getByTestId(testId).boundingBox();
+  if (!box) throw new Error(`${testId} is not on screen`);
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx / 2, y + dy / 2, { steps: 4 });
+  await page.mouse.move(x + dx, y + dy, { steps: 4 });
+  await page.mouse.up();
+}
+
+test("pane sizes and closed panes survive a reload", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await newWorkspace(page);
+  await expect(page.getByTestId("terminal-panel")).toBeVisible();
+
+  const explorer = await width(page, "#wb-slot-files");
+  await drag(page, "splitter-explorer", 96, 0);
+  await expect.poll(() => width(page, "#wb-slot-files")).toBeGreaterThan(explorer + 80);
+  const dragged = await width(page, "#wb-slot-files");
+
+  // The terminal handle works from the keyboard: three steps up.
+  const terminal = await height(page, "#wb-slot-terminal");
+  await page.getByTestId("splitter-terminal").focus();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(() => height(page, "#wb-slot-terminal")).toBeGreaterThan(terminal + 40);
+  const raised = await height(page, "#wb-slot-terminal");
+
+  // Enter on the preview handle closes the preview.
+  await page.getByTestId("splitter-preview").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#wb-slot-preview")).toBeHidden();
+
+  await page.reload();
+  await expect(page.getByTestId("terminal-panel")).toBeVisible();
+  await expect.poll(() => width(page, "#wb-slot-files")).toBe(dragged);
+  await expect.poll(() => height(page, "#wb-slot-terminal")).toBe(raised);
+  await expect(page.locator("#wb-slot-preview")).toBeHidden();
+
+  // The activity bar brings it back.
+  await page.getByTestId("toggle-preview").click();
+  await expect(page.locator("#wb-slot-preview")).toBeVisible();
+});
+
+test("the theme toggle sticks across a reload", async ({ page }) => {
+  await newWorkspace(page);
+  const systemDark = await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches);
+  const [other, own] = systemDark ? ["light", "dark"] : ["dark", "light"];
+  const option = (scheme: string) => page.getByRole("button", { name: scheme, exact: false });
+
+  await option(other === "light" ? "Light" : "Dark").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", other);
+
+  // The saved theme applies before the app's code runs: hold the entry bundle back on reload.
+  const entry = /\/assets\/index-[^/]+\.js$/;
+  const held = Promise.withResolvers<void>();
+  await page.route(
+    entry,
+    async (route) => {
+      await held.promise;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  await page.reload({ waitUntil: "commit" });
+  await expect(page.locator("html")).toHaveAttribute("data-theme", other);
+  // The stylesheet is render-blocking, so the first paint already uses it; wait for it here.
+  await expect
+    .poll(() => page.evaluate(() => getComputedStyle(document.documentElement).colorScheme))
+    .toBe(other);
+  expect(await page.getByTestId("workbench").count()).toBe(0);
+  held.resolve();
+  await expect(page.getByTestId("workbench")).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", other);
+
+  // Picking the system's own theme goes back to following the system.
+  await option(own === "light" ? "Light" : "Dark").click();
+  await expect(page.locator("html")).not.toHaveAttribute("data-theme", /./);
+});
+
+test("clicking a handle without dragging changes nothing, and a closed preview keeps its handle", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await newWorkspace(page);
+  await expect(page.getByTestId("terminal-panel")).toBeVisible();
+  const sizes = async () => ({
+    files: await width(page, "#wb-slot-files"),
+    preview: await width(page, "#wb-slot-preview"),
+    terminal: await height(page, "#wb-slot-terminal"),
+  });
+  const before = await sizes();
+  await page.getByTestId("splitter-explorer").click();
+  await page.getByTestId("splitter-preview").click();
+  await page.getByTestId("splitter-terminal").click();
+  expect(await sizes()).toEqual(before);
+
+  // Enter closes the preview; its handle stays focusable and Enter opens it again.
+  await page.getByTestId("splitter-preview").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#wb-slot-preview")).toBeHidden();
+  await expect(page.getByTestId("splitter-preview")).toBeVisible();
+  await page.getByTestId("splitter-preview").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#wb-slot-preview")).toBeVisible();
+
+  // Dragging a closed preview's handle back out opens it.
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#wb-slot-preview")).toBeHidden();
+  await drag(page, "splitter-preview", -400, 0);
+  await expect.poll(() => width(page, "#wb-slot-preview")).toBeGreaterThan(300);
+});
+
+test("a drag that snaps a pane shut and returns to where it started changes nothing", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await newWorkspace(page);
+  await expect(page.getByTestId("terminal-panel")).toBeVisible();
+  const preview = await width(page, "#wb-slot-preview");
+
+  const box = await page.getByTestId("splitter-preview").boundingBox();
+  if (!box) throw new Error("the preview handle is not on screen");
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  // Far enough right that the preview snaps shut (inside the window), then back to 1px from the press.
+  await page.mouse.move(x + preview - 40, y, { steps: 6 });
+  await expect(page.locator("#wb-slot-preview")).toBeHidden();
+  await page.mouse.move(x + 1, y, { steps: 6 });
+  await page.mouse.up();
+
+  await expect(page.locator("#wb-slot-preview")).toBeVisible();
+  await expect.poll(() => width(page, "#wb-slot-preview")).toBe(preview);
+  await page.reload();
+  await expect(page.getByTestId("terminal-panel")).toBeVisible();
+  await expect.poll(() => width(page, "#wb-slot-preview")).toBe(preview);
+});
+
+test("a wide saved explorer leaves the editor its room in a narrow window", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await newWorkspace(page);
+  await expect(page.getByTestId("terminal-panel")).toBeVisible();
+  await page.getByTestId("splitter-explorer").focus();
+  await page.keyboard.press("End");
+  await expect.poll(() => width(page, "#wb-slot-files")).toBe(520);
+
+  const roomy = async () => {
+    expect(await width(page, "#wb-slot-code")).toBeGreaterThanOrEqual(255);
+    expect(await width(page, "#wb-slot-preview")).toBeGreaterThanOrEqual(270);
+  };
+  const explorerValue = async () =>
+    Number(await page.getByTestId("splitter-explorer").getAttribute("aria-valuenow"));
+  expect(await explorerValue()).toBe(100);
+  await page.setViewportSize({ width: 800, height: 900 });
+  await expect.poll(() => width(page, "#wb-slot-files")).toBeLessThan(520);
+  await roomy();
+  // Assistive technology hears the width on screen, not the saved one.
+  expect(await explorerValue()).toBeLessThan(100);
+  await page.reload();
+  await expect(page.getByTestId("terminal-panel")).toBeVisible();
+  await roomy();
+
+  // The saved width comes back with the room.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect.poll(() => width(page, "#wb-slot-files")).toBe(520);
+});
+
+test("closing a terminal while its startup command runs raises no page error", async ({
+  page,
+  pageErrors,
+}) => {
+  await newWorkspace(page);
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+  await page.evaluate(() =>
+    globalThis.sprockt?.workspace?.terminals.create({
+      title: "server",
+      run: "echo startup-ran; read -r input",
+    }),
+  );
+  await expect.poll(() => terminalText(page)).toMatch(/^startup-ran$/m);
+  await page.getByRole("button", { name: "Close server" }).click();
+
+  // A tab closed while its shell is still starting stops cleanly too.
+  await page.evaluate(() => {
+    const terminals = globalThis.sprockt?.workspace?.terminals;
+    const id = terminals?.create({ title: "brief", run: "echo never" });
+    if (id) terminals?.close(id);
+  });
+  await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
+  await page.getByTestId("terminal-tab").click();
+  await runInTerminal(page, "echo still-fine");
+  await expect.poll(() => terminalText(page)).toMatch(/^still-fine$/m);
+  expect(pageErrors.filter((error) => error.startsWith("pageerror"))).toEqual([]);
+});
+
+test("losing the workspace to another tab stops this tab's shells and runtime", async ({ page, context }) => {
+  const id = await newWorkspace(page);
+  await runInTerminal(page, "read -r input");
+  await expect(page.getByTestId("terminal-state")).toHaveText("running");
+
+  const second = await context.newPage();
+  await second.goto(`/w/${id}`);
+  await second.getByTestId("take-over").click();
+  await runInTerminal(second, "echo owner-now");
+  await expect.poll(() => terminalText(second)).toMatch(/^owner-now$/m);
+
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "moved");
+  await expect.poll(() => page.evaluate(() => globalThis.sprockt?.workspace?.runtime.disposed)).toBe(true);
+  const left = await page.evaluate(() => {
+    const terminals = globalThis.sprockt?.workspace?.terminals;
+    return { tabs: terminals?.tabs().tabs.length, handle: terminals?.handle("t1") === undefined };
+  });
+  expect(left).toEqual({ tabs: 0, handle: true });
+});
+
+// Waffle 0.0.148/0.0.149: after ownership loss, Runtime.dispose() rejects ("Runtime disposal
+// failed", the quiesce calls fail with the takeover error) and keeps the filesystem worker on
+// purpose. The fix belongs in Waffle's teardown; remove `fixme` when the pin moves to it.
+test.fixme("losing the workspace to another tab ends this tab's filesystem worker", async ({
+  page,
+  context,
+}) => {
+  const fsWorkers = () => page.workers().filter((worker) => worker.url().includes("fs-worker")).length;
+  const id = await newWorkspace(page);
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+  expect(fsWorkers()).toBeGreaterThan(0);
+
+  const second = await context.newPage();
+  await second.goto(`/w/${id}`);
+  await second.getByTestId("take-over").click();
+  await expect(second.getByTestId("terminal-state")).toHaveText("ready");
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "moved");
+  await expect.poll(fsWorkers).toBe(0);
+});
+
+test("the title bar's search field opens the editor's quick open", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await newWorkspace(page);
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+  await page.getByRole("button", { name: "Search files and commands" }).click();
+  await expect(page.getByTestId("quick-open")).toBeVisible();
+});
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+
+  test("the header's search button opens quick open over the code", async ({ page }) => {
+    await newWorkspace(page);
+    await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+    await page.getByRole("button", { name: "Search files and commands" }).click();
+    await expect(page.getByTestId("quick-open")).toBeVisible();
+    await expect(page.locator("#wb-slot-code")).toBeVisible();
+  });
+
+  test("tapping the open file again shows the code", async ({ page }) => {
+    await newWorkspace(page);
+    await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+    await writeFile(page, "notes.txt", "hello\n");
+    const switcher = page.getByTestId("pane-switcher");
+    const file = page.getByRole("button", { name: "notes.txt", exact: true });
+    await file.click();
+    await expect(page.locator("#wb-slot-code")).toBeVisible();
+    await switcher.getByRole("button", { name: "Files" }).click();
+    await expect(page.locator("#wb-slot-files")).toBeVisible();
+    await file.click();
+    await expect(page.locator("#wb-slot-code")).toBeVisible();
+    await expect(page.locator("#wb-slot-files")).toBeHidden();
+  });
+
+  test("Ctrl lets go when another terminal takes focus", async ({ page }) => {
+    await newWorkspace(page);
+    const switcher = page.getByTestId("pane-switcher");
+    await switcher.getByRole("button", { name: "Terminal" }).click();
+    await runInTerminal(page, "echo first-ready");
+    await expect.poll(() => terminalText(page)).toMatch(/^first-ready$/m);
+    await page.getByTestId("new-terminal").click();
+    await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+
+    const ctrl = page.getByRole("button", { name: "ctrl", exact: true });
+    await ctrl.click();
+    await expect(ctrl).toHaveAttribute("aria-pressed", "true");
+    await page.getByTestId("terminal-tab").first().click();
+    await expect(ctrl).toHaveAttribute("aria-pressed", "false");
+
+    // Back in the second shell, a letter is a letter: no leftover Ctrl+E.
+    await page.getByTestId("terminal-tab").nth(1).click();
+    await runInTerminal(page, "echo second-ok");
+    await expect.poll(() => terminalText(page)).toMatch(/^second-ok$/m);
+
+    // Leaving the terminal for another pane lets go of Ctrl too.
+    await ctrl.click();
+    await expect(ctrl).toHaveAttribute("aria-pressed", "true");
+    await switcher.getByRole("button", { name: "Files" }).click();
+    await switcher.getByRole("button", { name: "Terminal" }).click();
+    await expect(ctrl).toHaveAttribute("aria-pressed", "false");
+    await runInTerminal(page, "echo still-letters");
+    await expect.poll(() => terminalText(page)).toMatch(/^still-letters$/m);
+  });
+
+  test("the pane switcher shows one pane at a time", async ({ page }) => {
+    await newWorkspace(page);
+    const switcher = page.getByTestId("pane-switcher");
+    await expect(switcher).toBeVisible();
+    await expect(page.locator("#wb-slot-files")).toBeVisible();
+    await expect(page.locator("#wb-slot-code")).toBeHidden();
+
+    await switcher.getByRole("button", { name: "Terminal" }).click();
+    await expect(page.locator("#wb-slot-terminal")).toBeVisible();
+    await expect(page.locator("#wb-slot-files")).toBeHidden();
+    await expect(switcher.getByRole("button", { name: "Terminal" })).toHaveAttribute("aria-pressed", "true");
+
+    // The shell works in the phone layout too.
+    await runInTerminal(page, "echo from-the-phone");
+    await expect.poll(() => terminalText(page)).toMatch(/^from-the-phone$/m);
+
+    await switcher.getByRole("button", { name: "Code" }).click();
+    await expect(page.locator("#wb-slot-code")).toBeVisible();
+    await expect(page.locator("#wb-slot-terminal")).toBeHidden();
+
+    // Nothing runs off the side of the screen.
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+});
+
+test("two terminal tabs run separate shells", async ({ page }) => {
+  await newWorkspace(page);
+  await runInTerminal(page, "export MARK=first; echo first-tab-ready");
+  await expect.poll(() => terminalText(page)).toMatch(/^first-tab-ready$/m);
+
+  await page.getByTestId("new-terminal").click();
+  await expect(page.getByTestId("terminal-tab")).toHaveCount(2);
+  await runInTerminal(page, "echo second-tab:$MARK:");
+  // The second shell never saw the first one's variable.
+  await expect.poll(() => terminalText(page)).toMatch(/^second-tab::$/m);
+
+  await page.getByTestId("terminal-tab").first().click();
+  await runInTerminal(page, "echo first-tab:$MARK");
+  await expect.poll(() => terminalText(page)).toMatch(/^first-tab:first$/m);
+  expect(await terminalText(page)).not.toContain("second-tab");
+
+  // Closing a tab leaves the other shell running.
+  await page.getByRole("button", { name: "Close bash 2" }).click();
+  await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
+  await runInTerminal(page, "echo still-here");
+  await expect.poll(() => terminalText(page)).toMatch(/^still-here$/m);
+});
