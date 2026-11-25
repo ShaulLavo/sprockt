@@ -63,6 +63,11 @@ export function PreviewPane() {
     announced = false;
   }
 
+  function mountFrame(element: HTMLIFrameElement): void {
+    setFrame(element);
+    onCleanup(() => setFrame(undefined));
+  }
+
   onCleanup(preview.subscribe(setServers));
   onCleanup(() => void devServer.dispose());
 
@@ -276,14 +281,17 @@ export function PreviewPane() {
             </Show>
           </div>
         </Show>
-        <iframe
-          class="preview-frame"
-          classList={{ hidden: port() === undefined }}
-          title="Preview"
-          data-testid="preview-frame"
-          onLoad={onFrameLoad}
-          ref={setFrame}
-        />
+        {/* The frame exists only while it has a page to show: a stopped server's page does not
+            keep running out of sight, and the frame never sits on a blank document first. */}
+        <Show when={port() !== undefined && usable()}>
+          <iframe
+            class="preview-frame"
+            title="Preview"
+            data-testid="preview-frame"
+            onLoad={onFrameLoad}
+            ref={mountFrame}
+          />
+        </Show>
       </div>
     </section>
   );

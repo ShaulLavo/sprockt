@@ -1,5 +1,7 @@
 import type { Page } from "@playwright/test";
-import { expect, newWorkspace, runInTerminal, test, writeFile } from "./helpers";
+import { expect, newWorkspace, retryLostFrames, runInTerminal, test, writeFile } from "./helpers";
+
+retryLostFrames();
 
 /** A small site with links, an error button and a WebSocket echo, served by Bun.serve. */
 const SERVER = `

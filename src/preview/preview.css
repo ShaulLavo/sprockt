@@ -167,10 +167,6 @@
   background: #fff;
 }
 
-.preview-frame.hidden {
-  display: none;
-}
-
 .preview-stage[data-viewport="tablet"] .preview-frame {
   width: 768px;
   height: 1024px;

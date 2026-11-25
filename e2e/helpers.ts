@@ -14,10 +14,24 @@ async function workbenchState(page: Page): Promise<string> {
       `boot-error=${document.querySelector("[data-testid=boot-error]")?.textContent}`,
       `asks=${document.querySelector("[data-testid=workspace-busy]") !== null}`,
     ];
-    return parts.join(" ");
+    // The preview as the page has it: its port, where its frame points and what the frame shows.
+    const frame = document.querySelector<HTMLIFrameElement>("[data-testid=preview-frame]");
+    const port = document.querySelector<HTMLSelectElement>("[data-testid=preview-port]");
+    const preview = [
+      `preview-port=${port?.value}`,
+      `frame-src=${frame?.getAttribute("src")}`,
+      `frame-at=${frame?.contentWindow?.location.href}`,
+      `frame-heading=${frame?.contentDocument?.querySelector("h1")?.textContent}`,
+    ];
+    return parts.concat(preview).join(" ");
   });
   const silent = new Promise<string>((resolve) => setTimeout(resolve, 5000, "the page did not answer"));
-  return Promise.race([read, silent]).catch((error: Error) => `the page could not be read: ${error.message}`);
+  const state = await Promise.race([read, silent]).catch(
+    (error: Error) => `the page could not be read: ${error.message}`,
+  );
+  // The frames as the test runner has them, which is what a frame locator searches.
+  const frames = page.frames().map((frame) => frame.url());
+  return `${state} runner-frames=${frames.join(",")}`;
 }
 
 /**
@@ -44,6 +58,20 @@ export const test = base.extend<{ pageErrors: string[] }>({
 });
 
 export { expect };
+
+/**
+ * For a spec that looks inside the preview frame; call it at the top of the file.
+ *
+ * Playwright's Firefox driver can lose a frame that navigates away from a blank document it sat
+ * on for a while: the page shows the preview, the driver still has the frame at about:blank, and
+ * a frame locator finds nothing until the test times out. The failure line printed above showed
+ * exactly that in 3 of 30 Firefox runs on a loaded machine. The pane now creates its frame only
+ * when it has a page to load, and the next 96 runs kept their frame. The retry stays as a guard:
+ * a second attempt gets a new frame, and the report still lists the test as flaky.
+ */
+export function retryLostFrames(): void {
+  test.describe.configure({ retries: 1 });
+}
 
 /** Opens a new workspace from the landing page and returns its id. */
 export async function newWorkspace(page: Page): Promise<string> {
