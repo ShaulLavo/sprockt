@@ -27,13 +27,15 @@
     "@singapore-editor/find": "0.2.13",
     "@singapore-editor/gutters": "0.2.13",
     "@singapore-editor/highlighting": "0.2.16",
+    "@singapore-editor/lsp": "0.2.12",
+    "@singapore-editor/lsp-plugin": "0.2.15",
     "@singapore-editor/solid": "0.2.13",
-    "@waffle-os/relay": "0.0.148",
+    "@waffle-os/relay": "0.0.149",
     "bash-web": "0.0.114",
     "bun-wasm": "git+https://github.com/ShaulLavo/bun-wasm.git#7b25271e30bd41ca54d115d01d557084068cf930",
     "ghostty-webgpu": "0.3.34",
     "solid-js": "1.9.20",
-    "waffle": "npm:@waffle-os/runtime@0.0.148",
+    "waffle": "npm:@waffle-os/runtime@0.0.149",
     "waffle-base": "https://github.com/ShaulLavo/waffle/releases/download/programs-v0.0.23/waffle-base-0.0.23.tgz"
   },
   "devDependencies": {

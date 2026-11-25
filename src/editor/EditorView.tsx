@@ -8,7 +8,7 @@ import { createFoldGutterPlugin, createLineGutterPlugin } from "@singapore-edito
 import { createHighlightingPlugin } from "@singapore-editor/highlighting";
 import { createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { debugHandle } from "../app/debug";
-import { PROJECT_ROOT } from "../workspace/paths";
+import { PROJECT_ROOT, projectRelative } from "../workspace/paths";
 import { useWorkspace } from "../workspace/session";
 import type { Buffer } from "./buffers";
 import { languageOf } from "./languages";
@@ -55,6 +55,18 @@ function revealOffset(buffer: Buffer, request: RevealRequest & { line: number })
   return Math.min(range.start + Math.max(0, (request.column ?? 1) - 1), range.end);
 }
 
+/** Opens an absolute project path in a tab, at a 1-based position when given. */
+function openProjectFile(
+  store: EditorStore,
+  path: string,
+  position?: { readonly line: number; readonly column: number },
+): boolean {
+  const relative = projectRelative(path);
+  if (!relative) return false;
+  store.open(relative, position ? { line: position.line, column: position.column } : { focus: true });
+  return true;
+}
+
 export function EditorView(props: { store: EditorStore; onEditor?: (editor: Editor) => void }) {
   const workspace = useWorkspace();
   const scheme = createColorScheme();
@@ -79,9 +91,18 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
       gutterLeadingInset: 8,
     });
     const unmount = mountEditorPlugins(
-      { runtime: workspace.runtime, projectRoot: PROJECT_ROOT, rootUri: `file://${PROJECT_ROOT}` },
+      {
+        runtime: workspace.runtime,
+        projectRoot: PROJECT_ROOT,
+        rootUri: `file://${PROJECT_ROOT}`,
+        openFile: (path, position) => openProjectFile(props.store, path, position),
+      },
       instance,
     );
+    // Once another tab owns the workspace this tab's files are not live: language servers stop.
+    createEffect(() => {
+      if (!workspace.files.writable()) unmount();
+    });
     setEditor(instance);
     props.onEditor?.(instance);
     onCleanup(() => {

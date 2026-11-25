@@ -14,8 +14,9 @@
 // - The editor never waits for it. The editor opens with its built-in plugins (syntax, find) and
 //   each provider's plugins are added to the live editor when that provider delivers, so a slow,
 //   stalled or failing provider only delays or loses its own plugins.
-// - `signal` aborts when the editor closes. `dispose` (when returned) runs then too, and also for
-//   a set that arrives after the editor already closed; such a set is never mounted.
+// - `signal` aborts when the editor closes, or when another tab takes the workspace over.
+//   `dispose` (when returned) runs then too, and also for a set that arrives after that; such a
+//   set is never mounted.
 // - Registering after an editor exists mounts the plugins on it; calling the returned function
 //   removes them from every editor again.
 import type { EditorDisposable, EditorPlugin } from "@singapore-editor/core/extensions";
@@ -27,8 +28,16 @@ export interface EditorHostContext {
   readonly projectRoot: string;
   /** `file://` URI of the project root, for a language server's `rootUri`. */
   readonly rootUri: string;
-  /** Aborted when the editor closes: stop starting things, and stop what was started. */
+  /**
+   * Aborted when the editor closes, or when another tab takes the workspace over and this tab's
+   * files stop being live: stop starting things, and stop what was started.
+   */
   readonly signal: AbortSignal;
+  /**
+   * Opens a project file in the editor, as go-to-definition does: `path` is absolute, `line` and
+   * `column` are 1-based. False when the path is outside the project.
+   */
+  openFile(path: string, position?: { readonly line: number; readonly column: number }): boolean;
 }
 
 /** Plugins together with what has to be shut down when the editor closes. */

@@ -45,7 +45,7 @@ export interface WorkspaceRuntime {
 }
 
 /** Waffle's generic launcher for WASI programs, bound to our bundled program worker. */
-function programLauncher(workerUrl: URL): GuestLauncher {
+export function programLauncher(workerUrl: URL): GuestLauncher {
   return (context, service) =>
     service.launchWorker(context, {
       workerUrl: workerUrl.href,

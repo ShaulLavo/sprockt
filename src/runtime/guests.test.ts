@@ -25,8 +25,13 @@ test("every pinned guest has a well-formed lock entry", () => {
   }
 });
 
-test("every guest comes from the hash-addressed store, at a URL that names its hash", () => {
+// A pinned URL must keep serving the same bytes: the hash store names the hash, a release names
+// its tag. Mutable sources such as a playground deploy are not allowed.
+const RELEASE_ASSET = /^https:\/\/github\.com\/ShaulLavo\/[\w.-]+\/releases\/download\/[\w.-]+\/[\w.-]+$/;
+
+test("every guest comes from an immutable source: the hash-addressed store or a tagged release", () => {
   for (const pinned of Object.values(guestEntries)) {
-    expect(pinned.source).toStartWith(`https://bun-artifacts.shaulavo.dev/${pinned.sha256}/`);
+    const fromStore = pinned.source.startsWith(`https://bun-artifacts.shaulavo.dev/${pinned.sha256}/`);
+    expect(fromStore || RELEASE_ASSET.test(pinned.source)).toBe(true);
   }
 });

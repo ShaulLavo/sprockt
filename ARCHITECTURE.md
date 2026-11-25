@@ -163,13 +163,14 @@ program it runs.
 
 | Package                                                 | Pin                | Source                                                                |
 | ------------------------------------------------------- | ------------------ | --------------------------------------------------------------------- |
-| `waffle` (`@waffle-os/runtime`), `@waffle-os/relay`     | 0.0.148            | npm                                                                   |
+| `waffle` (`@waffle-os/runtime`), `@waffle-os/relay`     | 0.0.149            | npm                                                                   |
 | `waffle-base`                                           | programs-v0.0.23   | GitHub release tarball                                                |
 | `bash-web`                                              | 0.0.114            | npm                                                                   |
 | `bun-wasm`                                              | commit `7b25271e3` | Git dependency (not on npm); `trustedDependencies` runs its `prepare` |
 | `ghostty-webgpu`                                        | 0.3.34             | npm                                                                   |
 | `@singapore-editor/core`, `/solid`, `/find`, `/gutters` | 0.2.13             | npm                                                                   |
 | `@singapore-editor/highlighting`                        | 0.2.16             | npm (Tree-sitter grammars load per language, on first use)            |
+| `@singapore-editor/lsp`, `/lsp-plugin`                  | 0.2.12, 0.2.15     | npm                                                                   |
 
 Guests are the WASM programs the workers run. They are published to the hash-addressed guest
 store, `bun-artifacts.shaulavo.dev/<sha256>/<file>.gz`, served gzip-encoded with immutable
@@ -178,7 +179,8 @@ caching and `Access-Control-Allow-Origin: *`. The packages do not name them yet:
 
 - `guests.lock.json` pins `bun-browser.wasm` (bun-wasm `7b25271e3`) and `shell-engine.wasm`
   (bash-web 0.0.114) by store URL, SHA-256 and size. The URL contains the hash, so it never
-  serves anything else.
+  serves anything else. `tsrs-lsp.wasm` (the TypeScript language server) is pinned to its
+  tagged GitHub release on the ShaulLavo/tsrs fork, served uncompressed.
 - `bun run guests` downloads, decodes the gzip encoding, checks the decoded size and SHA-256,
   and stages them at `public/guests/<sha256>/<name>` (written beside the target and renamed,
   so a killed run leaves no partial file). The build script runs it first, so a build never
@@ -214,17 +216,27 @@ traffic. Milestone 1 ships an inactive transport. There are two real ones:
 has to go through a page on our origin.
 
 **Language servers** (`editor/plugins.ts`). `registerEditorPlugins(provider)`: a provider gets
-`{ runtime, projectRoot, rootUri, signal }` and returns Singapore `EditorPlugin`s, or
+`{ runtime, projectRoot, rootUri, signal, openFile }` and returns Singapore `EditorPlugin`s, or
 `{ plugins, dispose }`, synchronously or not. The editor never waits for a provider: it opens
 at once with its built-in plugins (syntax, find, gutters), and a provider's plugins are added
 to the running editor (`Editor.addPlugin`) when it delivers, so the text on screen and its undo
 history are untouched. A provider registered while an editor is open reaches it too, and
 unregistering removes its plugins. Each provider runs inside its own boundary, so one that
 throws or never answers only loses its own plugins. `signal` aborts and every `dispose` runs
-when the editor closes, including for a set that arrives late.
+when the editor closes or another tab takes the workspace over, including for a set that
+arrives late. `openFile(path, { line, column })` opens an absolute project path in a tab, which
+is how go-to-definition reaches other files and `node_modules`.
 Document ids are absolute workspace paths, so a server sees `file:///workspace/src/main.ts`.
-The LSP lane adds `src/lsp/typescript.ts` (its stdio transport plus
-`createLanguageServerPlugin`) and one `registerEditorPlugins` call.
+
+**TypeScript IntelliSense** (`src/lsp/`). `main.tsx` registers one provider; its code is a lazy
+chunk. It waits until the project has a TypeScript or JavaScript file of its own (not in
+`node_modules`), downloads and verifies the tsrs guest, installs it at `/usr/bin/tsrs-lsp`, and
+only then creates the plugin, because the plugin starts the server as it mounts. `glue.ts` is
+the LSP lane's glue: `startCommand` with the process's stdio as an LSP transport, restarts on a
+crash, one server per workspace from a page-wide pool, `disposeLanguageServers()` when the
+editor's providers stop. tsrs cannot watch files under WASI, so `watch.ts` forwards Waffle's
+watch events as `workspace/didChangeWatchedFiles`. `servers.ts` is the seam for a second
+server (typescript-language-server under Bun).
 
 ## Tabs
 
