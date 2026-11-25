@@ -32,7 +32,8 @@ src/
   runtime/            boot (Waffle + Bun + coreutils + shell), worker and guest URLs, guest lock
   files/              FileService (read, write, move, remove, watch, flush), tree model
   explorer/           file tree UI
-  editor/             EditorPane, EditorStore, language ids, plugin mount hook
+  editor/             EditorPane, tabs, EditorStore, file buffers, theme, plugin mount hook
+  search/             quick open (fuzzy file finder) and project search, run in the page
   terminal/           TerminalPane, Ghostty + bash-web session
   preview/            PreviewTransport seam, PreviewPane
   templates/          (slice 1) starter catalog and file sets
@@ -87,19 +88,24 @@ WorkspaceSession
   shell's and Bun's and those inside `node_modules`. A failed flush is `failed`.
   `FileService.saved()` resolves when every change acknowledged before the call is flushed,
   however many follow: a caller waits for its own write, not for the workspace to go quiet.
-- **The editor saves what it shows.** `editor/documents.ts` separates the selected file from
-  the one on screen and keeps, for every document, its own edit count for as long as the
-  workspace is open. A save writes the document on screen under the path it was read from. A
-  save that finishes late, even after switching away and back, clears "unsaved" only for the
-  edits it contained. Unsaved text is kept when another file is shown and comes back with the
-  file. A conflict belongs to its document and is offered only while that document is shown.
+- **The editor saves what it shows.** `editor/buffers.ts` keeps one Singapore text buffer per
+  open tab, with its own undo history, carets and scroll; switching tabs attaches another
+  buffer to the one editor. A save writes a buffer's own text under its own path (the file on
+  screen, never the one merely selected while it loads). Saves of one path run in order, even
+  across closing and reopening the file. "Unsaved" means the text differs from what is on disk
+  or from what a pending save is writing, so a buffer is clean only once its write succeeded.
+  Unsaved text stays with its tab until it is saved or the person confirms closing it.
 - **Text is recoverable until storage holds it.** A save acknowledged from memory is not
   durable yet. The editor keeps such text recoverable until the flush that covers it is done
-  (`FileService.saved()`), together with what storage held before it.
-- **A save never overwrites a change it has not seen.** The editor saves with
-  `writeIfUnchanged(path, text, textItRead)`. If the shell or another tab changed the file, the
-  save is refused and the person chooses: reload from disk, or keep the edits. The check and the
-  write are two steps; making them one needs a conditional write in Waffle.
+  (`FileService.saved()`), together with what storage held before it, even after its tab
+  closes. A copy another tab left for a file is removed only after that file's text is durable,
+  or the person reloads from disk or closes the tab.
+- **A save never overwrites a change it has not seen.** On every `revision` a clean buffer
+  reloads the file as one undoable edit; a buffer with unsaved edits gets a conflict at once.
+  Saves use `writeIfUnchanged(path, text, textLastInStepWith)`, which also catches a change
+  made between the last reload and the save. The person chooses: reload from disk, or keep
+  the edits (which saves them); both read the file again first. The check and the write are two
+  steps; making them one needs a conditional write in Waffle.
 - **Stores are factories, not globals.** `createEditorStore()`, `createFileService(runtime)`:
   each returns accessors and methods. The router is the only module-level signal.
 - **Workspaces are discovered, not indexed.** The landing page lists
@@ -155,14 +161,15 @@ program it runs.
 
 ## Packages and guests
 
-| Package                                             | Pin                | Source                                                                |
-| --------------------------------------------------- | ------------------ | --------------------------------------------------------------------- |
-| `waffle` (`@waffle-os/runtime`), `@waffle-os/relay` | 0.0.148            | npm                                                                   |
-| `waffle-base`                                       | programs-v0.0.23   | GitHub release tarball                                                |
-| `bash-web`                                          | 0.0.114            | npm                                                                   |
-| `bun-wasm`                                          | commit `7b25271e3` | Git dependency (not on npm); `trustedDependencies` runs its `prepare` |
-| `ghostty-webgpu`                                    | 0.3.34             | npm                                                                   |
-| `@singapore-editor/core`, `/solid`                  | 0.2.13             | npm                                                                   |
+| Package                                                 | Pin                | Source                                                                |
+| ------------------------------------------------------- | ------------------ | --------------------------------------------------------------------- |
+| `waffle` (`@waffle-os/runtime`), `@waffle-os/relay`     | 0.0.148            | npm                                                                   |
+| `waffle-base`                                           | programs-v0.0.23   | GitHub release tarball                                                |
+| `bash-web`                                              | 0.0.114            | npm                                                                   |
+| `bun-wasm`                                              | commit `7b25271e3` | Git dependency (not on npm); `trustedDependencies` runs its `prepare` |
+| `ghostty-webgpu`                                        | 0.3.34             | npm                                                                   |
+| `@singapore-editor/core`, `/solid`, `/find`, `/gutters` | 0.2.13             | npm                                                                   |
+| `@singapore-editor/highlighting`                        | 0.2.16             | npm (Tree-sitter grammars load per language, on first use)            |
 
 Guests are the WASM programs the workers run. Neither bun-wasm nor bash-web publishes them:
 bun-wasm's `BUN_WASM_ASSET` is `null`, the `bun-artifacts.shaulavo.dev` store has no object for
@@ -208,11 +215,12 @@ has to go through a page on our origin.
 **Language servers** (`editor/plugins.ts`). `registerEditorPlugins(provider)`: a provider gets
 `{ runtime, projectRoot, rootUri, signal }` and returns Singapore `EditorPlugin`s, or
 `{ plugins, dispose }`, synchronously or not. The editor never waits for a provider: it opens
-at once, and a provider's plugins are added to the running editor (`editor.addPlugin`) when it
-delivers, so the text on screen and its undo history are untouched. A provider registered while
-a workspace is open reaches that workspace too. Each provider runs inside its own boundary, so
-one that throws or never answers only loses its own plugins. `signal` aborts and every
-`dispose` runs when the workspace closes, including for a set that arrives late.
+at once with its built-in plugins (syntax, find, gutters), and a provider's plugins are added
+to the running editor (`Editor.addPlugin`) when it delivers, so the text on screen and its undo
+history are untouched. A provider registered while an editor is open reaches it too, and
+unregistering removes its plugins. Each provider runs inside its own boundary, so one that
+throws or never answers only loses its own plugins. `signal` aborts and every `dispose` runs
+when the editor closes, including for a set that arrives late.
 Document ids are absolute workspace paths, so a server sees `file:///workspace/src/main.ts`.
 The LSP lane adds `src/lsp/typescript.ts` (its stdio transport plus
 `createLanguageServerPlugin`) and one `registerEditorPlugins` call.
@@ -292,7 +300,8 @@ where the bytes live.
 - **Unit**: `bun test` over the pure modules (routes, paths, tree, watch filter, guests,
   languages, the JavaScript check) and over the rules that must hold without a browser: the
   project boundary and persistence of FileService (on an in-memory filesystem), the editor's
-  document model, plugin isolation, recovery, and the workspace turnstile.
+  buffers and tabs, quick-open ranking and project search, plugin isolation, recovery, and the
+  workspace turnstile.
 - **End to end**: Playwright against the production build (`vite preview`) in Chromium,
   Firefox and WebKit, on persistent storage, each test in a fresh browser profile. Tests
   assert outcomes; the only time limits are hang caps. Two tests are `fixme` until the gaps

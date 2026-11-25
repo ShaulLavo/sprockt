@@ -80,19 +80,23 @@ test("a plugin that arrives late keeps the text on screen, the unsaved state and
   await expect.poll(() => editorText(page)).not.toContain("typed before the plugin");
 });
 
-test("a save does not overwrite a change the shell made since the file was opened", async ({ page }) => {
+// A clean editor simply reloads a file the shell changed (editor.spec.ts). With unsaved edits the
+// change shows as a conflict at once, and saving does not overwrite it.
+test("a save does not overwrite a change the shell made under unsaved edits", async ({ page }) => {
   await newWorkspace(page);
   await expect(page.getByTestId("terminal-state")).toHaveText("ready");
   await writeFile(page, "shared.txt", "original\n");
   await openFile(page, "shared.txt");
   await expect.poll(() => editorText(page)).toBe("original\n");
 
-  await runInTerminal(page, "echo from-the-shell > shared.txt");
-  await expect(page.getByTestId("save-state")).toHaveText("saved");
   await typeInEditor(page, "mine");
-  await page.keyboard.press("ControlOrMeta+s");
-
+  await expect(page.getByTestId("editor-dirty")).toBeVisible();
+  await runInTerminal(page, "echo from-the-shell > shared.txt");
   await expect(page.getByTestId("editor-conflict")).toBeVisible();
+  await page.getByTestId("editor").click();
+  await page.keyboard.press("ControlOrMeta+s");
+  await expect(page.getByTestId("editor-conflict")).toBeVisible();
+  await expect.poll(() => editorText(page)).toBe("original\nmine");
   await runInTerminal(page, "cat shared.txt");
   await expect.poll(() => terminalText(page)).toMatch(/^from-the-shell$/m);
 

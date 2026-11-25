@@ -1,25 +1,377 @@
-.editor-pane {
+/* Editor pane, tabs and quick open. Colours are the Circuit design tokens; the light-dark()
+   fallbacks are Circuit's own values, used only while the workbench has not loaded the tokens. */
+.editor-pane,
+.quick-open-backdrop {
+  --ed-bg: var(--bg-editor, light-dark(#ffffff, #151c26));
+  --ed-panel: var(--bg-panel, light-dark(#f6f8fb, #121821));
+  --ed-input: var(--bg-input, light-dark(#ffffff, #1a2230));
+  --ed-elevated: var(--bg-elevated, light-dark(#ffffff, #1c2533));
+  --ed-hover: var(--bg-hover, light-dark(#e6ebf2, #1b2431));
+  --ed-active: var(--bg-active, light-dark(#fde6ee, #2a1d29));
+  --ed-line: var(--line, light-dark(#dde3ea, #222c39));
+  --ed-line-strong: var(--line-strong, light-dark(#c8d0db, #303c4c));
+  --ed-fg: var(--fg, light-dark(#0f1520, #e6ebf2));
+  --ed-muted: var(--fg-muted, light-dark(#434d5e, #a0acbc));
+  --ed-subtle: var(--fg-subtle, light-dark(#5f6a7b, #7f8b9c));
+  --ed-accent: var(--accent, light-dark(#d1245a, #ff5c8a));
+  --ed-accent-text: var(--accent-text, light-dark(#b81d4e, #ff7ea2));
+  --ed-accent-soft: var(--accent-soft, light-dark(#fde6ee, #2c1724));
+  --ed-accent-fg: var(--accent-fg, light-dark(#ffffff, #1a0610));
+  --ed-warn: var(--warn, light-dark(#946200, #f0bd4f));
+  --ed-danger: var(--danger, light-dark(#c6283f, #ff6b6b));
+  --ed-dirty: var(--dirty, light-dark(#0f1520, #e6ebf2));
+  --ed-focus: var(--focus, light-dark(#d1245a, #ff7ea2));
+  --ed-mono: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  --ed-tab-h: var(--tab-h, 36px);
+  --ed-indicator: var(--tab-indicator, 2px);
+  --ed-radius: var(--radius-sm, 6px);
+  --ed-dur: var(--dur-fast, 110ms);
+  --ed-ease: var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.editor-pane .ico,
+.quick-open .ico {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--icon-stroke, 1.7);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ico.ft {
+  color: var(--ft-folder, var(--ed-subtle));
+}
+.ico.ft-ts {
+  color: var(--ft-ts, light-dark(#1f63c6, #7fb6ff));
+}
+.ico.ft-js {
+  color: var(--ft-json, light-dark(#946200, #f0bd4f));
+}
+.ico.ft-css {
+  color: var(--ft-css, light-dark(#b81d4e, #ff8fb0));
+}
+.ico.ft-json {
+  color: var(--ft-json, light-dark(#946200, #f0bd4f));
+}
+.ico.ft-html {
+  color: var(--ft-html, light-dark(#b4541a, #ffb27a));
+}
+
+/* ── Frame ── */
+.editor-pane > .editor-shell {
+  grid-row: 1 / -1;
   display: flex;
-  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: var(--ed-bg);
 }
 
-.editor-pane .editor-host {
+.editor-main {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
+.editor-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-body > .editor-host {
+  position: absolute;
+  inset: 0;
+  height: auto;
+}
+
+.editor-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 24px;
+  background: var(--ed-bg);
+  color: var(--ed-muted);
+  font-size: var(--text-sm, 13px);
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* ── Tabs ── */
+.editor-tabs {
+  flex: none;
+  height: var(--ed-tab-h);
+  background: var(--ed-panel);
+  /* The bottom line is a shadow so the active tab's background can cover it. */
+  box-shadow: inset 0 -1px 0 var(--ed-line);
+  --fade-start: 0px;
+  --fade-end: 0px;
+}
+
+.editor-tabs.fade-start {
+  --fade-start: 28px;
+}
+.editor-tabs.fade-end {
+  --fade-end: 28px;
+}
+
+.editor-tabs-strip {
+  display: flex;
+  height: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.editor-tabs-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.editor-tabs.fade-start .editor-tabs-strip,
+.editor-tabs.fade-end .editor-tabs-strip {
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade-start),
+    #000 calc(100% - var(--fade-end)),
+    transparent 100%
+  );
+}
+
+.editor-tab {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  max-width: 240px;
+  padding: 0 6px 0 12px;
+  color: var(--ed-muted);
+  font-size: var(--text-xs, 12px);
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-x;
+  transition:
+    background-color var(--ed-dur) var(--ed-ease),
+    color var(--ed-dur) var(--ed-ease);
+}
+
+.editor-tab .ft {
+  width: 14px;
+  height: 14px;
+}
+
+.editor-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-tab-hint {
+  overflow: hidden;
+  color: var(--ed-subtle);
+  font-size: var(--text-2xs, 11px);
+  text-overflow: ellipsis;
+}
+
+.editor-tab.is-preview .editor-tab-name {
+  font-style: italic;
+}
+
+.editor-tab.is-missing .editor-tab-name {
+  color: var(--ed-danger);
+  text-decoration: line-through;
+}
+
+.editor-tab.is-active {
+  background: var(--ed-bg);
+  color: var(--ed-fg);
+  box-shadow:
+    inset 1px 0 0 var(--ed-line),
+    inset -1px 0 0 var(--ed-line);
+}
+
+.editor-tab.is-active::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--ed-indicator);
+  background: var(--ed-accent);
+  content: "";
+}
+
+.editor-tab.is-dragging {
+  z-index: 1;
+  background: var(--ed-hover);
+  opacity: 0.85;
+}
+
+.editor-tab:focus-visible {
+  outline: 2px solid var(--ed-focus);
+  outline-offset: -2px;
+}
+
+.editor-tab-end {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.editor-tab-dirty {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ed-muted);
+}
+
+.editor-tab.is-active .editor-tab-dirty {
+  background: var(--ed-dirty);
+}
+
+.editor-tab-close {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: var(--radius-xs, 4px);
+  color: inherit;
+  opacity: 0;
+  transition:
+    opacity var(--ed-dur) var(--ed-ease),
+    background-color var(--ed-dur) var(--ed-ease);
+}
+
+.editor-tab-close .ico {
+  width: 13px;
+  height: 13px;
+}
+.editor-tab.is-active .editor-tab-close {
+  opacity: 1;
+}
+.editor-tab.is-dirty .editor-tab-close {
+  opacity: 0;
+}
+.editor-tab-close:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--ed-focus);
+}
+
+@media (hover: hover) {
+  .editor-tab:hover {
+    color: var(--ed-fg);
+  }
+  .editor-tab:not(.is-active):hover {
+    background: var(--ed-hover);
+  }
+  .editor-tab:hover .editor-tab-close {
+    opacity: 1;
+  }
+  .editor-tab.is-dirty:hover .editor-tab-dirty {
+    opacity: 0;
+  }
+  .editor-tab-close:hover {
+    background: var(--ed-line);
+  }
+}
+
+/* ── Path ── */
+.editor-crumbs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  align-items: center;
+  height: 26px;
+  padding: 0 16px;
+  overflow: hidden;
+  color: var(--ed-muted);
+  font-size: var(--text-xs, 12px);
+  white-space: nowrap;
+}
+
+.editor-crumbs:empty {
+  display: none;
+}
+.editor-crumbs .ico {
+  width: 12px;
+  height: 12px;
+  color: var(--ed-subtle);
+}
+.editor-crumbs .is-current {
+  color: var(--ed-fg);
+}
+
+/* ── Conflict ── */
 .editor-conflict {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-raised);
-  font-size: 12px;
+  padding: 6px 12px;
+  border-block: 1px solid color-mix(in oklab, var(--ed-warn) 40%, var(--ed-line));
+  background: color-mix(in oklab, var(--ed-warn) 12%, var(--ed-bg));
+  color: var(--ed-fg);
+  font-size: var(--text-xs, 12px);
 }
 
-.editor-conflict button {
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+.editor-conflict > .ico {
+  color: var(--ed-warn);
+}
+.editor-conflict-text {
+  flex: 1 1 240px;
+}
+
+.editor-conflict-action {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--ed-line-strong);
+  border-radius: var(--ed-radius);
+  background: var(--ed-input);
+  font-weight: var(--weight-medium, 500);
+}
+
+.editor-conflict-action.is-primary {
+  border-color: transparent;
+  background: var(--ed-accent);
+  color: var(--ed-accent-fg);
+}
+
+.editor-conflict-action:focus-visible {
+  outline: 2px solid var(--ed-focus);
+  outline-offset: 1px;
+}
+
+@media (max-width: 768px) {
+  .editor-tabs {
+    height: 44px;
+  }
+  .editor-tab {
+    padding: 0 6px 0 12px;
+    font-size: var(--text-sm, 13px);
+  }
+  .editor-tab-end,
+  .editor-tab-close {
+    width: 28px;
+    height: 28px;
+  }
+  .editor-crumbs {
+    padding: 0 12px;
+  }
+  .editor-conflict-action {
+    height: 32px;
+  }
 }

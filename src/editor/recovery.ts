@@ -6,7 +6,13 @@
 // so two tabs leaving or finishing text at the same moment cannot lose each other's entries.
 // An entry stays until its text is safely in storage or the person discards it; opening the
 // file does not remove it.
-import type { Draft } from "./documents";
+
+/** Unsaved text of one file. */
+export interface Draft {
+  readonly text: string;
+  /** What the file held when this text was last in step with it; absent: it did not exist. */
+  readonly baseText?: string | undefined;
+}
 
 type TextStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 

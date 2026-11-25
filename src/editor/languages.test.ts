@@ -6,6 +6,8 @@ test("known extensions map to their language, whatever the case or directory", (
   expect(languageOf("src/App.TSX")).toBe("tsx");
   expect(languageOf("a.b/vite.config.mjs")).toBe("javascript");
   expect(languageOf("tsconfig.json")).toBe("json");
+  expect(languageOf("src/App.vue")).toBe("html");
+  expect(languageOf("src/pages/index.astro")).toBe("astro");
 });
 
 test("unknown extensions, dotfiles and extensionless names have no language", () => {

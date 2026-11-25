@@ -1,10 +1,15 @@
 import { afterEach, expect, test } from "bun:test";
 import type { EditorPlugin } from "@singapore-editor/core/extensions";
 import type { Runtime } from "waffle";
-import { mountEditorPlugins, registerEditorPlugins, type EditorPluginProvider } from "./plugins";
+import {
+  mountEditorPlugins,
+  registerEditorPlugins,
+  type EditorHostContext,
+  type EditorPluginProvider,
+} from "./plugins";
 
 const host = { runtime: {} as Runtime, projectRoot: "/workspace", rootUri: "file:///workspace" };
-const plugin = (name: string) => ({ name }) as unknown as EditorPlugin;
+const plugin = (name: string): EditorPlugin => ({ name, activate: () => undefined });
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const registered: (() => void)[] = [];
@@ -13,95 +18,108 @@ afterEach(() => {
   for (const remove of registered.splice(0)) remove();
 });
 
-/** Mounts and collects every delivery, as the editor pane would add them. */
-function mounted() {
-  const deliveries: (readonly EditorPlugin[])[] = [];
-  const stop = mountEditorPlugins(host, (plugins) => deliveries.push(plugins));
-  return { deliveries, stop };
+/** A stand-in for Singapore's Editor that records which plugins are mounted, in mount order. */
+function fakeEditor() {
+  const live: string[] = [];
+  return {
+    live,
+    addPlugin(added: EditorPlugin) {
+      const name = added.name ?? "unnamed";
+      live.push(name);
+      return { dispose: () => live.splice(live.indexOf(name), 1) };
+    },
+  };
 }
 
-test("a provider that throws synchronously does not stop the next provider", async () => {
-  const good = plugin("good");
-  register(() => {
-    throw new Error("broken provider");
+function quietly<T>(run: () => Promise<T>): Promise<T> {
+  const original = console.error;
+  console.error = () => {};
+  return run().finally(() => (console.error = original));
+}
+
+test("a provider's plugins mount on a live editor, and the provider sees the workspace", async () => {
+  const editor = fakeEditor();
+  const stop = mountEditorPlugins(host, editor);
+  let seen: EditorHostContext | undefined;
+  const unregister = registerEditorPlugins((context) => {
+    seen = context;
+    return [plugin("test.mounted")];
   });
-  register(() => [good]);
-  const { deliveries, stop } = mounted();
   await tick();
-  expect(deliveries).toEqual([[good]]);
+  expect(editor.live).toEqual(["test.mounted"]);
+  expect(seen?.rootUri).toBe("file:///workspace");
+  unregister();
+  expect(editor.live).toEqual([]);
+  expect(seen?.signal.aborted).toBe(true);
   stop();
 });
 
-test("a provider that never answers does not hold back the others", async () => {
-  const fast = plugin("fast");
-  register(() => new Promise<EditorPlugin[]>(() => {}));
-  register(async () => [fast]);
-  const { deliveries, stop } = mounted();
+test("providers registered before the editor opens mount when it does", async () => {
+  register(async () => [plugin("test.early")]);
+  const editor = fakeEditor();
+  const stop = mountEditorPlugins(host, editor);
   await tick();
-  expect(deliveries).toEqual([[fast]]);
+  expect(editor.live).toEqual(["test.early"]);
   stop();
+  expect(editor.live).toEqual([]);
 });
 
-test("each provider's plugins are delivered once, when that provider answers", async () => {
+test("a provider that throws synchronously, rejects or never answers holds back no other provider", () =>
+  quietly(async () => {
+    register(() => {
+      throw new Error("broken provider");
+    });
+    register(() => Promise.reject(new Error("rejects")));
+    register(() => new Promise<EditorPlugin[]>(() => {}));
+    register(() => [plugin("test.healthy")]);
+    const editor = fakeEditor();
+    const stop = mountEditorPlugins(host, editor);
+    await tick();
+    expect(editor.live).toEqual(["test.healthy"]);
+    stop();
+  }));
+
+test("plugins are added as providers deliver, in delivery order", async () => {
   const slow = Promise.withResolvers<EditorPlugin[]>();
-  const first = plugin("first");
-  const second = plugin("second");
   register(() => slow.promise);
-  register(() => [first]);
-  const { deliveries, stop } = mounted();
+  register(() => [plugin("first")]);
+  const editor = fakeEditor();
+  const stop = mountEditorPlugins(host, editor);
   await tick();
-  slow.resolve([second]);
+  expect(editor.live).toEqual(["first"]);
+  slow.resolve([plugin("second")]);
   await tick();
-  expect(deliveries).toEqual([[first], [second]]);
+  expect(editor.live).toEqual(["first", "second"]);
   stop();
 });
 
-test("a provider registered while a workspace is open reaches that workspace", async () => {
-  const { deliveries, stop } = mounted();
-  const late = plugin("late");
-  register(() => [late]);
-  await tick();
-  expect(deliveries).toEqual([[late]]);
-  stop();
-});
-
-test("stopping aborts the signal and disposes what was delivered", async () => {
+test("closing the editor aborts the signal and disposes what was delivered", async () => {
   let aborted = false;
   let disposed = 0;
   register((context) => {
     context.signal.addEventListener("abort", () => (aborted = true));
     return { plugins: [plugin("lsp")], dispose: () => (disposed += 1) };
   });
-  const { stop } = mounted();
+  const editor = fakeEditor();
+  const stop = mountEditorPlugins(host, editor);
   await tick();
+  expect(editor.live).toEqual(["lsp"]);
   stop();
   expect(aborted).toBe(true);
   expect(disposed).toBe(1);
+  expect(editor.live).toEqual([]);
 });
 
-test("a set whose dispose throws does not keep the next set from being disposed", async () => {
-  let disposed = false;
-  register(() => ({
-    plugins: [plugin("broken")],
-    dispose: () => {
-      throw new Error("dispose failed");
-    },
-  }));
-  register(() => ({ plugins: [plugin("fine")], dispose: () => (disposed = true) }));
-  const { stop } = mounted();
-  await tick();
-  stop();
-  expect(disposed).toBe(true);
-});
-
-test("a set that arrives after the workspace closed is disposed and never delivered", async () => {
+test("a set that arrives after the editor closed is disposed and never mounted", async () => {
   const late = Promise.withResolvers<{ plugins: EditorPlugin[]; dispose(): void }>();
   let disposed = false;
   register(() => late.promise);
-  const { deliveries, stop } = mounted();
+  const editor = fakeEditor();
+  const stop = mountEditorPlugins(host, editor);
+  await tick();
   stop();
   late.resolve({ plugins: [plugin("late")], dispose: () => (disposed = true) });
   await tick();
   expect(disposed).toBe(true);
-  expect(deliveries).toEqual([]);
+  expect(editor.live).toEqual([]);
 });
