@@ -16,7 +16,7 @@ manager, [bash-web](https://github.com/ShaulLavo/bash-web) as the shell,
 | UI framework | Solid 1.9                                                      | Fine-grained updates with no virtual DOM diff keep typing, tree refreshes and terminal output off any render path. Singapore ships a first-party Solid binding. |
 | Build        | Vite 8, ES module workers                                      | The tested bundling path of bun-wasm and Ghostty (`?worker&url`, `?url`).                                                                                       |
 | Storage      | Waffle `mode: "fast"` on IndexedDB, one database per workspace | The persistent path is the product path; `mode: "memory"` is not used.                                                                                          |
-| Tabs         | Waffle `whenBusy: "attach"`                                    | The first tab hosts the filesystem; later tabs attach and share it live. Set to `takeover` until Waffle's attach mode is fixed (Known gaps, 1).                 |
+| Tabs         | Waffle `whenBusy: "attach"`                                    | The first tab hosts the filesystem; later tabs attach and share it live. When the hosting tab closes, another tab takes over inside Waffle (Known gaps, 1).     |
 | Hosting      | Cloudflare Worker with static assets only                      | No server code is needed until previews move to their own origins.                                                                                              |
 | Language     | TypeScript only, strict                                        | `bun run check:javascript` fails on any hand-written JavaScript.                                                                                                |
 
@@ -163,7 +163,7 @@ program it runs.
 
 | Package                                                 | Pin                | Source                                                                |
 | ------------------------------------------------------- | ------------------ | --------------------------------------------------------------------- |
-| `waffle` (`@waffle-os/runtime`), `@waffle-os/relay`     | 0.0.149            | npm                                                                   |
+| `waffle` (`@waffle-os/runtime`), `@waffle-os/relay`     | 0.0.150            | npm                                                                   |
 | `waffle-base`                                           | programs-v0.0.23   | GitHub release tarball                                                |
 | `bash-web`                                              | 0.0.114            | npm                                                                   |
 | `bun-wasm`                                              | commit `7b25271e3` | Git dependency (not on npm); `trustedDependencies` runs its `prepare` |
@@ -243,11 +243,10 @@ server (typescript-language-server under Bun).
 The design is `whenBusy: "attach"`: the first tab hosts the filesystem; later tabs attach as
 peers and read, write and watch the same live tree. Host loss fails over inside Waffle.
 
-Today `runtime/boot.ts` does not use attach, because attach mode in Waffle 0.0.148 loses file
-bytes for programs (Known gaps, 1). A second tab waits and asks before it takes the workspace;
-the older tab then stops writing and hands over its unsaved text ("Workspace lifetime").
-Everything below describes the attach design the slices build toward; choosing `"attach"` in
-`createWorkspaceRuntime` and dropping the question are the only changes in this repository.
+`TAB_POLICY` (`runtime/tab-policy.ts`) is `"attach"`, and `runtime/boot.ts` opens with it. The
+wait-and-ask path ("Workspace lifetime") stays as the `"takeover"` fallback, and its tests run
+only under that policy; `e2e/tabs.spec.ts` and the two-tab explorer test run only under attach.
+Under attach the workbench never offers to take a workspace over.
 
 - Shared across tabs: files, and through `FileService.revision`, the explorer and clean editor
   buffers.
@@ -317,8 +316,7 @@ where the bytes live.
   workspace turnstile.
 - **End to end**: Playwright against the production build (`vite preview`) in Chromium,
   Firefox and WebKit, on persistent storage, each test in a fresh browser profile. Tests
-  assert outcomes; the only time limits are hang caps. Two tests are `fixme` until the gaps
-  below close: two tabs on one workspace, and Bun in WebKit. The terminal draws on a canvas, so specs
+  assert outcomes; the only time limits are hang caps. The terminal draws on a canvas, so specs
   read it through `globalThis.sprockt` (see `e2e/helpers.ts`).
 - **iPhone Safari**: Playwright's WebKit is not Safari. The gate for a deploy is the same boot
   flow on the iPhone simulator on the M1 Mac (slice 7).
@@ -328,20 +326,15 @@ where the bytes live.
 
 ## Known gaps
 
-1. **Attach mode loses file bytes for programs.** With `whenBusy: "attach"` on Waffle 0.0.148
-   (bash-web 0.0.114, every worker bundled from source), in Chromium and Firefox, in one tab:
-   `echo hi > f.txt` creates `f.txt` and leaves it empty; `cat page.txt` on a 10-byte file the
-   page wrote prints nothing; `grep from page.txt` fails with "read, output or record limit
-   error"; `cat < page.txt` prints nothing. `head -1`, `cp`, Bun's `writeFileSync` and page
-   reads and writes are intact, and all of it works with `whenBusy: "takeover"`. In WebKit,
-   attach mode also fails `bun` with "Permission denied" and a second tab reports
-   `/workspace: No such file or directory`. The fix belongs in Waffle or bash-web. Until then
-   tabs do not share a workspace and the two-tab test in `e2e/boot.spec.ts` is `fixme`.
-2. **Bun traps in WebKit.** In Playwright's WebKit, `bun --version` ends in a WASM trap (a
-   stack of `wasm-function[...]` frames) with the browser-engine guest, in takeover mode. The
-   shell, coreutils, the editor and persistence pass there. iPhone needs bun-wasm's own memory
-   policy and `BUN_WASM_IPHONE_NATIVE_MEMORY` (`web/src/host-memory-policy.ts`), which this
-   foundation does not apply yet. The Bun test is `fixme` on WebKit.
+1. **Attach mode under load in WebKit.** With Waffle 0.0.150 in Playwright's WebKit, when many
+   workspaces boot at once (ten parallel test workers), about half the shells fail to start
+   with "filesystem errno 11" (sometimes 22), and the file watcher fails with the same error.
+   One worker at a time passes, and the takeover policy passes under the same load. Chromium
+   and Firefox pass. The cause is in Waffle's attach mode; the PR that flipped the policy has
+   the reproduction.
+2. **Runtime.dispose() after takeover keeps the filesystem worker.** Waffle 0.0.148 to 0.0.150:
+   after ownership loss, disposal rejects ("Runtime disposal failed") and the worker stays. The
+   test in `e2e/layout.spec.ts` is `fixme`; it only applies under the takeover policy.
 3. **The packages do not name their guests.** The guests are in the hash-addressed store, but
    bun-wasm's `BUN_WASM_ASSET` is `null` and bash-web ships no `shell-engine.wasm`, so
    `guests.lock.json` pins them beside the packages and moves with them by hand. When the

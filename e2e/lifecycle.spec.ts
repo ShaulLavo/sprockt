@@ -31,8 +31,8 @@ test("a second tab asks before it takes a workspace over, and unsaved text moves
   page,
   context,
 }) => {
-  // With the attach policy a second tab shares the workspace instead (e2e/tabs.spec.ts).
   test.skip(TAB_POLICY === "attach", "a second tab takes over only with the takeover policy");
+  // With the attach policy a second tab shares the workspace instead (e2e/tabs.spec.ts).
   const id = await newWorkspace(page);
   await expect(page.getByTestId("terminal-state")).toHaveText("ready");
   await writeFile(page, "draft.txt", "saved text\n");
@@ -84,6 +84,7 @@ test("a save whose flush never finished is still handed to the tab that takes ov
   page,
   context,
 }) => {
+  test.skip(TAB_POLICY === "attach", "a second tab takes over only with the takeover policy");
   const id = await newWorkspace(page);
   await expect(page.getByTestId("terminal-state")).toHaveText("ready");
   await writeFile(page, "draft.txt", "first\n");
@@ -115,6 +116,7 @@ test("a tab that started opening before another one got the workspace does not t
   page,
   context,
 }) => {
+  test.skip(TAB_POLICY === "attach", "a second tab takes over only with the takeover policy");
   // The first tab finds the workspace free, then its filesystem worker is held up, as on a slow
   // connection. Meanwhile a second tab opens the same workspace and gets it.
   const held = Promise.withResolvers<void>();

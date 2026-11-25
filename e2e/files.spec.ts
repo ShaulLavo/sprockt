@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { inflateRawSync } from "node:zlib";
 import type { Locator, Page } from "@playwright/test";
 import { editorText, expect, newWorkspace, runInTerminal, test, typeInEditor, writeFile } from "./helpers";
+import { TAB_POLICY } from "../src/runtime/tab-policy";
 
 const readFile = (page: Page, path: string): Promise<string | undefined> =>
   page.evaluate((file) => globalThis.sprockt?.workspace?.files.read(file), path);
@@ -502,9 +503,8 @@ test("the arrow keys walk the tree, right opens a folder and Enter opens a file"
   await expect(row(page, "src")).toBeFocused();
 });
 
-// Needs `whenBusy: "attach"` (TAB_POLICY in src/runtime/boot.ts), like the two-tab test in
-// boot.spec.ts. Until then a second tab takes the workspace over instead of sharing it.
-test.fixme("a file created in a second tab appears in the first tab's tree", async ({ page, context }) => {
+test("a file created in a second tab appears in the first tab's tree", async ({ page, context }) => {
+  test.skip(TAB_POLICY !== "attach", "tabs share a workspace only with the attach policy");
   const id = await newWorkspace(page);
   const second = await context.newPage();
   await second.goto(`/w/${id}`);

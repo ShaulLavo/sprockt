@@ -12,6 +12,7 @@ import { Explorer } from "../explorer/Explorer";
 import { attachAfterImport } from "../importer/after-import";
 import { PreviewPane } from "../preview/PreviewPane";
 import { workspaceIsOpenElsewhere, type BootStage } from "../runtime/boot";
+import { TAB_POLICY } from "../runtime/tab-policy";
 import { ShareButton } from "../share/ShareButton";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 import { Icon } from "../ui/icons";
@@ -305,7 +306,9 @@ export function Workbench(props: { id: string }) {
     const timer = setTimeout(() => setQueued(true), WAIT_NOTICE_MS);
     onCleanup(() => clearTimeout(timer));
   });
-  const busy = () => !takeOver() && (elsewhere() === true || queued());
+  // Attached tabs share the workspace: storage that waits there (a host handing over) is not
+  // another tab holding it, and there is nothing to take over.
+  const busy = () => TAB_POLICY !== "attach" && !takeOver() && (elsewhere() === true || queued());
   const starts = () => takeOver() || elsewhere() === false;
 
   const layout = createLayoutStore(props.id);
