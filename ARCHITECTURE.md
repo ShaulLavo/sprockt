@@ -171,24 +171,25 @@ program it runs.
 | `@singapore-editor/core`, `/solid`, `/find`, `/gutters` | 0.2.13             | npm                                                                   |
 | `@singapore-editor/highlighting`                        | 0.2.16             | npm (Tree-sitter grammars load per language, on first use)            |
 
-Guests are the WASM programs the workers run. Neither bun-wasm nor bash-web publishes them:
-bun-wasm's `BUN_WASM_ASSET` is `null`, the `bun-artifacts.shaulavo.dev` store has no object for
-the current browser guest, and the bash-web package ships no `shell-engine.wasm`. Until they do:
+Guests are the WASM programs the workers run. They are published to the hash-addressed guest
+store, `bun-artifacts.shaulavo.dev/<sha256>/<file>.gz`, served gzip-encoded with immutable
+caching and `Access-Control-Allow-Origin: *`. The packages do not name them yet: bun-wasm's
+`BUN_WASM_ASSET` is `null` and the bash-web package ships no `shell-engine.wasm` (Known gaps, 3).
 
-- `guests.lock.json` pins `bun-browser.wasm` and `shell-engine.wasm` by URL, SHA-256 and size.
-  The URLs point at `bun.sprockt.dev`, which serves the guests built for the pinned bun-wasm
-  commit, but with `Cross-Origin-Resource-Policy: same-origin`, so a browser on `sprockt.dev`
-  cannot load them from there.
-- `bun run guests` downloads, verifies and stages them at `public/guests/<sha256>/<name>`
-  (written beside the target and renamed, so a killed run leaves no partial file). The build
-  script runs it first, so a build never packages a missing or unverified guest. Sprockt
-  serves them from its own origin on content-addressed, immutable URLs.
-- `bun.sprockt.dev` is mutable: when it deploys a different guest the download fails its hash
-  check. `SPROCKT_GUEST_CACHE` (CI: an Actions cache keyed on the lock) keeps verified copies.
-  Moving the pin means moving the lock and the bun-wasm commit together.
-- The real fix is upstream publication to the hash-addressed store; then the lock only changes
-  its URLs. JSC and QuickJS engine guests, `bun-tools.wasm` (lint, fmt) and Python or Git
-  programs are not pinned yet; add them to the lock when a slice needs them.
+- `guests.lock.json` pins `bun-browser.wasm` (bun-wasm `7b25271e3`) and `shell-engine.wasm`
+  (bash-web 0.0.114) by store URL, SHA-256 and size. The URL contains the hash, so it never
+  serves anything else.
+- `bun run guests` downloads, decodes the gzip encoding, checks the decoded size and SHA-256,
+  and stages them at `public/guests/<sha256>/<name>` (written beside the target and renamed,
+  so a killed run leaves no partial file). The build script runs it first, so a build never
+  packages a missing or unverified guest.
+- Sprockt still serves the guests from its own origin, on content-addressed, immutable URLs:
+  `Cross-Origin-Embedder-Policy: require-corp` and the same-origin `Cross-Origin-Resource-Policy`
+  on our pages are simplest with every asset on one origin, and Safari has no `credentialless`.
+- `SPROCKT_GUEST_CACHE` (CI: an Actions cache keyed on the lock) keeps verified copies. Moving
+  a pin means moving the lock entry and its package together.
+- JSC and QuickJS engine guests, `bun-tools.wasm` (lint, fmt) and Python or Git programs are not
+  pinned yet; add them to the lock when a slice needs them.
 
 ## Seams for the sibling lanes
 
@@ -329,7 +330,10 @@ where the bytes live.
    shell, coreutils, the editor and persistence pass there. iPhone needs bun-wasm's own memory
    policy and `BUN_WASM_IPHONE_NATIVE_MEMORY` (`web/src/host-memory-policy.ts`), which this
    foundation does not apply yet. The Bun test is `fixme` on WebKit.
-3. **No published guests** (see "Packages and guests").
+3. **The packages do not name their guests.** The guests are in the hash-addressed store, but
+   bun-wasm's `BUN_WASM_ASSET` is `null` and bash-web ships no `shell-engine.wasm`, so
+   `guests.lock.json` pins them beside the packages and moves with them by hand. When the
+   packages name their guest by hash, the lock can read it from them.
 4. **bun-wasm's host pieces are not package exports.** The program worker, `Previews`,
    `HostedPreviews`, the service worker, the memory policy and the dev-server coordinator live
    in bun-wasm's `web/src` and `sandbox/src`. Slice 5 builds on Waffle's public

@@ -1,12 +1,14 @@
 // Stages the pinned WASM guests into public/guests/<sha256>/<name>.
 //
-// bun-wasm and bash-web publish no guest files yet, so guests.lock.json pins the ones that
-// bun.sprockt.dev serves for the recorded bun-wasm commit. Every file is checked against its
-// pinned size and SHA-256 before it is staged. SPROCKT_GUEST_CACHE names a directory that keeps
-// verified copies between checkouts and CI runs.
+// guests.lock.json pins each guest by its SHA-256 in the hash-addressed guest store
+// (bun-artifacts.shaulavo.dev), where it is served gzip-encoded. The decoded module is checked
+// against its pinned size and SHA-256 before it is staged on our own origin, which COEP
+// require-corp needs. SPROCKT_GUEST_CACHE names a directory that keeps verified copies between
+// checkouts and CI runs.
 import { readdir, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { guestEntries, guestMismatch, type GuestEntry, type GuestName } from "../src/runtime/guests";
+import { guestBytes } from "./guest-bytes";
 
 const root = resolve(import.meta.dir, "..");
 const staged = join(root, "public/guests");
@@ -26,12 +28,12 @@ async function verified(path: string, entry: GuestEntry): Promise<Uint8Array | u
 async function download(name: GuestName, entry: GuestEntry): Promise<Uint8Array> {
   const response = await fetch(entry.source);
   if (!response.ok) throw new Error(`${name}: ${entry.source} answered HTTP ${response.status}`);
-  const bytes = await response.bytes();
+  const bytes = guestBytes(await response.bytes());
   const mismatch = guestMismatch(entry, bytes.byteLength, sha256(bytes));
   if (mismatch) {
     throw new Error(
-      `${name}: ${entry.source} no longer serves the pinned guest (${mismatch}). ` +
-        "Move guests.lock.json and the bun-wasm dependency to the same newer commit.",
+      `${name}: ${entry.source} is not the pinned guest (${mismatch}). ` +
+        "The store is addressed by hash, so check the URL and hash in guests.lock.json.",
     );
   }
   await publish(join(cache, `${entry.sha256}.wasm`), bytes);
