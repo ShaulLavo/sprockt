@@ -90,11 +90,19 @@
   height: auto;
 }
 
-/* A line that runs past the pane fades out at its edge; it is never sliced mid-letter. */
-@media (min-width: 769px) {
-  .editor-body > .editor-host {
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+/* Fold markers: small chevrons in the gutter, quiet until pointed at. */
+.editor-pane .editor-virtualized-fold-toggle {
+  color: var(--ed-subtle);
+}
+
+.editor-pane .editor-virtualized-fold-icon {
+  width: 12px;
+  height: 12px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .editor-pane .editor-virtualized-fold-toggle:hover {
+    color: var(--ed-fg);
   }
 }
 
@@ -398,8 +406,13 @@
     width: 28px;
     height: 28px;
   }
+  /* The tab already names the file; the path would say it twice on a narrow screen. */
   .editor-crumbs {
-    padding: 0 12px;
+    display: none;
+  }
+  /* The one pane on screen is the one in use, so its open tab is lit. */
+  .editor-tab.is-active .editor-tab-name::before {
+    background: var(--ed-accent);
   }
   .editor-conflict-action {
     height: 32px;

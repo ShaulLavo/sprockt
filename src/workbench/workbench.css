@@ -16,11 +16,12 @@
   grid-template-rows:
     var(--titlebar-h) minmax(0, 1fr) var(--card-gap) var(--terminal-row)
     var(--statusbar-h);
+  /* The terminal sits under the editor, so the preview keeps the pane's full height. */
   grid-template-areas:
     "title title title title title title title"
     "act files sx code sp preview ."
-    "act files sx st st st ."
-    "act files sx term term term ."
+    "act files sx st sp preview ."
+    "act files sx term sp preview ."
     "status status status status status status status";
 }
 
@@ -484,19 +485,20 @@
   height: var(--activity-icon);
 }
 
-/* An open pane's button is engaged: its icon sits on a raised key in the text color, with a lit
-   tooth on the bar's edge. A closed pane's icon is plain and quiet. */
+/* Three states. A closed pane's icon is plain and quiet. An open pane's icon sits on a slightly
+   raised key. The pane that has the keyboard, and only that one, gets the lit key and the lamp
+   marker, which stands wholly inside the bar. */
 .wb-act::before {
   content: "";
   position: absolute;
   top: 50%;
-  left: 0;
+  left: 2px;
   width: 3px;
-  height: 26px;
+  height: 20px;
+  border-radius: 1px;
   background: var(--accent);
-  clip-path: polygon(0 0, 100% 3px, 100% calc(100% - 3px), 0 100%);
   opacity: 0;
-  transform: translate(-3px, -50%);
+  transform: translate(-4px, -50%);
   transition:
     opacity var(--dur-fast) var(--ease-out),
     transform var(--dur-base) var(--ease-detent);
@@ -511,24 +513,40 @@
   width: 32px;
   height: 32px;
   border-radius: var(--radius-sm);
-  background: var(--bg-active);
+  background: var(--bg-hover);
   opacity: 0;
   transform: translate(-50%, -50%);
-  transition: opacity var(--dur-fast) var(--ease-out);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
 }
 
 .wb-act[aria-pressed="true"] {
   z-index: 0;
-  color: var(--fg);
-}
-
-.wb-act[aria-pressed="true"]::before {
-  opacity: 1;
-  transform: translate(0, -50%);
+  color: var(--fg-muted);
 }
 
 .wb-act[aria-pressed="true"]::after {
   opacity: 1;
+}
+
+.workbench:has(.wb-explorer:focus-within) .wb-act[data-pane="explorer"],
+.workbench:has(.wb-preview:focus-within) .wb-act[data-pane="preview"],
+.workbench:has(.wb-terminal:focus-within) .wb-act[data-pane="terminal"] {
+  color: var(--fg);
+}
+
+.workbench:has(.wb-explorer:focus-within) .wb-act[data-pane="explorer"]::before,
+.workbench:has(.wb-preview:focus-within) .wb-act[data-pane="preview"]::before,
+.workbench:has(.wb-terminal:focus-within) .wb-act[data-pane="terminal"]::before {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
+.workbench:has(.wb-explorer:focus-within) .wb-act[data-pane="explorer"]::after,
+.workbench:has(.wb-preview:focus-within) .wb-act[data-pane="preview"]::after,
+.workbench:has(.wb-terminal:focus-within) .wb-act[data-pane="terminal"]::after {
+  background: var(--bg-active);
 }
 
 .wb-act:focus-visible {
@@ -553,7 +571,7 @@
   border-top: 1px solid var(--status-line);
   background: var(--status-bg);
   color: var(--status-fg);
-  font: var(--text-2xs) / 1 var(--font-mono);
+  font: var(--text-xs) / 1 var(--font-mono);
   white-space: nowrap;
 }
 
@@ -939,8 +957,10 @@
     display: grid;
     grid-area: switch;
     grid-template-columns: repeat(4, 1fr);
-    padding: 0 max(var(--space-3), env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px)
-      max(var(--space-3), env(safe-area-inset-left, 0px));
+    /* Clear of the screen's edges and of the home indicator. */
+    padding: 0 max(var(--space-4), env(safe-area-inset-right, 0px))
+      max(var(--space-1), env(safe-area-inset-bottom, 0px))
+      max(var(--space-4), env(safe-area-inset-left, 0px));
     border-top: 1px solid var(--line-strong);
     background: var(--bg-tabstrip);
   }

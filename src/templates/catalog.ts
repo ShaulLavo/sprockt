@@ -159,9 +159,9 @@ h1 {
   padding: 0.7rem 1.4rem;
   font: inherit;
   font-weight: 600;
-  color: light-dark(#ffffff, #0d1512);
-  background: light-dark(#0a7556, #78e2be);
-  border: 0;
+  color: inherit;
+  background: light-dark(rgb(10 117 86 / 0.12), rgb(120 226 190 / 0.12));
+  border: 1px solid light-dark(#0a7556, #78e2be);
   border-radius: 6px;
   cursor: pointer;
 }

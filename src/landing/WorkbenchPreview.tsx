@@ -6,12 +6,19 @@
 import { createSignal, For, Show, untrack } from "solid-js";
 import { DEMO_READY, type Demo } from "./demo";
 import { Icon } from "./icons";
-import { APP_TSX_LINES } from "./starter-source";
+import { APP_TSX_LINES, type SourceLine } from "./starter-source";
 
 export type PhonePane = "files" | "code" | "preview" | "terminal";
 
 /** The editor's current line, counted from 1: the heading. The keyboard is in the terminal. */
 const CARET_LINE = 9;
+
+function lineLength(line: SourceLine): number {
+  return line.tokens.reduce((length, token) => length + token[1].length, line.indent);
+}
+
+/** The column after the current line's last character, as the status bar counts it. */
+const CARET_COLUMN = lineLength(APP_TSX_LINES[CARET_LINE - 1]!) + 1;
 
 interface TreeRow {
   readonly name: string;
@@ -119,14 +126,15 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
           </span>
         </div>
 
+        {/* All three panes are open; the lamp marks the one that has the keyboard. */}
         <div class="lp-wb-activity" aria-hidden="true">
-          <span class="lp-wb-act is-on">
+          <span class="lp-wb-act is-open">
             <Icon name="files" />
           </span>
-          <span class="lp-wb-act is-on">
+          <span class="lp-wb-act is-open">
             <Icon name="globe" />
           </span>
-          <span class="lp-wb-act is-on">
+          <span class="lp-wb-act is-open is-focus">
             <Icon name="terminal" />
           </span>
         </div>
@@ -294,7 +302,9 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
             </pre>
           </div>
           <div class="lp-wb-keys">
-            <For each={SOFT_KEYS}>{(key) => <span>{key}</span>}</For>
+            <div class="lp-wb-keys-row">
+              <For each={SOFT_KEYS}>{(key) => <span>{key}</span>}</For>
+            </div>
           </div>
         </div>
 
@@ -303,6 +313,10 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
             <Icon name="check" />
             saved
           </span>
+          <span class="lp-wb-status-end">
+            Ln {CARET_LINE}, Col {CARET_COLUMN}
+          </span>
+          <span>TypeScript JSX</span>
         </div>
 
         <div class="lp-wb-switcher" role="tablist" aria-label="Panes">

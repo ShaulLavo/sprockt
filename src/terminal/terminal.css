@@ -321,6 +321,11 @@
     height: 44px;
   }
 
+  /* The one pane on screen is the one in use, so its open tab is lit. */
+  .ttab.is-active .ttab-main::before {
+    background: var(--accent);
+  }
+
   .ttab {
     font-size: var(--text-sm);
   }
@@ -344,14 +349,19 @@
     font-size: 16px;
   }
 
+  /* The row shows whole keys only: eight across, and a swipe snaps to the rest. The gap equals
+     the side padding, so the ninth key starts exactly at the row's edge and none is ever cut. */
   .term-keys {
-    --fade-size: 44px;
+    --fade-size: 0px;
+    --key-gap: var(--space-2);
     display: flex;
     flex: none;
-    gap: var(--space-1);
-    padding: var(--space-1_5) var(--space-2);
+    gap: var(--key-gap);
+    padding: var(--space-1_5) var(--key-gap);
     overflow-x: auto;
     overscroll-behavior-x: contain;
+    scroll-padding-inline: var(--key-gap);
+    scroll-snap-type: x mandatory;
     border-top: 1px solid var(--line);
     background: var(--bg-panel);
     scrollbar-width: none;
@@ -362,10 +372,11 @@
   }
 
   .term-key {
-    flex: 1 0 auto;
-    min-width: 40px;
+    flex: 0 0 calc((100% - 7 * var(--key-gap)) / 8);
+    min-width: 0;
     height: 38px;
-    padding: 0 var(--space-2);
+    padding: 0;
+    scroll-snap-align: start;
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
     background: var(--bg-input);

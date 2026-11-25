@@ -1,6 +1,8 @@
 // The few stroke icons the editor and search use, drawn like the Circuit sprite: 24×24 paths whose
 // stroke and colour come from CSS (`.ico`).
 import type { JSX } from "solid-js";
+import { fileKindOf } from "../explorer/file-types";
+import { FILE_ICONS, Icon as FileGlyph } from "../explorer/icons";
 
 function Icon(props: { class?: string; children: JSX.Element }) {
   return (
@@ -36,12 +38,11 @@ export function fileTone(path: string): string {
   return `ft-${(dot > 0 && TONES[name.slice(dot + 1).toLowerCase()]) || "other"}`;
 }
 
-export const FileIcon = (props: { path: string }) => (
-  <Icon class={`ft ${fileTone(props.path)}`}>
-    <path d="M13.5 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5z" />
-    <path d="M13.5 3.5v5h5" />
-  </Icon>
-);
+/** A file's icon in a tab or a result row: the glyph the explorer gives that kind of file. */
+export const FileIcon = (props: { path: string }) => {
+  const kind = () => fileKindOf(props.path.slice(props.path.lastIndexOf("/") + 1));
+  return <FileGlyph name={FILE_ICONS[kind().icon]} class={`ft ${fileTone(props.path)}`} />;
+};
 
 export const CloseIcon = (props: { class?: string }) => (
   <Icon class={props.class}>

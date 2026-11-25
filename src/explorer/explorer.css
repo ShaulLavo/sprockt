@@ -45,7 +45,6 @@
   height: var(--tab-h, 36px);
   padding: 0 var(--space-1, 4px) 0 var(--space-3, 12px);
   gap: var(--space-1, 4px);
-  border-bottom: 0;
 }
 
 .explorer-head .pane-title {

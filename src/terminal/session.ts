@@ -118,6 +118,8 @@ export async function startTerminal(start: TerminalStart): Promise<TerminalHandl
   try {
     await view.open(start.host);
     start.signal.throwIfAborted();
+    // One pane has the keyboard at a time: a terminal without it shows a hollow cursor.
+    view.setCursorInactiveStyle("outline");
     const geometry = view.geometry();
     const session = await BrowserSession.create({
       runtime: start.runtime,

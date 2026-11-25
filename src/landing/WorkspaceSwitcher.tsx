@@ -117,7 +117,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
           when={props.workspaces.length > 0}
           fallback={
             <div class="lp-recent-empty" data-testid="workspace-empty">
-              <p>{props.loading ? "Checking local workspaces..." : LANDING_COPY.recentEmpty}</p>
+              <p>{props.loading ? LANDING_COPY.recentChecking : LANDING_COPY.recentEmpty}</p>
             </div>
           }
         >

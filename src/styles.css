@@ -32,13 +32,13 @@
   --scrim: light-dark(rgb(13 24 19 / 0.22), rgb(0 0 0 / 0.55));
 
   /* ── Lines ── */
-  --line: light-dark(#d6ddd5, #263830);
+  --line: light-dark(#d6ddd5, #2c4037);
   --line-strong: light-dark(#b6c2b8, #3b5247);
 
   /* ── Text ── (fg ≥ 15:1, muted ≥ 7:1 for body text, subtle ≥ 4.5:1 for labels) */
   --fg: light-dark(#0d1813, #e9f0ea);
-  --fg-muted: light-dark(#34423a, #b0bfb6);
-  --fg-subtle: light-dark(#56675e, #8a9c93);
+  --fg-muted: light-dark(#34423a, #b8c6bd);
+  --fg-subtle: light-dark(#56675e, #93a59c);
 
   /* A second ground, a clear step from --bg, for alternate page bands and raised cards; and the
      deep band a page may close on. */
@@ -117,7 +117,7 @@
 
   /* ── Status bar ── */
   --status-bg: var(--bg-tabstrip);
-  --status-fg: light-dark(#34423a, #b0bfb6);
+  --status-fg: light-dark(#1f2c25, #cdd8d0);
   --status-line: var(--line);
 
   /* ── Type ── One grotesque at two widths, one typewriter-pitch mono.
@@ -478,6 +478,8 @@ kbd {
   height: var(--tab-h);
   padding: 0 var(--space-2) 0 var(--space-3);
   border-bottom: 1px solid var(--line);
+  /* The same band as the tab strips of the editor and the terminal: one header for all panes. */
+  background: var(--bg-tabstrip);
   color: var(--fg-muted);
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);

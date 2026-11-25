@@ -3,6 +3,7 @@
 // and the theme move into a menu behind a `…` button.
 import { createSignal, For, onCleanup, Show, type Accessor, type JSX } from "solid-js";
 import { Icon } from "../ui/icons";
+import { readWorkspaceHint } from "../workspace/hint";
 import type { WorkspaceSession } from "../workspace/session";
 import { ui } from "./copy";
 import { COMMAND, STATUS_SLOT, type Command } from "./slots";
@@ -153,6 +154,8 @@ export function TitleBar(props: TitleBarProps) {
   const command = (id: string) => props.session()?.commands.get(id);
   const branch = () => props.session()?.status.get(STATUS_SLOT.branch);
   const actions = () => ACTIONS.flatMap((id) => command(id) ?? []);
+  // The name the workspace was given, shown once; its random id only when this browser has none.
+  const name = readWorkspaceHint(props.workspaceId)?.name ?? props.workspaceId;
 
   return (
     <header class="wb-titlebar">
@@ -173,7 +176,7 @@ export function TitleBar(props: TitleBarProps) {
           when={command(COMMAND.switchWorkspace)}
           fallback={
             <span class="wb-crumb-project" data-testid="workspace-name">
-              {props.workspaceId}
+              {name}
             </span>
           }
         >
@@ -186,7 +189,7 @@ export function TitleBar(props: TitleBarProps) {
               data-testid="workspace-name"
               onClick={() => switcher().run()}
             >
-              {props.workspaceId}
+              {name}
               <Icon name="chev-d" />
             </button>
           )}
