@@ -49,6 +49,11 @@ test("a server started in the terminal shows in the preview, and the toolbar dri
   await runInTerminal(page, "bun server.ts");
 
   await expect(page.getByTestId("preview-port")).toHaveValue("3000");
+  // The port prints the same way in the picker and in the title bar's pill. A server started in
+  // the terminal is stopped there, so the pill has no stop button for it.
+  await expect(page.getByTestId("preview-port").locator("option:checked")).toHaveText(":3000");
+  await expect(page.getByTestId("dev-server")).toHaveText(":3000");
+  await expect(page.getByTestId("dev-server").getByRole("button")).toHaveCount(1);
   await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
   await expect(urlBar(page)).toHaveValue("/");
   await expect(page.getByRole("button", { name: "Back" })).toBeDisabled();
@@ -99,6 +104,28 @@ test("reload, the error indicator and the viewport switch", async ({ page }) => 
   expect(await width()).toBe(768);
   await page.getByRole("button", { name: "Desktop viewport" }).click();
   expect(await width()).toBeGreaterThan(390);
+});
+
+test("on a phone the toolbar keeps open in new tab, and fades only where it overflows", async ({ page }) => {
+  await newWorkspace(page);
+  await writeFile(page, "server.ts", SERVER);
+  await runInTerminal(page, "bun server.ts");
+  await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("pane-switcher").getByRole("button", { name: "Preview" }).click();
+  const scroller = page.getByTestId("preview-bar-scroll");
+  await expect(page.getByTestId("preview-open")).toBeInViewport({ ratio: 1 });
+  // The toolbar fits, so neither edge fades.
+  await expect(scroller).toHaveAttribute("data-fade", "");
+
+  // Too narrow for the whole toolbar: it scrolls, the fade is on the side with more to see, and
+  // the button is still there.
+  await page.setViewportSize({ width: 280, height: 844 });
+  await expect(scroller).toHaveAttribute("data-fade", "end");
+  await expect(page.getByTestId("preview-open")).toBeInViewport({ ratio: 1 });
+  await scroller.evaluate((element) => element.scrollTo({ left: element.scrollWidth }));
+  await expect(scroller).toHaveAttribute("data-fade", "start");
 });
 
 test("a WebSocket in the previewed page reaches the server", async ({ page }) => {

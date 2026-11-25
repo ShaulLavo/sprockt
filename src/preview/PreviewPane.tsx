@@ -1,5 +1,8 @@
 import { createEffect, createSignal, For, on, onCleanup, Show, type JSX } from "solid-js";
 import { createDevServer } from "../tasks/dev-server";
+import { trackOverflowFade } from "../ui/fade";
+import { fill } from "../ui/format";
+import { STATUS_SLOT } from "../workbench/slots";
 import { useWorkspace } from "../workspace/session";
 import { frameCommand, isFrameMessage, type FrameMessage } from "./bridge";
 import { ui } from "./copy";
@@ -19,6 +22,7 @@ import {
 } from "./icons";
 import { normalizePreviewPath } from "./paths";
 import "./preview.css";
+import { portLabel, serverStatus } from "./server-status";
 import type { PreviewServer } from "./transport";
 
 type Viewport = "desktop" | "tablet" | "phone";
@@ -28,6 +32,11 @@ const VIEWPORTS: readonly { id: Viewport; label: string; icon: () => JSX.Element
   { id: "tablet", label: ui.tablet, icon: TabletIcon },
   { id: "phone", label: ui.phone, icon: PhoneIcon },
 ];
+
+/** A ref for a scroller that fades at an edge only while it overflows there. */
+function fadeScroller(element: HTMLElement): void {
+  onCleanup(trackOverflowFade(element));
+}
 
 /** How many error messages of a page are kept for the list. */
 const ERROR_LIMIT = 50;
@@ -79,6 +88,13 @@ export function PreviewPane() {
     return listening.some((server) => server.port === picked) ? picked : listening[0]?.port;
   };
   const path = () => currentPath(history()) ?? "/";
+
+  // The title bar's dev server pill prints the same port as the picker here.
+  createEffect(() => {
+    const state = { port: port(), task: devServer.status(), stop: () => void devServer.stop() };
+    workspace.status.set(STATUS_SLOT.devServer, serverStatus(state));
+  });
+  onCleanup(() => workspace.status.set(STATUS_SLOT.devServer, undefined));
 
   /** Points the frame at a path of the current server, whether or not the page has a bridge. */
   function load(target: string): void {
@@ -163,89 +179,91 @@ export function PreviewPane() {
   return (
     <section class="pane preview-pane" aria-label={ui.preview}>
       <form class="preview-bar" onSubmit={submitUrl} data-testid="preview-bar">
-        <span class="preview-nav">
-          <button
-            type="button"
-            aria-label={ui.back}
-            disabled={!canGoBack(history())}
-            onClick={() => step(-1)}
+        {/* Everything that may run out of room scrolls here; the two buttons after it stay put,
+            so a phone always has "open in new tab". */}
+        <div class="preview-bar-scroll" data-testid="preview-bar-scroll" data-fade="" ref={fadeScroller}>
+          <span class="preview-nav">
+            <button
+              type="button"
+              aria-label={ui.back}
+              disabled={!canGoBack(history())}
+              onClick={() => step(-1)}
+            >
+              <BackIcon />
+            </button>
+            <button
+              type="button"
+              aria-label={ui.forward}
+              disabled={!canGoForward(history())}
+              onClick={() => step(1)}
+            >
+              <ForwardIcon />
+            </button>
+            <button type="button" aria-label={ui.reload} disabled={port() === undefined} onClick={reload}>
+              <ReloadIcon />
+            </button>
+          </span>
+          <label class="preview-url">
+            <GlobeIcon />
+            <input
+              type="text"
+              aria-label={ui.url}
+              data-testid="preview-url"
+              spellcheck={false}
+              autocomplete="off"
+              disabled={port() === undefined}
+              value={draft() ?? (port() === undefined ? "" : path())}
+              onInput={(event) => setDraft(event.currentTarget.value)}
+            />
+          </label>
+          <select
+            class="preview-port"
+            aria-label={ui.switchPort}
+            data-testid="preview-port"
+            disabled={servers().length === 0}
+            value={port() ?? ""}
+            onChange={(event) => setSelected(Number(event.currentTarget.value))}
           >
-            <BackIcon />
-          </button>
-          <button
-            type="button"
-            aria-label={ui.forward}
-            disabled={!canGoForward(history())}
-            onClick={() => step(1)}
-          >
-            <ForwardIcon />
-          </button>
-          <button type="button" aria-label={ui.reload} disabled={port() === undefined} onClick={reload}>
-            <ReloadIcon />
-          </button>
-        </span>
-        <label class="preview-url">
-          <GlobeIcon />
-          <input
-            type="text"
-            aria-label={ui.url}
-            data-testid="preview-url"
-            spellcheck={false}
-            autocomplete="off"
-            disabled={port() === undefined}
-            value={draft() ?? (port() === undefined ? "" : path())}
-            onInput={(event) => setDraft(event.currentTarget.value)}
-          />
-        </label>
-        <select
-          class="preview-port"
-          aria-label={ui.switchPort}
-          data-testid="preview-port"
-          disabled={servers().length === 0}
-          value={port() ?? ""}
-          onChange={(event) => setSelected(Number(event.currentTarget.value))}
-        >
-          <For each={servers()} fallback={<option value="">{ui.noPorts}</option>}>
-            {(server) => <option value={server.port}>{server.port}</option>}
-          </For>
-        </select>
-        <span class="preview-viewports" role="group" aria-label={ui.viewport}>
-          <For each={VIEWPORTS}>
-            {(option) => (
-              <button
-                type="button"
-                aria-label={option.label}
-                aria-pressed={viewport() === option.id}
-                classList={{ "is-on": viewport() === option.id }}
-                onClick={() => setViewport(option.id)}
-              >
-                {option.icon()}
-              </button>
-            )}
-          </For>
-        </span>
-        <Show when={errors().length > 0}>
-          <button
-            type="button"
-            class="preview-errors-toggle"
-            data-testid="preview-errors"
-            aria-expanded={showErrors()}
-            aria-label={ui.errors.replace("{count}", String(errors().length))}
-            onClick={() => setShowErrors((shown) => !shown)}
-          >
-            <AlertIcon />
-            <span>{errors().length}</span>
-          </button>
-        </Show>
+            <For each={servers()} fallback={<option value="">{ui.noPorts}</option>}>
+              {(server) => <option value={server.port}>{portLabel(server.port)}</option>}
+            </For>
+          </select>
+          <span class="preview-viewports" role="group" aria-label={ui.viewport}>
+            <For each={VIEWPORTS}>
+              {(option) => (
+                <button
+                  type="button"
+                  aria-label={option.label}
+                  aria-pressed={viewport() === option.id}
+                  classList={{ "is-on": viewport() === option.id }}
+                  onClick={() => setViewport(option.id)}
+                >
+                  {option.icon()}
+                </button>
+              )}
+            </For>
+          </span>
+          <Show when={errors().length > 0}>
+            <button
+              type="button"
+              class="preview-errors-toggle"
+              data-testid="preview-errors"
+              aria-expanded={showErrors()}
+              aria-label={fill(ui.errors, { count: errors().length })}
+              onClick={() => setShowErrors((shown) => !shown)}
+            >
+              <AlertIcon />
+              <span>{errors().length}</span>
+            </button>
+          </Show>
+        </div>
         <button
           type="button"
           class="preview-task"
-          data-testid="dev-server"
+          data-testid="preview-task"
           data-status={devServer.status()}
           aria-label={
-            devServer.status() === "stopped"
-              ? ui.startServer
-              : ui.stopServer.replace("{port}", String(port() ?? "…"))
+            devServer.status() === "stopped" ? ui.startServer : fill(ui.stopServer, { port: port() ?? "…" })
           }
           onClick={() => void toggleDevServer()}
         >

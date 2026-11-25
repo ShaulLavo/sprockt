@@ -37,9 +37,11 @@ test("Vite hot reload: an edit shows in the preview and the page keeps its state
   await writeFiles(page, files);
 
   // The pane's button finds the dev script, installs what is missing and starts the server.
-  await page.getByTestId("dev-server").click();
+  await page.getByTestId("preview-task").click();
   await expect(page.getByTestId("preview-port")).toHaveValue("5173", patient);
-  await expect(page.getByTestId("dev-server")).toHaveAttribute("data-status", "running");
+  await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "running");
+  // The title bar's pill prints the port the way the picker does.
+  await expect(page.getByTestId("dev-server")).toHaveText(":5173");
 
   const app = frame(page);
   await expect(app.getByRole("heading")).toHaveText("Hello from bun.wasm", patient);
@@ -55,7 +57,9 @@ test("Vite hot reload: an edit shows in the preview and the page keeps its state
   // The counter kept its value: the module was swapped in place, the page was not reloaded.
   await expect(counter).toHaveText("count is 2");
 
-  await page.getByTestId("dev-server").click();
-  await expect(page.getByTestId("dev-server")).toHaveAttribute("data-status", "stopped");
+  // The pill's stop button stops the server the pane started, and the pill goes away.
+  await page.getByTestId("dev-server").getByRole("button", { name: "Stop dev server" }).click();
+  await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "stopped");
   await expect(page.getByTestId("preview-port")).toBeDisabled();
+  await expect(page.getByTestId("dev-server")).toHaveCount(0);
 });

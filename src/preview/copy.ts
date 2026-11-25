@@ -7,6 +7,11 @@ export const ui = {
   url: "Preview URL",
   switchPort: "Switch preview port",
   noPorts: "No open ports",
+  /** A port, as the picker and the title bar's dev server pill both print it. */
+  port: ":{port}",
+  serverRunning: "Dev server running on port {port}",
+  serverStarting: "Starting",
+  stopAction: "Stop dev server",
   viewport: "Viewport",
   desktop: "Desktop viewport",
   tablet: "Tablet viewport",

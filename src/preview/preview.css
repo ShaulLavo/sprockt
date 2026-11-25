@@ -28,6 +28,26 @@
   border-bottom: 1px solid var(--p-line);
 }
 
+/* The part of the toolbar that scrolls when the pane is too narrow for it (src/ui/fade.ts fades
+   an edge only while there is more past it). */
+.preview-bar-scroll {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1, 4px);
+  /* Room for a focus ring at either end, which the scroller would otherwise clip. */
+  margin: 0 -3px;
+  padding: 0 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.preview-bar-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 .preview-icon {
   width: 15px;
   height: 15px;
@@ -65,7 +85,8 @@
 
 .preview-url {
   flex: 1;
-  min-width: 0;
+  /* Room for a short path; below this the toolbar scrolls instead of crushing the field. */
+  min-width: 88px;
   display: flex;
   align-items: center;
   gap: var(--space-1_5, 6px);
