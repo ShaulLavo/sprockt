@@ -22,6 +22,9 @@
   "dependencies": {
     "@shaulavo/hotkeys": "0.0.4",
     "@singapore-editor/core": "0.2.13",
+    "@singapore-editor/find": "0.2.13",
+    "@singapore-editor/gutters": "0.2.13",
+    "@singapore-editor/highlighting": "0.2.16",
     "@singapore-editor/solid": "0.2.13",
     "@waffle-os/relay": "0.0.148",
     "bash-web": "0.0.114",

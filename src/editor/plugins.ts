@@ -1,11 +1,24 @@
-// The mount hook for editor plugins that need the workspace: language servers first of all.
-// Document ids are absolute workspace paths, so a language server sees
-// `file:///workspace/src/main.ts`.
+// The mount hook for editor plugins that need the workspace, language servers first of all.
 //
-// The editor never waits for a provider. Each one starts on its own; the editor opens at once
-// and a provider's plugins are added to the running editor when that provider delivers. One
-// that throws or never answers only loses its own plugins.
-import type { EditorPlugin } from "@singapore-editor/core/extensions";
+// A language-server lane plugs in with one file and one call:
+//
+//   // src/lsp/typescript.ts
+//   registerEditorPlugins(async ({ runtime, rootUri, signal }) => {
+//     const server = await startTypeScriptServer(runtime, { signal });
+//     return { plugins: [createLanguageServerPlugin({ transport: server.transport, rootUri })], dispose: server.stop };
+//   });
+//
+// Rules a provider can rely on:
+// - It is called once per editor with the workspace runtime and project root. Document ids are
+//   absolute workspace paths, so a language server sees `file:///workspace/src/main.ts`.
+// - The editor never waits for it. The editor opens with its built-in plugins (syntax, find) and
+//   each provider's plugins are added to the live editor when that provider delivers, so a slow,
+//   stalled or failing provider only delays or loses its own plugins.
+// - `signal` aborts when the editor closes. `dispose` (when returned) runs then too, and also for
+//   a set that arrives after the editor already closed; such a set is never mounted.
+// - Registering after an editor exists mounts the plugins on it; calling the returned function
+//   removes them from every editor again.
+import type { EditorDisposable, EditorPlugin } from "@singapore-editor/core/extensions";
 import type { Runtime } from "waffle";
 
 export interface EditorHostContext {
@@ -14,11 +27,11 @@ export interface EditorHostContext {
   readonly projectRoot: string;
   /** `file://` URI of the project root, for a language server's `rootUri`. */
   readonly rootUri: string;
-  /** Aborted when the workspace closes: stop starting things, and stop what was started. */
+  /** Aborted when the editor closes: stop starting things, and stop what was started. */
   readonly signal: AbortSignal;
 }
 
-/** Plugins together with what has to be shut down when the workspace closes. */
+/** Plugins together with what has to be shut down when the editor closes. */
 export interface EditorPluginSet {
   readonly plugins: readonly EditorPlugin[];
   dispose?(): void;
@@ -27,72 +40,84 @@ export interface EditorPluginSet {
 type Provided = readonly EditorPlugin[] | EditorPluginSet;
 export type EditorPluginProvider = (context: EditorHostContext) => Provided | Promise<Provided>;
 
-/** One workspace's editor, waiting for plugins. */
-interface Mount {
-  start(provider: EditorPluginProvider): void;
+/** What a provider's plugins are mounted on: Singapore's `Editor` has this shape. */
+export interface EditorPluginHost {
+  addPlugin(plugin: EditorPlugin): EditorDisposable;
 }
 
-const providers = new Set<EditorPluginProvider>();
-const mounts = new Set<Mount>();
+type RegistryListener = (provider: EditorPluginProvider, registered: boolean) => void;
 
-/**
- * Adds a provider for every workspace: the ones opened from now on, and the one that is open.
- * Returns the function that removes it for workspaces opened later.
- */
+const providers = new Set<EditorPluginProvider>();
+const listeners = new Set<RegistryListener>();
+
+/** Adds a provider for every editor, open now or later. Returns the function that removes it. */
 export function registerEditorPlugins(provider: EditorPluginProvider): () => void {
-  providers.add(provider);
-  for (const mount of mounts) mount.start(provider);
-  return () => providers.delete(provider);
+  if (!providers.has(provider)) {
+    providers.add(provider);
+    for (const listener of listeners) listener(provider, true);
+  }
+  return () => unregister(provider);
+}
+
+function unregister(provider: EditorPluginProvider): void {
+  if (!providers.delete(provider)) return;
+  for (const listener of listeners) listener(provider, false);
 }
 
 const asSet = (provided: Provided): EditorPluginSet =>
   "plugins" in provided ? provided : { plugins: provided };
 
-const failed = (what: string) => (error: unknown) => console.error(what, error);
-
-/** A set that fails to shut down must not keep the others from shutting down. */
-function disposeQuietly(set: EditorPluginSet): void {
-  try {
-    set.dispose?.();
-  } catch (error) {
-    failed("Disposing editor plugins failed")(error);
-  }
+/** One provider's run on one editor: its own abort signal and, once delivered, its plugins. */
+interface Mounted {
+  readonly lifetime: AbortController;
+  disposables: EditorDisposable[];
+  set?: EditorPluginSet;
 }
 
 /**
- * Starts every registered provider for one workspace. `onPlugins` is called with the plugins
- * of each provider when it delivers; they are meant to be added to the editor that is already
- * running. The returned function ends the workspace's plugins: it aborts `signal` and disposes
- * every set, including one that arrives afterwards.
+ * Mounts every registered provider's plugins on `host`, follows later registrations, and returns
+ * the function that removes them all. Each provider is isolated: a throw, a rejection or a promise
+ * that never settles affects nothing but that provider.
  */
 export function mountEditorPlugins(
   host: Omit<EditorHostContext, "signal">,
-  onPlugins: (plugins: readonly EditorPlugin[]) => void,
+  editor: EditorPluginHost,
 ): () => void {
-  const lifetime = new AbortController();
-  const context: EditorHostContext = { ...host, signal: lifetime.signal };
-  const delivered: EditorPluginSet[] = [];
+  const mounted = new Map<EditorPluginProvider, Mounted>();
 
-  function accept(provided: Provided): void {
-    const set = asSet(provided);
-    if (lifetime.signal.aborted) return disposeQuietly(set);
-    delivered.push(set);
-    onPlugins(set.plugins);
+  async function start(provider: EditorPluginProvider): Promise<void> {
+    const entry: Mounted = { lifetime: new AbortController(), disposables: [] };
+    mounted.set(provider, entry);
+    try {
+      // Awaiting first turns a provider that throws synchronously into this provider's rejection.
+      await Promise.resolve();
+      const set = asSet(await provider({ ...host, signal: entry.lifetime.signal }));
+      // The provider may have been removed, or the editor closed, while it was starting.
+      if (entry.lifetime.signal.aborted) return set.dispose?.();
+      entry.set = set;
+      entry.disposables = set.plugins.map((plugin) => editor.addPlugin(plugin));
+    } catch (error) {
+      console.error("An editor plugin provider failed", error);
+    }
   }
 
-  const mount: Mount = {
-    start(provider) {
-      // The async wrapper turns a synchronous throw into this provider's own rejection.
-      const started = (async () => provider(context))();
-      started.then(accept).catch(failed("Editor plugin provider failed"));
-    },
-  };
-  mounts.add(mount);
-  for (const provider of providers) mount.start(provider);
+  function stop(provider: EditorPluginProvider): void {
+    const entry = mounted.get(provider);
+    if (!entry) return;
+    mounted.delete(provider);
+    entry.lifetime.abort();
+    for (const disposable of entry.disposables) disposable.dispose();
+    entry.set?.dispose?.();
+  }
 
+  const listener: RegistryListener = (provider, registered) => {
+    if (registered) void start(provider);
+    else stop(provider);
+  };
+  listeners.add(listener);
+  for (const provider of providers) void start(provider);
   return () => {
-    mounts.delete(mount);
-    lifetime.abort();
-    for (const set of delivered.splice(0)) disposeQuietly(set);
+    listeners.delete(listener);
+    for (const provider of Array.from(mounted.keys())) stop(provider);
   };
 }

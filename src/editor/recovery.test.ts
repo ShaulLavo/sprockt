@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Draft } from "./documents";
+import type { Draft } from "./recovery";
 import { discardRecovered, leaveForRecovery, recovered } from "./recovery";
 
 function memoryStorage() {

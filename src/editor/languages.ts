@@ -14,7 +14,12 @@ const BY_EXTENSION: Readonly<Record<string, string>> = {
   md: "markdown",
   svelte: "svelte",
   astro: "astro",
-  vue: "vue",
+  // No Vue grammar in Singapore yet: its HTML grammar colours the template and, through
+  // injections, the <script> and <style> blocks.
+  vue: "html",
+  htm: "html",
+  markdown: "markdown",
+  mdx: "mdx",
   sh: "shellscript",
   toml: "toml",
   yaml: "yaml",

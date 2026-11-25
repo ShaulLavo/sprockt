@@ -2,7 +2,6 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { debugHandle } from "../app/debug";
 import { navigate } from "../app/router";
 import { EditorPane } from "../editor/EditorPane";
-import { recovered } from "../editor/recovery";
 import { createEditorStore } from "../editor/store";
 import { Explorer } from "../explorer/Explorer";
 import { PreviewPane } from "../preview/PreviewPane";
@@ -26,7 +25,7 @@ const STAGE_TEXT: Readonly<Record<BootStage, string>> = {
 const WAIT_NOTICE_MS = 500;
 
 function Panes(props: { session: WorkspaceSession }) {
-  const editor = createEditorStore((path) => recovered(localStorage, props.session.id, path));
+  const editor = createEditorStore(props.session);
   return (
     <WorkspaceContext.Provider value={props.session}>
       <div class="workbench-panes">
