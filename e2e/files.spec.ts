@@ -6,6 +6,37 @@ import { editorText, expect, newWorkspace, runInTerminal, test, typeInEditor, wr
 const readFile = (page: Page, path: string): Promise<string | undefined> =>
   page.evaluate((file) => globalThis.sprockt?.workspace?.files.read(file), path);
 
+/**
+ * Picks a folder with the folder input. Playwright's WebKit never returns from `setInputFiles` for
+ * a directory (the call has no end in the trace, though the page does receive the folder), so there
+ * the same files, each with its `webkitRelativePath`, go into the input from the page and the
+ * input's own change handler runs as it does for a real pick.
+ */
+async function pickFolder(
+  page: Page,
+  browserName: string,
+  directory: string,
+  files: Record<string, string>,
+): Promise<void> {
+  const input = page.getByTestId("upload-folder-input");
+  if (browserName !== "webkit") {
+    await input.setInputFiles(directory);
+    return;
+  }
+  await input.evaluate((element: HTMLInputElement, entries) => {
+    const transfer = new DataTransfer();
+    for (const [path, text] of Object.entries(entries)) {
+      transfer.items.add(new File([text], path.slice(path.lastIndexOf("/") + 1)));
+    }
+    element.files = transfer.files;
+    Array.from(element.files).forEach((file, index) => {
+      const path = Object.keys(entries)[index] ?? "";
+      Object.defineProperty(file, "webkitRelativePath", { value: path });
+    });
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }, files);
+}
+
 const row = (page: Page, path: string): Locator =>
   page.locator(`[data-testid="tree-row"][data-path="${path}"]`);
 
@@ -142,6 +173,7 @@ test("a name that is taken or not allowed is refused and the box stays open", as
 
 test("files and folders from the desktop can be uploaded by picker and by drop, and survive a reload", async ({
   page,
+  browserName,
 }, testInfo) => {
   await newWorkspace(page);
 
@@ -155,9 +187,10 @@ test("files and folders from the desktop can be uploaded by picker and by drop, 
   // A whole folder keeps its structure.
   const project = testInfo.outputPath("site");
   mkdirSync(`${project}/css`, { recursive: true });
-  writeFileSync(`${project}/index.html`, "<h1>site</h1>\n");
-  writeFileSync(`${project}/css/site.css`, "h1 { color: red }\n");
-  await page.getByTestId("upload-folder-input").setInputFiles(project);
+  const folder = { "site/index.html": "<h1>site</h1>\n", "site/css/site.css": "h1 { color: red }\n" };
+  writeFileSync(`${project}/index.html`, folder["site/index.html"]);
+  writeFileSync(`${project}/css/site.css`, folder["site/css/site.css"]);
+  await pickFolder(page, browserName, project, folder);
   await expect(row(page, "site")).toBeVisible();
   await expandRow(page, "site");
   await expandRow(page, "site/css");
