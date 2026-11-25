@@ -170,7 +170,7 @@ program it runs.
 | `ghostty-webgpu`                                        | 0.3.34             | npm                                                                   |
 | `@singapore-editor/core`, `/solid`, `/find`, `/gutters` | 0.2.13             | npm                                                                   |
 | `@singapore-editor/highlighting`                        | 0.2.16             | npm (Tree-sitter grammars load per language, on first use)            |
-| `@singapore-editor/lsp`, `/lsp-plugin`                  | 0.2.12, 0.2.15     | npm                                                                   |
+| `@singapore-editor/lsp`, `/lsp-plugin`                  | 0.2.13, 0.2.16     | npm                                                                   |
 
 Guests are the WASM programs the workers run. They are published to the hash-addressed guest
 store, `bun-artifacts.shaulavo.dev/<sha256>/<file>.gz`, served gzip-encoded with immutable

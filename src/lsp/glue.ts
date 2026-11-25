@@ -112,6 +112,8 @@ export function createGuestLanguageServerPlugin(
   return createLanguageServerAdapterPlugin({
     name,
     rootUri: pathToFileUri(server.rootPath),
+    // Synchronous: the process starts and its transport returns in this call, so there is no
+    // pending step for the factory's abort signal to cancel; closing the transport stops it.
     createTransport: () => connectLanguageServer(runtime, server, host.onStart),
     reconnect: { delaysMs: [250, 1000, 4000] },
     connectionProvider: pool.provider(`${name}:${server.rootPath}`),
