@@ -417,9 +417,10 @@ where the bytes live.
      and lets any other error fail the save state; Waffle should report a failure once.
 6. **Only Bun's listeners are previewed, and only in the tab that runs them.** Ports are
    reported by bun-wasm's adapter, so a server started by another kind of program would not
-   appear. A dev server belongs to the tab that started it; while tabs do not share a
-   workspace (gap 1) there is no second tab to share it with, and the cross-tab owner
-   (slice 7) is not built.
+   appear. A dev server belongs to the tab that started it. The cross-tab owner
+   (`workspace/coordinator.ts`) exists, but the dev-server task does not stand in its line yet
+   and a following tab's pane does not list the owner's ports; while tabs do not share a
+   workspace (gap 1) there is no second tab to show them to.
 
 6. **A save is unsaved until storage holds it.** Waffle acknowledges a write from memory. If its
    flush fails, or the files come back from storage (a hosting tab closed) without it, the
