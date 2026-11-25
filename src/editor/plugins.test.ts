@@ -8,7 +8,12 @@ import {
   type EditorPluginProvider,
 } from "./plugins";
 
-const host = { runtime: {} as Runtime, projectRoot: "/workspace", rootUri: "file:///workspace" };
+const host = {
+  runtime: {} as Runtime,
+  projectRoot: "/workspace",
+  rootUri: "file:///workspace",
+  openFile: () => false,
+};
 const plugin = (name: string): EditorPlugin => ({ name, activate: () => undefined });
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
