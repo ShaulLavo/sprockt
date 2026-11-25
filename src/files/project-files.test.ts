@@ -64,6 +64,10 @@ function memoryFilesystem(setup: Setup = {}) {
       flushes.push(next);
       return next.promise;
     },
+    async lookup(path) {
+      if (files.has(path)) return { kind: "file" };
+      return directories.has(path) ? { kind: "dir", children: new Map() } : undefined;
+    },
     async resolvePath(path): Promise<ResolvedEntry | undefined> {
       const canonical = real(path, false);
       const target = links[canonical];

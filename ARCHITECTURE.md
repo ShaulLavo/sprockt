@@ -355,7 +355,17 @@ where the bytes live.
    followed by an operation, with a gap between them: `writeIfUnchanged` (read, compare,
    write) and the project boundary (resolve, then read or write). Both need Waffle to do it
    in one step: a write that fails unless the file still holds the expected bytes, and
-   operations that refuse to leave a given root. The fix belongs in Waffle.
+   operations that refuse to leave a given root. The fix belongs in Waffle. The explorer's
+   operations have the same gap, with the same root cause:
+   - Rename and drag-move look at the destination just before `move`, but Waffle's rename
+     replaces what is there, so a name taken in the instants between the two is overwritten. It
+     needs a rename that refuses to replace. (`create` is exclusive and has no such gap.)
+   - Upload, listing and move resolve the path again inside the operation after the boundary
+     check, so a link changed in between can lead somewhere else. It needs operations bound to a
+     root.
+   - Waffle returns a failed change to its caller and keeps the same error to throw at the next
+     flush. FileService retries a flush that throws an error its own operation already reported,
+     and lets any other error fail the save state; Waffle should report a failure once.
 
 ## Parallel work map
 
