@@ -106,6 +106,34 @@ test("reload, the error indicator and the viewport switch", async ({ page }) => 
   expect(await width()).toBeGreaterThan(390);
 });
 
+test("the pane's button starts a server entry file, and the pill stops it", async ({ page }) => {
+  await newWorkspace(page);
+  // The task runs an entry file with `bun --hot`, which in bun-wasm takes only an ES module
+  // without WebSocket handlers.
+  const html =
+    "<!doctype html><html><head><title>Home</title></head><body><h1>Hello from Bun.serve</h1></body></html>";
+  const headers = '{ "content-type": "text/html; charset=utf-8" }';
+  const entry = `export {};\nBun.serve({ port: 3000, fetch: () => new Response(${JSON.stringify(html)}, { headers: ${headers} }) });\n`;
+  await writeFile(page, "server.ts", entry);
+  const task = page.getByTestId("preview-task");
+  await expect(task).toHaveAttribute("data-status", "stopped");
+  await task.click();
+  await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
+  await expect(task).toHaveAttribute("data-status", "running");
+  await expect(page.getByTestId("dev-server")).toHaveText(":3000");
+
+  await page.getByTestId("dev-server").getByRole("button", { name: "Stop dev server" }).click();
+  await expect(task).toHaveAttribute("data-status", "stopped");
+  await expect(page.getByTestId("preview-port")).toBeDisabled();
+  await expect(page.getByTestId("dev-server")).toHaveCount(0);
+
+  // It starts again, from the pane's button, and that button stops it too.
+  await task.click();
+  await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
+  await task.click();
+  await expect(task).toHaveAttribute("data-status", "stopped");
+});
+
 test("on a phone the toolbar keeps open in new tab, and fades only where it overflows", async ({ page }) => {
   await newWorkspace(page);
   await writeFile(page, "server.ts", SERVER);

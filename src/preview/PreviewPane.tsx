@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, on, onCleanup, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, Show, type JSX } from "solid-js";
 import { createDevServer } from "../tasks/dev-server";
 import { trackOverflowFade } from "../ui/fade";
 import { fill } from "../ui/format";
@@ -22,7 +22,7 @@ import {
 } from "./icons";
 import { normalizePreviewPath } from "./paths";
 import "./preview.css";
-import { portLabel, serverStatus } from "./server-status";
+import { listedPorts, portLabel, samePorts, serverStatus } from "./server-status";
 import type { PreviewServer } from "./transport";
 
 type Viewport = "desktop" | "tablet" | "phone";
@@ -81,18 +81,33 @@ export function PreviewPane() {
   onCleanup(preview.subscribe(setServers));
   onCleanup(() => void devServer.dispose());
 
-  /** The server being shown: the picked one while it listens, otherwise the first one. */
-  const port = () => {
+  /** Every port the pane can show: this tab's, and those of the tab that runs the dev server. */
+  const ports = createMemo(
+    () =>
+      listedPorts(
+        servers().map((server) => server.port),
+        devServer.remotePorts(),
+      ),
+    undefined,
+    { equals: samePorts },
+  );
+  /**
+   * The server being shown: the picked one while it listens, otherwise the first one. A memo, so
+   * that news about another port does not reload the page that is showing.
+   */
+  const port = createMemo(() => {
     const picked = selected();
-    const listening = servers();
-    return listening.some((server) => server.port === picked) ? picked : listening[0]?.port;
-  };
+    const listening = ports();
+    return picked !== undefined && listening.includes(picked) ? picked : listening[0];
+  });
   const path = () => currentPath(history()) ?? "/";
+  /** The dev server runs in another tab, which is the only one that can stop it. */
+  const elsewhere = () => devServer.status() !== "stopped" && !devServer.owned();
 
   // The title bar's dev server pill prints the same port as the picker here.
   createEffect(() => {
-    const state = { port: port(), task: devServer.status(), stop: () => void devServer.stop() };
-    workspace.status.set(STATUS_SLOT.devServer, serverStatus(state));
+    const task = { task: devServer.status(), owned: devServer.owned(), stop: devServer.stop };
+    workspace.status.set(STATUS_SLOT.devServer, serverStatus({ ...task, port: port() }));
   });
   onCleanup(() => workspace.status.set(STATUS_SLOT.devServer, undefined));
 
@@ -176,6 +191,11 @@ export function PreviewPane() {
     setNoScript(!(await devServer.start()));
   }
 
+  function taskLabel(): string {
+    if (devServer.status() === "stopped") return ui.startServer;
+    return elsewhere() ? ui.stopElsewhere : fill(ui.stopServer, { port: port() ?? "…" });
+  }
+
   return (
     <section class="pane preview-pane" aria-label={ui.preview}>
       <form class="preview-bar" onSubmit={submitUrl} data-testid="preview-bar">
@@ -220,12 +240,12 @@ export function PreviewPane() {
             class="preview-port"
             aria-label={ui.switchPort}
             data-testid="preview-port"
-            disabled={servers().length === 0}
+            disabled={ports().length === 0}
             value={port() ?? ""}
             onChange={(event) => setSelected(Number(event.currentTarget.value))}
           >
-            <For each={servers()} fallback={<option value="">{ui.noPorts}</option>}>
-              {(server) => <option value={server.port}>{portLabel(server.port)}</option>}
+            <For each={ports()} fallback={<option value="">{ui.noPorts}</option>}>
+              {(listed) => <option value={listed}>{portLabel(listed)}</option>}
             </For>
           </select>
           <span class="preview-viewports" role="group" aria-label={ui.viewport}>
@@ -262,9 +282,8 @@ export function PreviewPane() {
           class="preview-task"
           data-testid="preview-task"
           data-status={devServer.status()}
-          aria-label={
-            devServer.status() === "stopped" ? ui.startServer : fill(ui.stopServer, { port: port() ?? "…" })
-          }
+          aria-label={taskLabel()}
+          disabled={elsewhere()}
           onClick={() => void toggleDevServer()}
         >
           <Show when={devServer.status() === "stopped"} fallback={<StopIcon />}>

@@ -1,28 +1,41 @@
 // Runs a project's dev server as a task: detect the command, run it in its own shell on the
 // workspace's runtime, and report whether it is up. The task and the terminals are separate
 // shells, so stopping the task never touches what the person runs by hand.
+//
+// One tab of a workspace runs the server (tasks/dev-server-line.ts decides which); this file is
+// the process and the signals a pane reads.
 import { control, createShell, type Shell } from "bash-web";
 import { createSignal, type Accessor } from "solid-js";
 import type { Runtime } from "waffle";
 import type { FileService } from "../files/service";
 import type { PreviewTransport } from "../preview/transport";
 import type { ShellSettings } from "../runtime/boot";
+import { createDevServerCoordinator } from "../workspace/coordinator";
 import { PROJECT_ROOT } from "../workspace/paths";
+import { createDevServerLine, type DevServerStatus, type ServerProcess } from "./dev-server-line";
 import { devCommand, detectWorkspace } from "./detect";
 
-export type DevServerStatus = "stopped" | "starting" | "running";
+export type { DevServerStatus } from "./dev-server-line";
 
 export interface DevServer {
+  /** The workspace's dev server, in whichever tab it runs. */
   readonly status: Accessor<DevServerStatus>;
-  /** The end of the task's output, for showing why a start failed. */
+  /** Whether this tab runs it. Another tab's server is stopped in that tab. */
+  readonly owned: Accessor<boolean>;
+  /** Ports of a server another tab runs; the workspace's preview address reaches them. */
+  readonly remotePorts: Accessor<readonly number[]>;
+  /** The end of the task's output in this tab, for showing why a start failed. */
   readonly output: Accessor<string>;
-  /** Starts the dev server. Resolves false when the project has nothing to start. */
+  /** Asks for the dev server. Resolves false when the project has nothing to start. */
   start(): Promise<boolean>;
-  stop(): Promise<void>;
+  /** Stops the server this tab runs. */
+  stop(): void;
   dispose(): Promise<void>;
 }
 
 export interface DevServerHost {
+  /** The workspace id, which names the line the tabs of this workspace stand in. */
+  readonly id: string;
   readonly runtime: Runtime;
   readonly shell: ShellSettings;
   readonly files: FileService;
@@ -50,18 +63,15 @@ async function pump(
 }
 
 export function createDevServer(host: DevServerHost): DevServer {
-  const [status, setStatus] = createSignal<DevServerStatus>("stopped");
   const [output, setOutput] = createSignal("");
   const decoder = new TextDecoder();
-  let running: Shell | undefined;
-
-  // The task is "running" once its server listens, and back to "starting" if it stops listening.
-  const unsubscribe = host.preview.subscribe((servers) => {
-    if (running) setStatus(servers.length > 0 ? "running" : "starting");
-  });
 
   function append(bytes: Uint8Array): void {
     setOutput((text) => (text + decoder.decode(bytes, { stream: true })).slice(-OUTPUT_LIMIT));
+  }
+
+  function report(error: unknown): void {
+    append(new TextEncoder().encode(`\n${error instanceof Error ? error.message : String(error)}\n`));
   }
 
   async function command(): Promise<string | undefined> {
@@ -72,7 +82,8 @@ export function createDevServer(host: DevServerHost): DevServer {
     return devCommand(project, modules !== undefined);
   }
 
-  async function run(script: string): Promise<void> {
+  /** Runs `script` in a shell of its own and copies its output until it ends. */
+  async function spawn(script: string): Promise<ServerProcess> {
     const shell = await createShell({
       runtime: host.runtime,
       wasmUrl: host.shell.wasmUrl,
@@ -81,44 +92,53 @@ export function createDevServer(host: DevServerHost): DevServer {
       env: { ...host.shell.env },
       script,
     });
-    running = shell;
-    let exited = false;
-    void shell.done.finally(() => {
-      exited = true;
+    let ended = false;
+    const wake = () => {
+      ended = true;
       shell.terminal.signal();
-    });
-    await pump(shell, append, () => exited);
-    if (running === shell) running = undefined;
-    setStatus("stopped");
-    await shell.dispose();
+    };
+    shell.done.then(wake, wake);
+    const exited = pump(shell, append, () => ended)
+      .then(() => shell.dispose())
+      .catch(report);
+    return {
+      command: script,
+      exited,
+      stop() {
+        if (!ended) shell.interrupt();
+      },
+    };
   }
 
-  async function stop(): Promise<void> {
-    const shell = running;
-    if (!shell) return;
-    shell.interrupt();
-    await shell.done.catch(() => {});
-  }
+  const line = createDevServerLine({
+    coordinator: createDevServerCoordinator({ workspaceId: host.id, onError: report }),
+    ports: {
+      current: () => host.preview.servers().map((server) => server.port),
+      subscribe: (listener) => host.preview.subscribe(listener),
+    },
+    // Detected again here: a tab that takes the server over was never asked to start it.
+    async launch() {
+      const script = await command();
+      if (!script) return undefined;
+      setOutput("");
+      return spawn(script);
+    },
+  });
+  const [state, setState] = createSignal(line.state());
+  line.subscribe(setState);
 
   return {
-    status,
+    status: () => state().status,
+    owned: () => state().owned,
+    remotePorts: () => state().remotePorts,
     output,
-    stop,
+    stop: () => line.stop(),
     async start() {
-      if (status() !== "stopped") return true;
-      const script = await command();
-      if (!script) return false;
-      setOutput("");
-      setStatus("starting");
-      run(script).catch((error: unknown) => {
-        append(new TextEncoder().encode(`\n${error instanceof Error ? error.message : String(error)}\n`));
-        setStatus("stopped");
-      });
+      if (state().status !== "stopped") return true;
+      if (!(await command())) return false;
+      line.start();
       return true;
     },
-    async dispose() {
-      unsubscribe();
-      await stop();
-    },
+    dispose: () => line.dispose(),
   };
 }

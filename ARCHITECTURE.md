@@ -255,9 +255,16 @@ project detection (`importer/detect`, through `tasks/detect.ts`) what starts thi
 `dev`, `start` or `serve` script, or a server entry file. It runs `bun install` first when the
 project has a `package.json` and no `node_modules`, then the command, in its own shell on the
 workspace's runtime. It is `running` once a port listens. Terminals are separate shells, so
-stopping the task never touches what was started by hand. The task runs in the tab that
-started it; standing in line for it through `workspace/coordinator.ts`, so that one tab of
-several owns the server, is the next step once tabs share a workspace.
+stopping the task never touches what was started by hand.
+
+One tab of a workspace runs the task (`tasks/dev-server-line.ts`, on
+`workspace/coordinator.ts`). Asking for the server stands in the workspace's line; the tab that
+gets the lease starts the process and announces this tab's ports. The other tabs list those
+ports, show the same preview address (the service worker asks each tab of the workspace until
+one has the port), and stand behind the owner, so one of them starts the server when the
+owner's tab closes. Only the owner has a stop button. A server stopped on purpose, or one that
+ended by itself, is announced as `down` before its lease ends, and the tabs behind it leave the
+line instead of restarting it.
 
 **Language servers** (`editor/plugins.ts`). `registerEditorPlugins(provider)`: a provider gets
 `{ runtime, projectRoot, rootUri, signal, openFile }` and returns Singapore `EditorPlugin`s, or
@@ -415,12 +422,17 @@ where the bytes live.
    - Waffle returns a failed change to its caller and keeps the same error to throw at the next
      flush. FileService retries a flush that throws an error its own operation already reported,
      and lets any other error fail the save state; Waffle should report a failure once.
-6. **Only Bun's listeners are previewed, and only in the tab that runs them.** Ports are
-   reported by bun-wasm's adapter, so a server started by another kind of program would not
-   appear. A dev server belongs to the tab that started it. The cross-tab owner
-   (`workspace/coordinator.ts`) exists, but the dev-server task does not stand in its line yet
-   and a following tab's pane does not list the owner's ports; while tabs do not share a
-   workspace (gap 1) there is no second tab to show them to.
+6. **Only Bun's listeners are previewed, and other tabs see only the dev-server task's.** Ports
+   are reported by bun-wasm's adapter, so a server started by another kind of program would not
+   appear. Other tabs learn of ports through the dev-server task's lease: a server started by
+   hand in a terminal shows in its own tab only, unless that tab also runs the task. The
+   two-tab tests (`e2e/dev-server-tabs.spec.ts`) run only with the attach policy (gap 1); they
+   pass when it is switched on locally.
+7. **`bun --hot` in bun-wasm is narrower than Bun's.** The task starts a bare entry file with
+   `bun --hot <file>` (the importer's detection). bun-wasm refuses that for a file with no
+   `import` or `export` ("--hot requires an ESM graph") and for a server with routes or
+   WebSocket handlers ("--hot does not support routes, WebSockets, TLS or Unix listeners"), and
+   then waits for an edit, so the task stays on "starting" with the error under it.
 
 6. **A save is unsaved until storage holds it.** Waffle acknowledges a write from memory. If its
    flush fails, or the files come back from storage (a hosting tab closed) without it, the

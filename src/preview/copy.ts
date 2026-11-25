@@ -10,6 +10,8 @@ export const ui = {
   /** A port, as the picker and the title bar's dev server pill both print it. */
   port: ":{port}",
   serverRunning: "Dev server running on port {port}",
+  serverElsewhere: "Dev server running in another tab on port {port}",
+  stopElsewhere: "The dev server runs in another tab. Stop it there.",
   serverStarting: "Starting",
   stopAction: "Stop dev server",
   viewport: "Viewport",
