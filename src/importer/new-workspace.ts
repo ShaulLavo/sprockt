@@ -8,11 +8,30 @@
 // a cancel or failure in the same page: then this call deletes the workspace it created itself,
 // one whose id it reserved and found empty. If that delete is busy or fails, the marker stays.
 import { newWorkspaceId, PROJECT_ROOT, storageName } from "../workspace/paths";
-import type { WorkspaceSession } from "../workspace/session";
-import { INCOMPLETE, readMetaFile, WORKSPACE_META_PATH, writeMetaFile, type WorkspaceMeta } from "./metadata";
+import {
+  INCOMPLETE,
+  readMetaFile,
+  WORKSPACE_META_PATH,
+  writeMetaFile,
+  type MetaFilesystem,
+  type WorkspaceMeta,
+} from "./metadata";
 
-/** The part of a session this needs; `openWorkspace` from `workspace/session` provides it. */
-export type WorkspaceWriter = Pick<WorkspaceSession, "files" | "runtime" | "dispose">;
+export interface WorkspaceWriterFilesystem extends MetaFilesystem {
+  listFiles(path: string): Promise<string[]>;
+  remove(path: string): Promise<unknown>;
+}
+
+/** The part of a session this needs; `openWorkspace` from `workspace/session` or a lightweight backend provides it. */
+export interface WorkspaceWriter {
+  readonly files: {
+    writeMany(files: Readonly<Record<string, string | Uint8Array>>): Promise<void>;
+  };
+  readonly runtime: {
+    readonly filesystem: WorkspaceWriterFilesystem;
+  };
+  dispose(): Promise<void>;
+}
 
 export interface NewWorkspaceDeps {
   readonly open: (id: string) => Promise<WorkspaceWriter>;
