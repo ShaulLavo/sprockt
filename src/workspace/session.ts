@@ -4,28 +4,36 @@ import { createContext, useContext } from "solid-js";
 import { createFileService, type FileService } from "../files/service";
 import { createInactivePreviewTransport, type PreviewTransport } from "../preview/transport";
 import { bootWorkspace, type BootStage, type WorkspaceRuntime } from "../runtime/boot";
+import { tearDownAll } from "./lifecycle";
 
 export interface WorkspaceSession extends WorkspaceRuntime {
   readonly files: FileService;
   readonly preview: PreviewTransport;
 }
 
+const movedError = () => new Error("This workspace is open in another tab, so this tab can no longer save.");
+
 export async function openWorkspace(
   id: string,
   onStage?: (stage: BootStage) => void,
 ): Promise<WorkspaceSession> {
-  const booted = await bootWorkspace(id, onStage);
+  let moved = false;
+  let revoke = (): void => void (moved = true);
+  const booted = await bootWorkspace(id, (stage) => {
+    // Another tab took the workspace: this tab's storage is gone, so its writes stop here.
+    if (stage === "moved") revoke();
+    onStage?.(stage);
+  });
   const preview = createInactivePreviewTransport();
   const files = createFileService(booted.runtime);
+  revoke = () => files.revoke(movedError());
+  if (moved) revoke();
   return {
     ...booted,
     files,
     preview,
-    async dispose() {
-      files.dispose();
-      await preview.dispose();
-      await booted.dispose();
-    },
+    // Every step runs even if an earlier one fails: the runtime must not outlive its session.
+    dispose: () => tearDownAll([() => files.dispose(), () => preview.dispose(), () => booted.dispose()]),
   };
 }
 

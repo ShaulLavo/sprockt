@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "bun scripts/fetch-guests.ts && vite build",
     "preview": "vite preview",
     "guests": "bun scripts/fetch-guests.ts",
     "typecheck": "tsc -p tsconfig.json",

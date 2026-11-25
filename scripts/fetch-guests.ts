@@ -4,7 +4,7 @@
 // bun.sprockt.dev serves for the recorded bun-wasm commit. Every file is checked against its
 // pinned size and SHA-256 before it is staged. SPROCKT_GUEST_CACHE names a directory that keeps
 // verified copies between checkouts and CI runs.
-import { readdir, rm } from "node:fs/promises";
+import { readdir, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { guestEntries, guestMismatch, type GuestEntry, type GuestName } from "../src/runtime/guests";
 
@@ -34,15 +34,22 @@ async function download(name: GuestName, entry: GuestEntry): Promise<Uint8Array>
         "Move guests.lock.json and the bun-wasm dependency to the same newer commit.",
     );
   }
-  await Bun.write(join(cache, `${entry.sha256}.wasm`), bytes);
+  await publish(join(cache, `${entry.sha256}.wasm`), bytes);
   return bytes;
+}
+
+/** Writes beside the target, then renames: a killed run never leaves a half-written file. */
+async function publish(target: string, bytes: Uint8Array): Promise<void> {
+  const temporary = `${target}.${process.pid}.tmp`;
+  await Bun.write(temporary, bytes);
+  await rename(temporary, target);
 }
 
 async function stage(name: GuestName, entry: GuestEntry): Promise<string> {
   const target = join(staged, entry.sha256, name);
   if (await verified(target, entry)) return "already staged";
   const cached = await verified(join(cache, `${entry.sha256}.wasm`), entry);
-  await Bun.write(target, cached ?? (await download(name, entry)));
+  await publish(target, cached ?? (await download(name, entry)));
   return cached ? "from cache" : "downloaded";
 }
 

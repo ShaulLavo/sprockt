@@ -1,7 +1,16 @@
 // The seam between the preview pane and whatever carries a dev server's responses to a frame.
-// `mounted` serves a path on the IDE's own origin through a service worker. `isolated` gives
-// each server an origin of its own (`<id>-<port>-pv.sprockt.dev`), so a previewed app cannot
-// touch the IDE's storage. The pane only ever asks this interface for URLs.
+// The pane only ever asks this interface for URLs.
+//
+// A transport belongs to one workspace, and every route it builds is keyed by that workspace
+// and the port, never by the port alone: two workspaces with a server on the same port must
+// not receive each other's HTTP or WebSocket traffic.
+//
+// `mounted` serves `/__preview/<workspace>/<port>/` on the IDE's own origin through a service
+// worker. The previewed code then shares the IDE's origin and can reach its storage, so
+// `mounted` is a development stopgap for trusted local projects and is never in a public
+// build. `isolated` gives each server an origin of its own (`<id>-<port>-pv.sprockt.dev`);
+// that is what keeps a previewed project away from the IDE, and it is required before any
+// public deploy.
 
 export interface PreviewServer {
   /** The port the dev server listens on inside the workspace. */

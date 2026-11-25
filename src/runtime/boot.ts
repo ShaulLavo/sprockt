@@ -2,7 +2,7 @@
 // everyday command-line programs and the shell registered on it. Nothing here knows about UI.
 import { installShellCommands } from "bash-web";
 import { installBunAdapters, installBunSharedObjects } from "bun-wasm";
-import { createRuntime, type GuestLauncher, type Runtime } from "waffle";
+import { createRuntime, openIdleWorkspace, type GuestLauncher, type Runtime } from "waffle";
 import { installBase } from "waffle-base";
 import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import { runtimeAssets } from "./assets";
@@ -81,6 +81,17 @@ async function installPrograms(runtime: Runtime): Promise<string> {
     workerUrl: runtimeAssets.shellWorker,
   });
   return ["/bin"].concat(base.path).join(":");
+}
+
+/**
+ * Whether another tab has this workspace open right now. Opening it here would take it away
+ * from that tab, so the workbench asks before it does.
+ */
+export async function workspaceIsOpenElsewhere(id: string): Promise<boolean> {
+  const idle = await openIdleWorkspace({ mode: "fast", name: storageName(id) });
+  if (idle === "busy") return true;
+  if (idle !== "missing") await idle.close();
+  return false;
 }
 
 export async function bootWorkspace(

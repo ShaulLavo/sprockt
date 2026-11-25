@@ -1,84 +1,173 @@
 import type { EditorPlugin } from "@singapore-editor/core/extensions";
 import "@singapore-editor/core/style.css";
 import { createEditor, type SolidEditorDocument } from "@singapore-editor/solid";
-import { createEffect, createResource, createSignal, on, Show } from "solid-js";
+import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
 import { debugHandle } from "../app/debug";
 import { PROJECT_ROOT } from "../workspace/paths";
 import { useWorkspace } from "../workspace/session";
+import "./editor.css";
 import { languageOf } from "./languages";
-import { resolveEditorPlugins } from "./plugins";
+import { mountEditorPlugins } from "./plugins";
+import { leaveForRecovery } from "./recovery";
 import type { EditorStore } from "./store";
 
-function EditorView(props: { store: EditorStore; plugins: readonly EditorPlugin[] }) {
+/** The text on screen, handed from one editor view to the next when the plugin set changes. */
+interface Carried {
+  text: string | undefined;
+}
+
+const TEXT_CHANGES: ReadonlySet<string> = new Set(["edit", "undo", "redo", "checkout"]);
+
+const idOf = (path: string) => `${PROJECT_ROOT}/${path}`;
+const pathOf = (documentId: string | null) => documentId?.slice(PROJECT_ROOT.length + 1);
+
+const documentFor = (path: string, text: string): SolidEditorDocument => ({
+  documentId: idOf(path),
+  defaultText: text,
+  languageId: languageOf(path),
+});
+
+function EditorView(props: { store: EditorStore; plugins: readonly EditorPlugin[]; carried: Carried }) {
   const workspace = useWorkspace();
-  const [document, setDocument] = createSignal<SolidEditorDocument | null>(null);
-
-  async function load(path: string): Promise<void> {
-    const text = await workspace.files.read(path);
-    // The user may have opened another file while this one was being read.
-    if (props.store.active() !== path) return;
-    setDocument({
-      documentId: `${PROJECT_ROOT}/${path}`,
-      defaultText: text ?? "",
-      languageId: languageOf(path),
-    });
-    props.store.setDirty(false);
-  }
-
-  createEffect(
-    on(props.store.active, (path) => {
-      if (path) void load(path);
-      else setDocument(null);
-    }),
+  const { store } = props;
+  const { documents } = store;
+  const shown = documents.displayed;
+  const [document, setDocument] = createSignal<SolidEditorDocument | null>(
+    shown === undefined ? null : documentFor(shown, props.carried.text ?? ""),
   );
+  /** True while we put text on screen ourselves: that is not the person editing. */
+  let placing = false;
 
   const controller = createEditor({
     document,
     plugins: props.plugins,
-    onChange: (_state, change) => {
-      if (change) props.store.setDirty(true);
+    editability: () => (workspace.files.writable() ? "editable" : "readonly"),
+    onChange: (state, change) => {
+      // The editor also reports selection moves here; only a change of the text is an edit.
+      if (!change || placing || !TEXT_CHANGES.has(change.kind)) return;
+      // An edit is reported a moment after it happened, by which time another file may be on
+      // screen: it counts for the document it was made in.
+      documents.edited(pathOf(state.documentId));
+      store.changed();
     },
   });
+  const currentText = () => controller.materializeFullText();
 
-  debugHandle().editorText = () => (document() ? controller.materializeFullText() : "");
+  function place(put: () => void): void {
+    placing = true;
+    try {
+      put();
+    } finally {
+      placing = false;
+    }
+    store.changed();
+  }
 
+  async function load(path: string): Promise<void> {
+    const disk = await workspace.files.read(path);
+    const text = documents.show(path, disk, currentText);
+    // Undefined: another file was selected while this one was being read.
+    if (text !== undefined) place(() => setDocument(documentFor(path, text)));
+  }
+
+  createEffect(
+    on(store.active, (path) => {
+      if (path === undefined || path === documents.displayed) return;
+      load(path).catch((error: unknown) => console.error(`Opening ${path} failed`, error));
+    }),
+  );
+
+  // Saving always writes the document on screen, under the path it was read from, and only if
+  // the file still holds what the editor read: a change by the shell or another tab is shown
+  // as a conflict instead of being overwritten.
   async function save(): Promise<void> {
-    const path = props.store.active();
-    if (!path) return;
-    await workspace.files.write(path, controller.materializeFullText());
-    props.store.setDirty(false);
+    const request = documents.beginSave();
+    if (!request) return;
+    const text = currentText();
+    const outcome = await workspace.files.writeIfUnchanged(request.path, text, request.baseText);
+    if (outcome.written) documents.saved(request, text);
+    else documents.conflicted(request, outcome.current);
+    store.changed();
+  }
+
+  const saveNow = () => void save().catch((error: unknown) => console.error("Saving failed", error));
+
+  function keepMine(): void {
+    documents.keepMine();
+    store.changed();
+    saveNow();
+  }
+
+  function takeTheirs(): void {
+    const text = documents.takeTheirs();
+    if (text !== undefined) place(() => controller.commands.setText(text));
   }
 
   function onKeyDown(event: KeyboardEvent): void {
     if (event.key !== "s" || !(event.metaKey || event.ctrlKey)) return;
     event.preventDefault();
-    void save();
+    saveNow();
   }
 
-  return <div class="editor-host" data-testid="editor" ref={controller.ref} onKeyDown={onKeyDown} />;
+  // Once another tab owns the workspace this tab cannot save. Its unsaved text is left where
+  // that tab finds it.
+  createEffect(() => {
+    if (workspace.files.writable()) return;
+    leaveForRecovery(localStorage, workspace.id, documents.unsaved(currentText));
+  });
+
+  debugHandle().editorText = () => (document() ? currentText() : "");
+  // The shortcut works wherever the focus is: after picking a file it is still in the explorer.
+  addEventListener("keydown", onKeyDown);
+  onCleanup(() => {
+    removeEventListener("keydown", onKeyDown);
+    props.carried.text = documents.displayed === undefined ? undefined : currentText();
+  });
+
+  return (
+    <>
+      <Show when={store.conflict()}>
+        <div class="editor-conflict" role="alert" data-testid="editor-conflict">
+          <span>This file changed in another tab or process. Reload from disk or keep your edits.</span>
+          <button type="button" data-testid="conflict-reload" onClick={takeTheirs}>
+            Reload from disk
+          </button>
+          <button type="button" data-testid="conflict-keep" onClick={keepMine}>
+            Keep my edits
+          </button>
+        </div>
+      </Show>
+      <div class="editor-host" data-testid="editor" ref={controller.ref} />
+    </>
+  );
 }
 
 export function EditorPane(props: { store: EditorStore }) {
   const workspace = useWorkspace();
-  const [plugins] = createResource(() =>
-    resolveEditorPlugins({
-      runtime: workspace.runtime,
-      projectRoot: PROJECT_ROOT,
-      rootUri: `file://${PROJECT_ROOT}`,
-    }),
+  // The editor opens at once with no plugins and is rebuilt, keeping its text, when a provider
+  // (a language server, say) delivers. A provider that fails or stalls costs only its plugins.
+  const [plugins, setPlugins] = createSignal<readonly EditorPlugin[]>([]);
+  const carried: Carried = { text: undefined };
+  onCleanup(
+    mountEditorPlugins(
+      { runtime: workspace.runtime, projectRoot: PROJECT_ROOT, rootUri: `file://${PROJECT_ROOT}` },
+      setPlugins,
+    ),
   );
 
   return (
     <section class="pane editor-pane" aria-label="Editor">
       <header class="pane-header">
-        <span data-testid="editor-file">{props.store.active() ?? "No file open"}</span>
+        <span data-testid="editor-file">{props.store.displayed() ?? "No file open"}</span>
         <Show when={props.store.dirty()}>
-          <span class="pane-status" title="Unsaved changes">
+          <span class="pane-status" title="Unsaved changes" data-testid="editor-dirty">
             ●
           </span>
         </Show>
       </header>
-      <Show when={plugins()}>{(resolved) => <EditorView store={props.store} plugins={resolved()} />}</Show>
+      <Show when={plugins()} keyed>
+        {(resolved) => <EditorView store={props.store} plugins={resolved} carried={carried} />}
+      </Show>
     </section>
   );
 }

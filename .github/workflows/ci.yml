@@ -60,7 +60,7 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install --frozen-lockfile
-      - run: bun run guests
+      # The build stages and verifies the pinned guests first, from the cache when it has them.
       - run: bun run build
       - name: Install browsers
         if: steps.playwright.outputs.cache-hit != 'true'

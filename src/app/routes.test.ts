@@ -44,6 +44,22 @@ describe("parseRoute", () => {
   test("anything else is not found", () => {
     expect(parseRoute("/settings")).toEqual({ kind: "not-found" });
   });
+
+  test("malformed percent-encoding is not found instead of an exception", () => {
+    expect(parseRoute("/%")).toEqual({ kind: "not-found" });
+    expect(parseRoute("/w/%E0%A4%A")).toEqual({ kind: "not-found" });
+    expect(parseRoute("/github/a/b/tree/%zz")).toEqual({ kind: "not-found" });
+  });
+
+  test("a GitHub URL with an unencoded slash in the branch splits at the first segment", () => {
+    expect(parseRoute("/github/a/b/tree/feature/x/src")).toEqual({
+      kind: "github",
+      owner: "a",
+      repo: "b",
+      branch: "feature",
+      subdir: "x/src",
+    });
+  });
 });
 
 describe("routePath", () => {
@@ -53,7 +69,13 @@ describe("routePath", () => {
     { kind: "github", owner: "a", repo: "b" },
     { kind: "github", owner: "a", repo: "b", branch: "feature/x" },
     { kind: "github", owner: "a", repo: "b", branch: "main", subdir: "examples/vite" },
+    { kind: "github", owner: "a", repo: "b", branch: "main", subdir: "docs/a#b/what?/50%" },
   ];
+
+  test("reserved characters in a subdirectory are encoded per segment", () => {
+    const route: Route = { kind: "github", owner: "a", repo: "b", branch: "main", subdir: "a#b/c?d" };
+    expect(routePath(route)).toBe("/github/a/b/tree/main/a%23b/c%3Fd");
+  });
 
   test.each(routes)("round-trips %j through parseRoute", (route) => {
     expect(parseRoute(routePath(route))).toEqual(route);

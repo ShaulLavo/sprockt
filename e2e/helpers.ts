@@ -40,6 +40,27 @@ export function editorText(page: Page): Promise<string | undefined> {
   return page.evaluate(() => globalThis.sprockt?.editorText());
 }
 
+/** Opens a file from the explorer and waits until the editor shows it. */
+export async function openFile(page: Page, name: string): Promise<void> {
+  await page.getByRole("button", { name, exact: true }).click();
+  await expect(page.getByTestId("editor-file")).toHaveText(name);
+}
+
+/** Types at the end of the document in the editor. */
+export async function typeInEditor(page: Page, text: string): Promise<void> {
+  await page.getByTestId("editor").click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type(text);
+}
+
+/** Writes a project file through the app's file service, as a pane would. */
+export function writeFile(page: Page, path: string, text: string): Promise<void> {
+  return page.evaluate(([file, content]) => globalThis.sprockt?.workspace?.files.write(file, content), [
+    path,
+    text,
+  ] as const);
+}
+
 /** Waits for the shell prompt, then types a command and presses Enter. */
 export async function runInTerminal(page: Page, command: string): Promise<void> {
   await expect(page.getByTestId("terminal-state")).toHaveText("ready");
