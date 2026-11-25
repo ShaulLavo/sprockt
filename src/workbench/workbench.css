@@ -150,7 +150,8 @@
   bottom: 0;
   left: 50%;
   width: 3px;
-  background: transparent;
+  /* A short grip in the middle of the divider shows it can be dragged, before any hover. */
+  background: linear-gradient(var(--line-strong), var(--line-strong)) center / 3px 28px no-repeat;
   transform: translateX(-50%);
   transition: background-color var(--dur-fast) var(--ease-out);
 }
@@ -162,6 +163,7 @@
   left: 0;
   width: auto;
   height: 3px;
+  background-size: 28px 3px;
   transform: translateY(-50%);
 }
 
@@ -177,7 +179,7 @@
 @media (hover: hover) and (pointer: fine) {
   /* A short delay, so passing over a handle on the way elsewhere does not flash it. */
   .wb-splitter:hover::after {
-    background: var(--line-strong);
+    background-color: var(--line-strong);
     transition-delay: 120ms;
   }
 }
@@ -185,6 +187,7 @@
 .wb-splitter:focus-visible::after,
 .wb-splitter.is-dragging::after {
   background: var(--focus);
+  background-size: auto;
   transition-delay: 0ms;
 }
 
@@ -255,8 +258,16 @@
 .wb-crumb-project {
   overflow: hidden;
   color: var(--fg);
-  font: var(--weight-medium) var(--text-xs) / 1.2 var(--font-mono);
+  font: var(--weight-medium) var(--text-sm) / 1.2 var(--font-ui);
   text-overflow: ellipsis;
+}
+
+/* A slash between the product's name and the project's. */
+.wb-crumbs::before {
+  content: "/";
+  margin-right: var(--space-1);
+  color: var(--line-strong);
+  font-size: var(--text-md);
 }
 
 .wb-crumb-switch {
@@ -571,7 +582,7 @@
   border-top: 1px solid var(--status-line);
   background: var(--status-bg);
   color: var(--status-fg);
-  font: var(--text-xs) / 1 var(--font-mono);
+  font: var(--weight-medium) var(--text-xs) / 1 var(--font-ui);
   white-space: nowrap;
 }
 
@@ -789,10 +800,12 @@
   }
 }
 
+/* With reduced motion nothing turns: the mark and the step's sprocket stand still, and the
+   list of boot steps, with the current one named, is the progress cue. */
 @media (prefers-reduced-motion: reduce) {
   .wb-spinner,
   .wb-boot-mark {
-    animation-duration: 6s;
+    animation: none;
   }
 
   .sb-save[data-state="saving"] .ico {
@@ -841,8 +854,14 @@
     --shown-bg: var(--bg-panel);
   }
 
+  /* Under the terminal sits its key row, so the switcher's tooth meets that row's surface. */
   .workbench[data-pane="terminal"] {
-    --shown-bg: var(--term-bg);
+    --shown-bg: var(--bg-panel);
+  }
+
+  /* The word "Sprockt" is dropped on a phone, and the slash after it with it. */
+  .wb-crumbs::before {
+    content: none;
   }
 
   .wb-activity,
@@ -953,7 +972,7 @@
   /* The pane switcher is a rack of four teeth. The shown pane's tooth rises through the bar's
      top edge and meets the pane above it in the pane's own color. */
   .wb-switcher {
-    --tooth-flank: 9px;
+    --tooth-flank: 5px;
     display: grid;
     grid-area: switch;
     grid-template-columns: repeat(4, 1fr);

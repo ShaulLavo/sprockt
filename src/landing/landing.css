@@ -774,7 +774,7 @@ body:has(.landing-page) {
 
 .lp-wb-crumb {
   overflow: hidden;
-  font: var(--weight-medium) var(--text-xs) / 1.2 var(--font-mono);
+  font: var(--weight-medium) var(--text-xs) / 1.2 var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -5,6 +5,11 @@ import { parseWorkspaceMeta, type WorkspaceMeta } from "../templates/workspace-m
 
 export const WORKSPACE_HINT_PREFIX = "sprockt:ws-meta:";
 
+/** The name to show for a workspace: the one it was given, or its id when this browser has none. */
+export function workspaceName(id: string): string {
+  return readWorkspaceHint(id)?.name ?? id;
+}
+
 export function readWorkspaceHint(id: string): WorkspaceMeta | undefined {
   try {
     const raw = localStorage.getItem(WORKSPACE_HINT_PREFIX + id);

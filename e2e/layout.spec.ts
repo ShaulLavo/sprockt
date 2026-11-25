@@ -307,6 +307,27 @@ test.describe("on a phone", () => {
     await expect(page.locator("#wb-slot-files")).toBeHidden();
   });
 
+  test("the shell is told the terminal's real size once its pane is on screen", async ({ page }) => {
+    await newWorkspace(page);
+    await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+    await page.getByTestId("pane-switcher").getByRole("button", { name: "Terminal" }).click();
+    const size = () => page.evaluate(() => globalThis.sprockt?.terminalSize?.());
+    const told = async () => {
+      const now = await size();
+      const matches = now?.shell.columns === now?.screen.columns && now?.shell.rows === now?.screen.rows;
+      return matches ? now?.shell.columns : undefined;
+    };
+
+    // The terminal starts off screen, at the 80 columns a hidden terminal measures; a phone
+    // shows fewer, and the shell hears the real number when the pane appears.
+    await expect.poll(told).toBeLessThan(80);
+    const first = await told();
+
+    // It keeps hearing it as the screen changes.
+    await page.setViewportSize({ width: 320, height: 700 });
+    await expect.poll(told).toBeLessThan(first ?? 0);
+  });
+
   test("Ctrl lets go when another terminal takes focus", async ({ page }) => {
     await newWorkspace(page);
     const switcher = page.getByTestId("pane-switcher");
@@ -384,4 +405,59 @@ test("two terminal tabs run separate shells", async ({ page }) => {
   await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
   await runInTerminal(page, "echo still-here");
   await expect.poll(() => terminalText(page)).toMatch(/^still-here$/m);
+});
+
+test("a solid button's keyboard focus ring stands out from its own fill", async ({ page, browserName }) => {
+  await newWorkspace(page);
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+  await page.getByRole("button", { name: "Close bash", exact: true }).click();
+  const button = page.locator(".term-empty .primary");
+  await expect(button).toBeVisible();
+
+  // Reach the button the way a keyboard user does, so the browser shows its focus ring. A click
+  // on the text above it starts the walk there; Safari only tabs to buttons with Option held.
+  await page.locator(".term-empty p").click();
+  const tab = browserName === "webkit" ? "Alt+Tab" : "Tab";
+  await expect(async () => {
+    await page.keyboard.press(tab);
+    await expect(button).toBeFocused({ timeout: 250 });
+  }).toPass({ timeout: 30_000 });
+  const ring = await button.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      shown: element.matches(":focus-visible"),
+      style: style.outlineStyle,
+      width: Number.parseFloat(style.outlineWidth),
+      ring: style.outlineColor,
+      fill: style.backgroundColor,
+      text: style.color,
+    };
+  });
+  expect(ring.shown).toBe(true);
+  expect(ring.style).toBe("solid");
+  expect(ring.width).toBeGreaterThanOrEqual(2);
+  // The ring is drawn in the button's text color, which the fill already contrasts with.
+  expect(ring.ring).toBe(ring.text);
+  expect(ring.ring).not.toBe(ring.fill);
+});
+
+test("with reduced motion the boot mark stands still and the steps stay on screen", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  await page.getByTestId("template-vite-react").click();
+  // Read at the first frame the boot card exists: it is gone once the workspace is ready.
+  const boot = await page.waitForFunction(() => {
+    const mark = document.querySelector(".wb-boot-mark");
+    const spinner = document.querySelector(".wb-spinner");
+    if (!mark || !spinner) return undefined;
+    return {
+      mark: getComputedStyle(mark).animationName,
+      spinner: getComputedStyle(spinner).animationName,
+      steps: document.querySelectorAll(".wb-boot-steps li").length,
+    };
+  });
+  const seen = await boot.jsonValue();
+  expect(seen?.mark).toBe("none");
+  expect(seen?.spinner).toBe("none");
+  expect(seen?.steps).toBeGreaterThan(0);
 });

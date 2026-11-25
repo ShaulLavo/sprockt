@@ -80,6 +80,11 @@
 }
 
 .ttab.is-active {
+  color: var(--fg-muted);
+}
+
+/* Full ink and weight only while the terminal has the keyboard, as in the editor's strip. */
+.terminal-panel:focus-within .ttab.is-active {
   color: var(--fg);
   font-weight: var(--weight-semibold);
 }
@@ -321,7 +326,12 @@
     height: 44px;
   }
 
-  /* The one pane on screen is the one in use, so its open tab is lit. */
+  /* The one pane on screen is the one in use, so its open tab is lit and set in full ink. */
+  .ttab.is-active {
+    color: var(--fg);
+    font-weight: var(--weight-semibold);
+  }
+
   .ttab.is-active .ttab-main::before {
     background: var(--accent);
   }
@@ -334,13 +344,13 @@
     padding-left: var(--space-3);
   }
 
-  .term-actions .term-split,
-  .term-actions .term-collapse {
+  /* A phone shows one way to close a shell: the × on its tab. Split, collapse and the bar's
+     own close button are for the desktop frame. */
+  .term-actions {
     display: none;
   }
 
-  .term-add,
-  .term-actions .icon-button {
+  .term-add {
     width: 40px;
     height: 40px;
   }

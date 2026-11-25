@@ -17,18 +17,18 @@
 
   /* ── Surfaces ── (enamel green-greys: tinted, never neutral grey, never pure black) */
   --bg: light-dark(#f4f7f2, #0d1512);
-  --bg-chrome: light-dark(#eef1ee, #0c1411);
-  --bg-panel: light-dark(#f6f8f5, #111b17);
-  --bg-editor: light-dark(#ffffff, #18251f);
+  --bg-chrome: light-dark(#eef1ee, #0b1210);
+  --bg-panel: light-dark(#f6f8f5, #121d19);
+  --bg-editor: light-dark(#ffffff, #1b2a23);
   --bg-input: light-dark(#ffffff, #1c2a24);
   --bg-elevated: light-dark(#ffffff, #213029);
   --bg-hover: light-dark(#e3e9e2, #1e2d26);
   --bg-active: light-dark(#d5e8dc, #224035);
   --bg-selection: light-dark(#b9e6cf, #235040);
-  --bg-line: light-dark(#f2f6f1, #1d2c25);
+  --bg-line: light-dark(#f2f6f1, #22342c);
   --bg-stage: light-dark(#e4ebe3, #080d0b);
-  --bg-tabstrip: light-dark(#e6ebe5, #0a110e);
-  --term-bg: light-dark(#fbfcfa, #131e19);
+  --bg-tabstrip: light-dark(#e6ebe5, #09100d);
+  --term-bg: var(--bg-editor);
   --scrim: light-dark(rgb(13 24 19 / 0.22), rgb(0 0 0 / 0.55));
 
   /* ── Lines ── */
@@ -81,7 +81,7 @@
   /* ── Syntax ── (cool keywords and warm values against the green ground) */
   --syn-text: light-dark(#0d1813, #e2ebe4);
   --syn-keyword: light-dark(#0b5cc4, #7cc0ff);
-  --syn-string: light-dark(#2c7a12, #a9e07a);
+  --syn-string: light-dark(#236a0c, #a9e07a);
   --syn-function: light-dark(#8f5a00, #ffd45e);
   --syn-type: light-dark(#00796b, #5fe3c6);
   --syn-tag: light-dark(#0b5cc4, #7cc0ff);
@@ -90,12 +90,12 @@
   --syn-property: light-dark(#2e4a3d, #cfe0d6);
   --syn-punct: light-dark(#56675e, #93a69b);
   --syn-operator: light-dark(#56675e, #93a69b);
-  --syn-comment: light-dark(#6a7a71, #74877d);
+  --syn-comment: light-dark(#63736a, #7f9288);
   --syn-comment-style: italic;
 
   /* ── Terminal (ANSI) ── */
   --ansi-fg: light-dark(#14211b, #e2ebe4);
-  --ansi-dim: light-dark(#6a7a71, #71847a);
+  --ansi-dim: light-dark(#63736a, #7f9288);
   --ansi-black: light-dark(#0d1813, #2a3a32);
   --ansi-red: light-dark(#bf2b3a, #ff7b72);
   --ansi-green: light-dark(#1c7a3e, #8be07f);
@@ -339,6 +339,15 @@ kbd {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
   border-radius: var(--radius-sm);
+}
+
+/* A solid button is filled with the focus color itself, so a ring in that color would vanish
+   into it. Its ring is drawn inside the fill in the button's own text color, which the fill
+   already has to contrast with. */
+.primary:focus-visible,
+.term-key.is-mod[aria-pressed="true"]:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -4px;
 }
 
 * {

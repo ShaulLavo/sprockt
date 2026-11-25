@@ -90,9 +90,23 @@
   height: auto;
 }
 
-/* Fold markers: small chevrons in the gutter, quiet until pointed at. */
+/* Fold markers: small chevrons in the gutter. With a pointer they wait until the gutter is
+   pointed at; a folded region always shows its marker, so nothing hidden goes unmarked. */
 .editor-pane .editor-virtualized-fold-toggle {
   color: var(--ed-subtle);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .editor-pane .editor-virtualized-fold-toggle {
+    opacity: 0;
+    transition: opacity var(--ed-dur) var(--ed-ease);
+  }
+
+  .editor-pane .editor-virtualized-gutter:hover .editor-virtualized-fold-toggle,
+  .editor-pane .editor-virtualized-fold-toggle:focus-visible,
+  .editor-pane .editor-virtualized-fold-toggle[data-editor-fold-state="collapsed"] {
+    opacity: 1;
+  }
 }
 
 .editor-pane .editor-virtualized-fold-icon {
@@ -213,7 +227,14 @@
 
 /* The open tab is a tooth of the editor's own surface, the lamp color along its flat top. */
 .editor-tab.is-active {
+  color: var(--ed-muted);
+}
+
+/* The open tab of the pane that has the keyboard is the one set in full ink and weight; an
+   open tab elsewhere stays quiet, so two tab strips never both look current. */
+.editor-pane:focus-within .editor-tab.is-active {
   color: var(--ed-fg);
+  font-weight: var(--weight-semibold, 600);
 }
 
 .editor-tab.is-active::before,
@@ -406,11 +427,20 @@
     width: 28px;
     height: 28px;
   }
-  /* The tab already names the file; the path would say it twice on a narrow screen. */
+  /* One compact line of path under the tab: which App.tsx this is. */
   .editor-crumbs {
+    height: 24px;
+    padding: 0 12px;
+  }
+  /* A phone has no room for a fold column, and no pointer to reveal its markers with. */
+  .editor-pane .editor-virtualized-fold-toggle {
     display: none;
   }
-  /* The one pane on screen is the one in use, so its open tab is lit. */
+  /* The one pane on screen is the one in use, so its open tab is lit and set in full ink. */
+  .editor-tab.is-active {
+    color: var(--ed-fg);
+    font-weight: var(--weight-semibold, 600);
+  }
   .editor-tab.is-active .editor-tab-name::before {
     background: var(--ed-accent);
   }

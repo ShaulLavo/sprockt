@@ -93,7 +93,12 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
       theme: editorTheme(scheme()),
       plugins: [
         createLineGutterPlugin(),
-        createFoldGutterPlugin({ width: 16, expandedIcon: FOLD_OPEN, collapsedIcon: FOLD_CLOSED }),
+        // A phone has no room for a fold column; its markers are hidden there too (editor.css).
+        createFoldGutterPlugin({
+          width: narrow() ? 0 : 16,
+          expandedIcon: FOLD_OPEN,
+          collapsedIcon: FOLD_CLOSED,
+        }),
         createHighlightingPlugin(),
         createEditorFindPlugin(),
       ],

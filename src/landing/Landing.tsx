@@ -64,11 +64,11 @@ const BROWSERS = [
 
 /** The parts Sprockt is built from, in the order the sentence beside them names their roles. */
 const STACK = [
-  { role: "Bun runtime", repo: "bun-wasm" },
-  { role: "Browser OS", repo: "waffle", name: "Waffle" },
-  { role: "Editor", repo: "singapore", name: "Singapore" },
-  { role: "GPU terminal", repo: "ghostty-webgpu" },
-  { role: "Shell", repo: "bash-web" },
+  { role: LANDING_COPY.whyOssRoleRuntime, repo: "bun-wasm" },
+  { role: LANDING_COPY.whyOssRoleOs, repo: "waffle", name: "Waffle" },
+  { role: LANDING_COPY.whyOssRoleEditor, repo: "singapore", name: "Singapore" },
+  { role: LANDING_COPY.whyOssRoleTerminal, repo: "ghostty-webgpu" },
+  { role: LANDING_COPY.whyOssRoleShell, repo: "bash-web" },
 ] as const;
 
 function engineUrl(repo: string): string {

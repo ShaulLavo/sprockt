@@ -132,6 +132,11 @@ export function TerminalPanel(props: TerminalPanelProps) {
     return (focused && terminals.handle(focused)?.lines()) || [];
   };
 
+  debugHandle().terminalSize = () => {
+    const focused = terminals.tabs().focused;
+    return focused ? terminals.handle(focused)?.size() : undefined;
+  };
+
   onMount(() => strip && onCleanup(trackOverflowFade(strip)));
 
   function focusTerminal(id: string | undefined): void {

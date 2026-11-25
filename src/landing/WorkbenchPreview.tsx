@@ -3,7 +3,7 @@
 // and the real output of its install and dev commands. Wide, it is the desktop frame; under
 // 720px of its own width (a phone, or the narrow tab beside the browser list) it is the phone
 // frame, one pane at a time. Every copy on the page shares one Demo, as tabs share a workspace.
-import { createSignal, For, Show, untrack } from "solid-js";
+import { createSignal, createUniqueId, For, Show, untrack } from "solid-js";
 import { DEMO_READY, type Demo } from "./demo";
 import { Icon } from "./icons";
 import { APP_TSX_LINES, type SourceLine } from "./starter-source";
@@ -60,12 +60,16 @@ const PANES: readonly { pane: PhonePane; label: string; icon: "files" | "code" |
 ];
 
 /** The keys the real terminal adds on a phone (src/terminal/TerminalKeys.tsx). */
-const SOFT_KEYS = ["esc", "tab", "ctrl", "↑", "↓", "←", "→", "|", "~", "/", "-"] as const;
+const SOFT_KEYS = ["esc", "tab", "ctrl", "^C", "↑", "↓", "←", "→", "|", "~", "/", "-"] as const;
 
 function FileMark(props: { kind: TreeRow["kind"] }) {
   return (
     <Show when={FILE_MARK[props.kind]} fallback={<Icon name="folder" class="lp-wb-ft lp-ft-dir" />}>
-      {(mark) => <span class={`lp-wb-ft lp-ft-${props.kind}`}>{mark()}</span>}
+      {(mark) => (
+        <span class={`lp-wb-ft lp-ft-${props.kind}`} aria-hidden="true">
+          {mark()}
+        </span>
+      )}
     </Show>
   );
 }
@@ -92,6 +96,14 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
   // The pane a frame opens on is read once: after that the visitor picks.
   const [pane, setPane] = createSignal<PhonePane>(untrack(() => props.pane));
   const step = () => props.demo.step();
+  // Each pane is a panel named by its tab, so a screen reader reaches the same files, source
+  // and output a sighted visitor sees; only the drawn controls are hidden from it. Two renders
+  // share the page, so the ids are per render.
+  const uid = createUniqueId();
+  const tabId = (name: PhonePane) => `${uid}-tab-${name}`;
+  const panelId = (name: PhonePane) => `${uid}-panel-${name}`;
+  const panel = (name: PhonePane) =>
+    ({ id: panelId(name), role: "tabpanel", "aria-labelledby": tabId(name) }) as const;
 
   return (
     <div class="lp-wb-frame">
@@ -140,8 +152,10 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
           </span>
         </div>
 
-        <div class="lp-wb-pane lp-wb-explorer" aria-hidden="true">
-          <div class="lp-wb-head">Files</div>
+        <div class="lp-wb-pane lp-wb-explorer" {...panel("files")}>
+          <div class="lp-wb-head" aria-hidden="true">
+            Files
+          </div>
           <ul class="lp-wb-tree">
             <For each={TREE}>
               {(row) => (
@@ -164,8 +178,8 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
           </ul>
         </div>
 
-        <div class="lp-wb-pane lp-wb-editor" aria-hidden="true">
-          <div class="lp-wb-strip">
+        <div class="lp-wb-pane lp-wb-editor" {...panel("code")}>
+          <div class="lp-wb-strip" aria-hidden="true">
             <span class="lp-wb-tooth is-active">
               <FileMark kind="tsx" />
               App.tsx
@@ -184,7 +198,9 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
             <For each={APP_TSX_LINES}>
               {(line, index) => (
                 <li classList={{ "is-current": index() + 1 === CARET_LINE }}>
-                  <span class="lp-wb-ln">{index() + 1}</span>
+                  <span class="lp-wb-ln" aria-hidden="true">
+                    {index() + 1}
+                  </span>
                   <code style={{ "--indent": line.indent }}>
                     {" ".repeat(line.indent)}
                     <For each={line.tokens}>
@@ -201,7 +217,7 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
           </ol>
         </div>
 
-        <div class="lp-wb-pane lp-wb-preview">
+        <div class="lp-wb-pane lp-wb-preview" {...panel("preview")}>
           <div class="lp-wb-head" aria-hidden="true">
             Preview
             <span class="lp-wb-url">
@@ -235,8 +251,8 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
           </Show>
         </div>
 
-        <div class="lp-wb-pane lp-wb-terminal" aria-hidden="true">
-          <div class="lp-wb-strip">
+        <div class="lp-wb-pane lp-wb-terminal" {...panel("terminal")}>
+          <div class="lp-wb-strip" aria-hidden="true">
             <span class="lp-wb-tooth is-active is-lit">
               <Show when={props.demo.ready()} fallback={<Icon name="terminal" />}>
                 <span class="lp-wb-lamp" />
@@ -304,11 +320,11 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
                 </span>
               </Show>
               <span class="lp-wb-tline">
-                <span class="lp-wb-tcur" />
+                <span class="lp-wb-tcur" aria-hidden="true" />
               </span>
             </pre>
           </div>
-          <div class="lp-wb-keys">
+          <div class="lp-wb-keys" aria-hidden="true">
             <div class="lp-wb-keys-row">
               <For each={SOFT_KEYS}>{(key) => <span>{key}</span>}</For>
             </div>
@@ -332,6 +348,8 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
               <button
                 type="button"
                 role="tab"
+                id={tabId(item.pane)}
+                aria-controls={panelId(item.pane)}
                 aria-selected={pane() === item.pane}
                 onClick={() => setPane(item.pane)}
               >

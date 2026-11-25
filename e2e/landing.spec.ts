@@ -206,3 +206,18 @@ test("phone viewport has no horizontal overflow, exposes menu/theme controls, an
   await expect(menu).toContainText("Templates");
   await expect(menu).toContainText("GitHub");
 });
+
+test("the phone demo's files, source and terminal output reach a screen reader", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const demo = page.locator(".lp-hero-tab");
+
+  // Role queries only match what the accessibility tree exposes.
+  await expect(demo.getByRole("tabpanel", { name: "Terminal" })).toContainText("bun run dev");
+  await demo.getByRole("tab", { name: "Files" }).click();
+  await expect(demo.getByRole("tabpanel", { name: "Files" })).toContainText("App.tsx");
+  await demo.getByRole("tab", { name: "Code" }).click();
+  await expect(demo.getByRole("tabpanel", { name: "Code" })).toContainText("useState");
+  await demo.getByRole("tab", { name: "Preview" }).click();
+  await expect(demo.getByRole("tabpanel", { name: "Preview" })).toContainText("Hello from bun.wasm");
+});
