@@ -2695,6 +2695,20 @@ body:has(.landing-page) {
     padding: var(--space-3) var(--space-4);
   }
 
+  /* On the narrowest phones the two tab states stack; nothing runs past the plate. */
+  .lp-specimen-plate {
+    grid-template-rows: none;
+    grid-auto-rows: minmax(52px, auto);
+    height: auto;
+  }
+
+  .lp-handoff-ask,
+  .lp-handoff-state {
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+    padding-block: var(--space-2);
+  }
+
   .lp-spec h3 {
     font-size: 22px;
   }
