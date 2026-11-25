@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, newWorkspace, retryLostFrames, runInTerminal, test, writeFile } from "./helpers";
+import { TAB_POLICY } from "../src/runtime/tab-policy";
 
 retryLostFrames();
 
@@ -106,15 +107,20 @@ test("reload, the error indicator and the viewport switch", async ({ page }) => 
   expect(await width()).toBeGreaterThan(390);
 });
 
+// A server entry file the dev-server task can start: it runs one with `bun --hot`, which in
+// bun-wasm takes only an ES module without WebSocket handlers.
+const ENTRY_HTML =
+  "<!doctype html><html><head><title>Home</title></head><body><h1>Hello from Bun.serve</h1></body></html>";
+const ENTRY = `export {};
+Bun.serve({
+  port: 3000,
+  fetch: () => new Response(${JSON.stringify(ENTRY_HTML)}, { headers: { "content-type": "text/html; charset=utf-8" } }),
+});
+`;
+
 test("the pane's button starts a server entry file, and the pill stops it", async ({ page }) => {
   await newWorkspace(page);
-  // The task runs an entry file with `bun --hot`, which in bun-wasm takes only an ES module
-  // without WebSocket handlers.
-  const html =
-    "<!doctype html><html><head><title>Home</title></head><body><h1>Hello from Bun.serve</h1></body></html>";
-  const headers = '{ "content-type": "text/html; charset=utf-8" }';
-  const entry = `export {};\nBun.serve({ port: 3000, fetch: () => new Response(${JSON.stringify(html)}, { headers: ${headers} }) });\n`;
-  await writeFile(page, "server.ts", entry);
+  await writeFile(page, "server.ts", ENTRY);
   const task = page.getByTestId("preview-task");
   await expect(task).toHaveAttribute("data-status", "stopped");
   await task.click();
@@ -132,6 +138,34 @@ test("the pane's button starts a server entry file, and the pill stops it", asyn
   await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
   await task.click();
   await expect(task).toHaveAttribute("data-status", "stopped");
+});
+
+test("a tab that takes the workspace over is not left following the old tab's dev server", async ({
+  page,
+  context,
+}) => {
+  // With the attach policy a second tab shares the workspace instead (e2e/dev-server-tabs.spec.ts).
+  test.skip(TAB_POLICY === "attach", "a second tab takes over only with the takeover policy");
+  const id = await newWorkspace(page);
+  await writeFile(page, "server.ts", ENTRY);
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+  await page.getByTestId("preview-task").click();
+  await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
+
+  const second = await context.newPage();
+  await second.goto(`/w/${id}`);
+  await second.getByTestId("take-over").click();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "moved");
+
+  // The old tab's server went with its runtime: the new tab shows none, and can start its own.
+  const task = second.getByTestId("preview-task");
+  await expect(task).toHaveAttribute("data-status", "stopped");
+  await expect(task).toBeEnabled();
+  await expect(second.getByTestId("preview-port")).toBeDisabled();
+  await task.click();
+  await expect(frame(second).getByRole("heading")).toHaveText("Hello from Bun.serve");
+  await expect(task).toHaveAttribute("data-status", "running");
+  await expect(task).toBeEnabled();
 });
 
 test("on a phone the toolbar keeps open in new tab, and fades only where it overflows", async ({ page }) => {
