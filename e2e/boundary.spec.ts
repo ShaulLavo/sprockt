@@ -42,10 +42,8 @@ test("the file service writes into directories that do not exist yet", async ({ 
   await expect.poll(() => terminalText(page)).toMatch(/^written through the file service$/m);
 });
 
-test("the file service does not reach outside the project through links", async ({ page, browserName }) => {
-  // The base programs have no `ln`, so Bun makes the links, and Bun's browser engine traps in
-  // Playwright's WebKit (ARCHITECTURE.md "Known gaps"). Remove when Bun runs there.
-  test.fixme(browserName === "webkit", "Bun's browser engine traps in WebKit");
+test("the file service does not reach outside the project through links", async ({ page }) => {
+  // The base programs have no `ln`, so Bun makes the links.
   await newWorkspace(page);
   await runInTerminal(page, "mkdir -p /home/guest/x src && echo private > /home/guest/existing.txt");
   await runInTerminal(page, "echo old > src/main.ts");

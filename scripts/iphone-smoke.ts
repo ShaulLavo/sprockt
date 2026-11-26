@@ -138,7 +138,16 @@ const terminalHas = (pattern: string) =>
 
 async function runInTerminal(driver: WebDriver, command: string): Promise<void> {
   await driver.until(`${textOf("terminal-state")} === "ready"`, "the shell");
+  // A phone shows one pane at a time: bring the terminal up first.
+  await driver.script(
+    `document.querySelector('[data-testid="pane-switcher"] [aria-controls="wb-slot-terminal"]')?.click(); return true;`,
+  );
   await driver.click(".terminal-host");
+  // Keys typed before the terminal holds focus are lost, as on a real phone.
+  await driver.until(
+    `document.querySelector(".terminal-host")?.contains(document.activeElement)`,
+    "terminal focus",
+  );
   await driver.type(command + ENTER);
 }
 

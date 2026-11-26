@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, newWorkspace, runInTerminal, terminalText, test, writeFile } from "./helpers";
+import { TAB_POLICY } from "../src/runtime/tab-policy";
 
 async function width(page: Page, selector: string): Promise<number> {
   const box = await page.locator(selector).boundingBox();
@@ -234,6 +235,7 @@ test("closing a terminal while its startup command runs raises no page error", a
 });
 
 test("losing the workspace to another tab stops this tab's shells and runtime", async ({ page, context }) => {
+  test.skip(TAB_POLICY === "attach", "a second tab takes over only with the takeover policy");
   const id = await newWorkspace(page);
   await runInTerminal(page, "read -r input");
   await expect(page.getByTestId("terminal-state")).toHaveText("running");
@@ -253,13 +255,14 @@ test("losing the workspace to another tab stops this tab's shells and runtime", 
   expect(left).toEqual({ tabs: 0, handle: true });
 });
 
-// Waffle 0.0.148/0.0.149: after ownership loss, Runtime.dispose() rejects ("Runtime disposal
+// Waffle 0.0.148 to 0.0.150: after ownership loss, Runtime.dispose() rejects ("Runtime disposal
 // failed", the quiesce calls fail with the takeover error) and keeps the filesystem worker on
 // purpose. The fix belongs in Waffle's teardown; remove `fixme` when the pin moves to it.
 test.fixme("losing the workspace to another tab ends this tab's filesystem worker", async ({
   page,
   context,
 }) => {
+  test.skip(TAB_POLICY === "attach", "a second tab takes over only with the takeover policy");
   const fsWorkers = () => page.workers().filter((worker) => worker.url().includes("fs-worker")).length;
   const id = await newWorkspace(page);
   await expect(page.getByTestId("terminal-state")).toHaveText("ready");

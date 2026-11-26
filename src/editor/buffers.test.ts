@@ -528,3 +528,61 @@ test("free names keep the extension and count up", () => {
   expect(freeName("dir.v2/Makefile", (path) => taken.has(path))).toBe("dir.v2/Makefile (unsaved 2)");
   expect(freeName(".env", () => false)).toBe(".env (unsaved)");
 });
+
+test("a save whose flush failed stays unsaved, and older text from storage is a conflict, not a reload", async () => {
+  const { files, buffers } = setUp({ "a.txt": "durable\n" });
+  files.holdFlushes();
+  await buffers.load("a.txt");
+  type(buffers, "a.txt", "peer's work");
+  await buffers.save("a.txt");
+  files.flushes.shift()?.reject(new Error("storage refused the journal write"));
+  await tick();
+  // Storage does not hold it: the edit is still unsaved.
+  expect(buffers.get("a.txt")?.dirty()).toBe(true);
+
+  // The tab that held the files closes; the files come back from storage without the save.
+  files.disk.set("a.txt", "durable\n");
+  await buffers.sync();
+  expect(textOf(buffers, "a.txt")).toBe("durable\npeer's work");
+  expect(buffers.get("a.txt")?.dirty()).toBe(true);
+  expect(buffers.get("a.txt")?.conflict()).toEqual({ diskText: "durable\n" });
+
+  // Keeping this tab's text and saving again ends unsaved once storage holds it.
+  files.flushing = false;
+  await buffers.keepMine("a.txt");
+  await buffers.save("a.txt");
+  await tick();
+  expect(files.disk.get("a.txt")).toBe("durable\npeer's work");
+  expect(buffers.get("a.txt")?.dirty()).toBe(false);
+  expect(buffers.get("a.txt")?.conflict()).toBeUndefined();
+});
+
+test("storage that changes hands before a save is flushed brings older text back as a conflict", async () => {
+  const { files, buffers } = setUp({ "a.txt": "durable\n" });
+  files.holdFlushes();
+  await buffers.load("a.txt");
+  type(buffers, "a.txt", "peer's work");
+  await buffers.save("a.txt");
+  // The flush has not answered when the files reappear without the save.
+  files.disk.set("a.txt", "durable\n");
+  await buffers.sync();
+  expect(textOf(buffers, "a.txt")).toBe("durable\npeer's work");
+  expect(buffers.get("a.txt")?.dirty()).toBe(true);
+  expect(buffers.get("a.txt")?.conflict()).toEqual({ diskText: "durable\n" });
+});
+
+test("reloading from disk after a lost save leaves the buffer clean", async () => {
+  const { files, buffers } = setUp({ "a.txt": "durable\n" });
+  files.holdFlushes();
+  await buffers.load("a.txt");
+  type(buffers, "a.txt", "peer's work");
+  await buffers.save("a.txt");
+  files.flushes.shift()?.reject(new Error("storage refused the journal write"));
+  await tick();
+  files.disk.set("a.txt", "durable\n");
+  await buffers.sync();
+  await buffers.takeTheirs("a.txt");
+  expect(textOf(buffers, "a.txt")).toBe("durable\n");
+  expect(buffers.get("a.txt")?.dirty()).toBe(false);
+  expect(buffers.unsaved().size).toBe(0);
+});

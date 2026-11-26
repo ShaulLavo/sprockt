@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { ProjectPathError } from "../workspace/paths";
+import { FolderGoneError } from "./errors";
+import { localPathLocks, type PathLocks } from "./path-locks";
 import { createProjectFiles, type ProjectFilesystem, type ResolvedEntry } from "./project-files";
 
 interface Setup {
@@ -53,11 +55,30 @@ function memoryFilesystem(setup: Setup = {}) {
     },
     readFile: async (path) => files.get(real(path, true)),
     listFiles: async (path) => Array.from(files.keys()).filter((file) => file.startsWith(`${path}/`)),
-    remove: async (path) => files.delete(real(path, false)),
+    async remove(path) {
+      // A folder goes with everything inside it.
+      const target = real(path, false);
+      const inside = (entry: string) => entry === target || entry.startsWith(`${target}/`);
+      const removed = Array.from(files.keys()).filter(inside);
+      for (const file of removed) files.delete(file);
+      for (const directory of Array.from(directories)) if (inside(directory)) directories.delete(directory);
+      return removed.length > 0;
+    },
     async move(from, to) {
-      const content = files.get(real(from, false));
-      if (content) files.set(real(to, false), content);
-      files.delete(real(from, false));
+      // A folder moves with everything inside it.
+      const [source, target] = [real(from, false), real(to, false)];
+      const moved = (entry: string) => `${target}${entry.slice(source.length)}`;
+      const inside = (entry: string) => entry === source || entry.startsWith(`${source}/`);
+      for (const [file, content] of Array.from(files)) {
+        if (!inside(file)) continue;
+        files.delete(file);
+        files.set(moved(file), content);
+      }
+      for (const directory of Array.from(directories)) {
+        if (!inside(directory)) continue;
+        directories.delete(directory);
+        directories.add(moved(directory));
+      }
     },
     flush() {
       const next = Promise.withResolvers<void>();
@@ -319,4 +340,159 @@ test("after the workspace moved to another tab every write is refused", async ()
   await expect(service.write("a.txt", "late")).rejects.toThrow("another tab");
   await expect(service.saved()).rejects.toThrow("another tab");
   expect(memory.files.size).toBe(0);
+});
+
+/** The same filesystem with reads and renames slowed down, so two operations interleave as tabs do. */
+const later = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The same filesystem with reads and renames slowed down, so two operations interleave as tabs
+ * do. `writeMs` slows writes more, so another tab's change can land between a save's check and
+ * its write.
+ */
+function slowed(filesystem: ProjectFilesystem, writeMs = 0): ProjectFilesystem {
+  return {
+    ...filesystem,
+    readFile: async (path) => (await later(), filesystem.readFile(path)),
+    resolvePath: async (path) => (await later(), filesystem.resolvePath(path)),
+    move: async (from, to) => (await later(), filesystem.move(from, to)),
+    mkdirp: async (path) => (await later(writeMs), filesystem.mkdirp(path)),
+    writeFile: async (path, content, mode) => (
+      await later(writeMs),
+      filesystem.writeFile(path, content, mode)
+    ),
+  };
+}
+
+test("of two overlapping conditional saves from two tabs, the second sees the first", async () => {
+  const memory = memoryFilesystem({ files: { "/workspace/shared.txt": "base\n" } });
+  const locks = localPathLocks();
+  // Two tabs: two services on one filesystem, sharing the workspace's locks.
+  const first = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+  const second = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+
+  const outcomes = await Promise.all([
+    first.writeIfUnchanged("shared.txt", "base\nfirst tab", "base\n"),
+    second.writeIfUnchanged("shared.txt", "base\nsecond tab", "base\n"),
+  ]);
+
+  expect(outcomes.filter((outcome) => outcome.written)).toHaveLength(1);
+  const refused = outcomes.find((outcome) => !outcome.written);
+  expect(refused).toEqual({ written: false, current: memory.text("/workspace/shared.txt") });
+});
+
+test("of two overlapping moves to one free name, the second fails and keeps its source", async () => {
+  const memory = memoryFilesystem({
+    files: { "/workspace/a.txt": "first payload", "/workspace/b.txt": "second payload" },
+  });
+  const locks = localPathLocks();
+  const first = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+  const second = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+
+  const moves = await Promise.allSettled([first.move("a.txt", "out.txt"), second.move("b.txt", "out.txt")]);
+
+  expect(moves.map((move) => move.status).toSorted()).toEqual(["fulfilled", "rejected"]);
+  const lost = moves[0].status === "rejected" ? "/workspace/a.txt" : "/workspace/b.txt";
+  expect(memory.files.has(lost)).toBe(true);
+  expect([memory.text("/workspace/out.txt")]).not.toContain(memory.text(lost));
+});
+
+test("a save racing another tab's delete of its folder never brings the folder back", async () => {
+  const memory = memoryFilesystem({
+    directories: ["/workspace/src"],
+    files: { "/workspace/src/file.txt": "old" },
+  });
+  const locks = localPathLocks();
+  const first = createProjectFiles(slowed(memory.filesystem, 40), noWatch, undefined, locks);
+  const second = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+
+  const [save] = await Promise.all([
+    first.writeIfUnchanged("src/file.txt", "new", "old"),
+    second.remove("src"),
+  ]);
+
+  expect(memory.files.has("/workspace/src/file.txt")).toBe(false);
+  // Either the save came first and went with the folder, or it found the folder gone.
+  if (!save.written) expect(save.current).toBeUndefined();
+});
+
+test("a save racing another tab's move of its folder lands in the moved folder or is a conflict", async () => {
+  const memory = memoryFilesystem({
+    directories: ["/workspace/src"],
+    files: { "/workspace/src/file.txt": "old" },
+  });
+  const locks = localPathLocks();
+  const first = createProjectFiles(slowed(memory.filesystem, 40), noWatch, undefined, locks);
+  const second = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+
+  const [save] = await Promise.all([
+    first.writeIfUnchanged("src/file.txt", "new", "old"),
+    second.move("src", "moved"),
+  ]);
+
+  expect(memory.files.has("/workspace/src/file.txt")).toBe(false);
+  if (save.written) expect(memory.text("/workspace/moved/file.txt")).toBe("new");
+  else expect(memory.text("/workspace/moved/file.txt")).toBe("old");
+});
+
+/** `alias` is a link to `real`, so `real/sub/x` and `alias/sub/x` are one file. */
+const aliased = (files: Readonly<Record<string, string>>) =>
+  memoryFilesystem({
+    links: { "/workspace/alias": "/workspace/real" },
+    directories: ["/workspace/real", "/workspace/real/sub"],
+    files,
+  });
+
+test("two saves of one file through a folder link and its target: one lands, one is a conflict", async () => {
+  const memory = aliased({ "/workspace/real/sub/file.txt": "base" });
+  const locks = localPathLocks();
+  const first = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+  const second = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+
+  const outcomes = await Promise.all([
+    first.writeIfUnchanged("real/sub/file.txt", "through the folder", "base"),
+    second.writeIfUnchanged("alias/sub/file.txt", "through the link", "base"),
+  ]);
+
+  expect(outcomes.filter((outcome) => outcome.written)).toHaveLength(1);
+});
+
+test("two moves to one free name spelled through a folder link and its target: one fails", async () => {
+  const memory = aliased({ "/workspace/a.txt": "first payload", "/workspace/b.txt": "second payload" });
+  const locks = localPathLocks();
+  const first = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+  const second = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+
+  const moves = await Promise.allSettled([
+    first.move("a.txt", "real/sub/out.txt"),
+    second.move("b.txt", "alias/sub/out.txt"),
+  ]);
+
+  expect(moves.map((move) => move.status).toSorted()).toEqual(["fulfilled", "rejected"]);
+  const kept = moves[0].status === "rejected" ? "/workspace/a.txt" : "/workspace/b.txt";
+  expect(memory.files.has(kept)).toBe(true);
+});
+
+test("a write that waited while another tab deleted its folder fails instead of recreating it", async () => {
+  const memory = memoryFilesystem({
+    directories: ["/workspace/src"],
+    files: { "/workspace/src/file.txt": "old" },
+  });
+  const shared = localPathLocks();
+  // The write has found its folder, and is held at its locks until the delete is done.
+  const deleted = Promise.withResolvers<void>();
+  const held: PathLocks = {
+    hold: async (request, work) => (await deleted.promise, shared.hold(request, work)),
+  };
+  const writer = createProjectFiles(memory.filesystem, noWatch, undefined, held);
+  const deleter = createProjectFiles(memory.filesystem, noWatch, undefined, shared);
+
+  const write = writer.write("src/file.txt", "new");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await deleter.remove("src");
+  deleted.resolve();
+
+  expect(write).rejects.toBeInstanceOf(FolderGoneError);
+  await write.catch(() => {});
+  expect(memory.files.has("/workspace/src/file.txt")).toBe(false);
 });

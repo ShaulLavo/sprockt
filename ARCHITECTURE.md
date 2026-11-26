@@ -16,7 +16,7 @@ manager, [bash-web](https://github.com/ShaulLavo/bash-web) as the shell,
 | UI framework | Solid 1.9                                                      | Fine-grained updates with no virtual DOM diff keep typing, tree refreshes and terminal output off any render path. Singapore ships a first-party Solid binding. |
 | Build        | Vite 8, ES module workers                                      | The tested bundling path of bun-wasm and Ghostty (`?worker&url`, `?url`).                                                                                       |
 | Storage      | Waffle `mode: "fast"` on IndexedDB, one database per workspace | The persistent path is the product path; `mode: "memory"` is not used.                                                                                          |
-| Tabs         | Waffle `whenBusy: "attach"`                                    | The first tab hosts the filesystem; later tabs attach and share it live. Set to `takeover` until Waffle's attach mode is fixed (Known gaps, 1).                 |
+| Tabs         | Waffle `whenBusy: "attach"`                                    | The first tab hosts the filesystem; later tabs attach and share it live. When the hosting tab closes, another tab takes over inside Waffle (Known gaps, 1).     |
 | Hosting      | Cloudflare Worker with static assets only                      | No server code is needed until previews move to their own origins.                                                                                              |
 | Language     | TypeScript only, strict                                        | `bun run check:javascript` fails on any hand-written JavaScript.                                                                                                |
 
@@ -163,7 +163,7 @@ program it runs.
 
 | Package                                                 | Pin                | Source                                                                |
 | ------------------------------------------------------- | ------------------ | --------------------------------------------------------------------- |
-| `waffle` (`@waffle-os/runtime`), `@waffle-os/relay`     | 0.0.149            | npm                                                                   |
+| `waffle` (`@waffle-os/runtime`), `@waffle-os/relay`     | 0.0.150            | npm                                                                   |
 | `waffle-base`                                           | programs-v0.0.23   | GitHub release tarball                                                |
 | `bash-web`                                              | 0.0.114            | npm                                                                   |
 | `bun-wasm`                                              | commit `7b25271e3` | Git dependency (not on npm); `trustedDependencies` runs its `prepare` |
@@ -243,11 +243,10 @@ server (typescript-language-server under Bun).
 The design is `whenBusy: "attach"`: the first tab hosts the filesystem; later tabs attach as
 peers and read, write and watch the same live tree. Host loss fails over inside Waffle.
 
-Today `runtime/boot.ts` does not use attach, because attach mode in Waffle 0.0.148 loses file
-bytes for programs (Known gaps, 1). A second tab waits and asks before it takes the workspace;
-the older tab then stops writing and hands over its unsaved text ("Workspace lifetime").
-Everything below describes the attach design the slices build toward; choosing `"attach"` in
-`createWorkspaceRuntime` and dropping the question are the only changes in this repository.
+`TAB_POLICY` (`runtime/tab-policy.ts`) is `"attach"`, and `runtime/boot.ts` opens with it. The
+wait-and-ask path ("Workspace lifetime") stays as the `"takeover"` fallback, and its tests run
+only under that policy; `e2e/tabs.spec.ts` and the two-tab explorer test run only under attach.
+Under attach the workbench never offers to take a workspace over.
 
 - Shared across tabs: files, and through `FileService.revision`, the explorer and clean editor
   buffers.
@@ -317,8 +316,7 @@ where the bytes live.
   workspace turnstile.
 - **End to end**: Playwright against the production build (`vite preview`) in Chromium,
   Firefox and WebKit, on persistent storage, each test in a fresh browser profile. Tests
-  assert outcomes; the only time limits are hang caps. Two tests are `fixme` until the gaps
-  below close: two tabs on one workspace, and Bun in WebKit. The terminal draws on a canvas, so specs
+  assert outcomes; the only time limits are hang caps. The terminal draws on a canvas, so specs
   read it through `globalThis.sprockt` (see `e2e/helpers.ts`).
 - **iPhone Safari**: Playwright's WebKit is not Safari. The gate for a deploy is the same boot
   flow on the iPhone simulator on the M1 Mac (slice 7).
@@ -328,20 +326,15 @@ where the bytes live.
 
 ## Known gaps
 
-1. **Attach mode loses file bytes for programs.** With `whenBusy: "attach"` on Waffle 0.0.148
-   (bash-web 0.0.114, every worker bundled from source), in Chromium and Firefox, in one tab:
-   `echo hi > f.txt` creates `f.txt` and leaves it empty; `cat page.txt` on a 10-byte file the
-   page wrote prints nothing; `grep from page.txt` fails with "read, output or record limit
-   error"; `cat < page.txt` prints nothing. `head -1`, `cp`, Bun's `writeFileSync` and page
-   reads and writes are intact, and all of it works with `whenBusy: "takeover"`. In WebKit,
-   attach mode also fails `bun` with "Permission denied" and a second tab reports
-   `/workspace: No such file or directory`. The fix belongs in Waffle or bash-web. Until then
-   tabs do not share a workspace and the two-tab test in `e2e/boot.spec.ts` is `fixme`.
-2. **Bun traps in WebKit.** In Playwright's WebKit, `bun --version` ends in a WASM trap (a
-   stack of `wasm-function[...]` frames) with the browser-engine guest, in takeover mode. The
-   shell, coreutils, the editor and persistence pass there. iPhone needs bun-wasm's own memory
-   policy and `BUN_WASM_IPHONE_NATIVE_MEMORY` (`web/src/host-memory-policy.ts`), which this
-   foundation does not apply yet. The Bun test is `fixme` on WebKit.
+1. **Attach mode under load in WebKit.** With Waffle 0.0.150 in Playwright's WebKit, when many
+   workspaces boot at once (ten parallel test workers), about half the shells fail to start
+   with "filesystem errno 11" (sometimes 22), and the file watcher fails with the same error.
+   Four workers and one worker pass, and the takeover policy passes under the same load. Chromium
+   and Firefox pass. The cause is in Waffle's attach mode; the PR that flipped the policy has
+   the reproduction.
+2. **Runtime.dispose() after takeover keeps the filesystem worker.** Waffle 0.0.148 to 0.0.150:
+   after ownership loss, disposal rejects ("Runtime disposal failed") and the worker stays. The
+   test in `e2e/layout.spec.ts` is `fixme`; it only applies under the takeover policy.
 3. **The packages do not name their guests.** The guests are in the hash-addressed store, but
    bun-wasm's `BUN_WASM_ASSET` is `null` and bash-web ships no `shell-engine.wasm`, so
    `guests.lock.json` pins them beside the packages and moves with them by hand. When the
@@ -351,21 +344,37 @@ where the bytes live.
    in bun-wasm's `web/src` and `sandbox/src`. Slice 5 builds on Waffle's public
    `waffle/browser/preview` and ports the rest; an export from bun-wasm would replace the
    path imports.
-5. **Waffle has no conditional or confined file operation.** Two FileService rules are a check
-   followed by an operation, with a gap between them: `writeIfUnchanged` (read, compare,
-   write) and the project boundary (resolve, then read or write). Both need Waffle to do it
-   in one step: a write that fails unless the file still holds the expected bytes, and
-   operations that refuse to leave a given root. The fix belongs in Waffle. The explorer's
-   operations have the same gap, with the same root cause:
-   - Rename and drag-move look at the destination just before `move`, but Waffle's rename
-     replaces what is there, so a name taken in the instants between the two is overwritten. It
-     needs a rename that refuses to replace. (`create` is exclusive and has no such gap.)
+5. **Waffle has no conditional or confined file operation.** Several FileService rules are a
+   check followed by an operation: `writeIfUnchanged` (read, compare, write), create, move and
+   rename (destination free, then write or rename), and the project boundary (resolve, then
+   read or write). Across tabs, FileService makes each check-and-act one step with Web Locks
+   (`files/path-locks.ts`, `sprockt:<id>:path:<path>`):
+   - an operation locks its own paths exclusively and every folder above them shared, so a
+     folder move or delete waits for writes inside the folder and keeps new ones out;
+   - locks are keyed by real paths (links on the way followed), so two spellings of one file
+     through a folder link take the same lock; under the locks the paths are resolved again,
+     and a write whose folder was moved or deleted meanwhile fails (`FolderGoneError`, a
+     conflict for an editor save) instead of recreating the folder;
+   - all locks of an operation are taken in one sorted order, so two operations never wait on
+     each other in a cycle; a bulk write locks the folder holding all its files once (1,000
+     files: 0.4 to 1.1 s on the PC).
+
+   Programs in a terminal do not take these locks, and a link swapped by one between the
+   boundary check and the operation is not caught. Closing both needs Waffle to do it in one
+   step: a write that fails unless the file still holds the expected bytes, a rename that
+   refuses to replace, and operations that refuse to leave a given root.
    - Upload, listing and move resolve the path again inside the operation after the boundary
-     check, so a link changed in between can lead somewhere else. It needs operations bound to a
-     root.
+     check, so a link changed in between can lead somewhere else.
    - Waffle returns a failed change to its caller and keeps the same error to throw at the next
      flush. FileService retries a flush that throws an error its own operation already reported,
      and lets any other error fail the save state; Waffle should report a failure once.
+
+6. **A save is unsaved until storage holds it.** Waffle acknowledges a write from memory. If its
+   flush fails, or the files come back from storage (a hosting tab closed) without it, the
+   editor keeps the buffer's text as unsaved and shows a conflict against what storage holds,
+   instead of reloading the older text. A flush that the new hosting tab answers before the
+   editor sees the files change can still hide a lost save; Waffle would have to report that
+   its storage changed hands.
 
 ## Parallel work map
 

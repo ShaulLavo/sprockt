@@ -2,10 +2,8 @@
 // end-to-end specs can read it and run the tests for the policy that is on.
 
 /**
- * The target is `"attach"`: every tab shares one live filesystem. Waffle 0.0.148 loses file bytes
- * for programs in that mode (an empty `cat`, empty shell redirects; fixed by waffle#630), so until
- * a release with the fix is pinned it is `"takeover"`: a second tab waits for the workspace and
- * asks, and takes it over only when the person confirms. Moving the pin and this line together
- * is the whole switch.
+ * `"attach"`: every tab shares one live filesystem, and when the hosting tab closes another one
+ * takes over inside Waffle. `"takeover"` is the fallback: a second tab waits for the workspace and
+ * asks, and takes it over only when the person confirms.
  */
-export const TAB_POLICY: "attach" | "takeover" = "takeover";
+export const TAB_POLICY: "attach" | "takeover" = "attach";

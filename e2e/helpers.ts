@@ -54,8 +54,10 @@ export async function typeInEditor(page: Page, text: string): Promise<void> {
 }
 
 /** Writes a project file through the app's file service, as a pane would. */
-export function writeFile(page: Page, path: string, text: string): Promise<void> {
-  return page.evaluate(([file, content]) => globalThis.sprockt?.workspace?.files.write(file, content), [
+export async function writeFile(page: Page, path: string, text: string): Promise<void> {
+  // The session exists only once the workspace has booted; writing before that wrote nothing.
+  await expect.poll(() => page.evaluate(() => globalThis.sprockt?.workspace !== undefined)).toBe(true);
+  await page.evaluate(([file, content]) => globalThis.sprockt!.workspace!.files.write(file, content), [
     path,
     text,
   ] as const);
