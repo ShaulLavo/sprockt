@@ -69,6 +69,17 @@ async function navigate(page: Page, path: string): Promise<void> {
   await urlBar(page).press("Enter");
 }
 
+test.beforeEach(({ browserName }) => {
+  // These tests are about mounted previews, which only development builds have. They pass in
+  // Playwright's WebKit since Bun's servers run there, but WebKit is the slowest of the three
+  // in CI, so it runs the previews a public build has (e2e/isolated-preview.spec.ts) and
+  // leaves these to Chromium and Firefox.
+  test.skip(
+    browserName === "webkit",
+    "mounted previews run in Chromium and Firefox; WebKit runs the isolated ones",
+  );
+});
+
 test("a server started in the terminal shows in the preview, and the toolbar drives it", async ({ page }) => {
   await newWorkspace(page);
   await expect(page.getByTestId("preview-empty")).toBeVisible();

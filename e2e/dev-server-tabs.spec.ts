@@ -7,6 +7,15 @@ import { TAB_POLICY } from "../src/runtime/tab-policy";
 // live tab, and e2e/preview.spec.ts and e2e/hmr.spec.ts cover it.
 test.skip(TAB_POLICY !== "attach", "tabs share a workspace only with the attach policy");
 
+test.beforeEach(({ browserName }) => {
+  // On the mounted transport, like e2e/preview.spec.ts: left to Chromium and Firefox for CI
+  // time. WebKit runs the two-tab test on the isolated one (e2e/isolated-preview.spec.ts).
+  test.skip(
+    browserName === "webkit",
+    "mounted previews run in Chromium and Firefox; WebKit runs the isolated ones",
+  );
+});
+
 const SERVER = `
 Bun.serve({
   port: 3000,
