@@ -96,6 +96,12 @@ WorkspaceSession
   across closing and reopening the file. "Unsaved" means the text differs from what is on disk
   or from what a pending save is writing, so a buffer is clean only once its write succeeded.
   Unsaved text stays with its tab until it is saved or the person confirms closing it.
+- **Autosave goes through the same save.** `editor/autosave.ts` saves unsaved buffers about a
+  second after the last edit, and at once when the page is hidden, another file is shown or the
+  editor loses focus, by calling `BufferSet.save` like Ctrl+S does. A buffer with a conflict, a
+  deleted file or a detached draft is never autosaved: those wait for the person. The setting
+  (default on) is kept in this browser's `localStorage`; Save, Save all and the switch are in the
+  phone menu and in quick open.
 - **Text is recoverable until storage holds it.** A save acknowledged from memory is not
   durable yet. The editor keeps such text recoverable until the flush that covers it is done
   (`FileService.saved()`), together with what storage held before it, even after its tab
