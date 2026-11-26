@@ -183,7 +183,9 @@ export function PreviewPane() {
 
   function openInNewTab(): void {
     const active = port();
-    if (active !== undefined) window.open(preview.tabUrl(active, path()), "_blank", "noopener");
+    // Another tab's port can be known before this tab's transport can name its address.
+    if (active === undefined || !usable()) return;
+    window.open(preview.tabUrl(active, path()), "_blank", "noopener");
   }
 
   async function toggleDevServer(): Promise<void> {
@@ -317,7 +319,7 @@ export function PreviewPane() {
           class="icon-button"
           aria-label={ui.openInTab}
           data-testid="preview-open"
-          disabled={port() === undefined}
+          disabled={port() === undefined || !usable()}
           onClick={openInNewTab}
         >
           <ExternalIcon />
