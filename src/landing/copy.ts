@@ -39,7 +39,7 @@ export const LANDING_COPY = {
   templatesTitle: "Seven starters, or a public GitHub repo.",
   templatesTitleMuted: "Pick one and the workbench opens on it.",
   templatesNote:
-    "Public repos up to 100 MiB compressed, 256 MiB unpacked and 20,000 files. Imports do not run commands automatically. When Sprockt detects a dev command, starting it from Preview runs bun install first if package.json is present.",
+    "Public repos up to 100 MiB compressed, 256 MiB unpacked and 20,000 files. Imports do not run commands automatically. When Sprockt detects a dev command, starting it from Preview runs bun install first if package.json is present and node_modules is missing.",
   templatesError: "Could not create workspace: {message}",
   templateAction: "Create",
   templateCreating: "Creating...",
