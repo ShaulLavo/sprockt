@@ -67,12 +67,6 @@ async function navigate(page: Page, path: string): Promise<void> {
   await urlBar(page).press("Enter");
 }
 
-test.beforeEach(({ browserName }) => {
-  // Every preview needs a server, and Bun's browser engine traps in Playwright's WebKit
-  // (ARCHITECTURE.md "Known gaps"). Remove when Bun runs there.
-  test.fixme(browserName === "webkit", "Bun's browser engine traps in WebKit");
-});
-
 test("a server started in the terminal shows in the preview, and the toolbar drives it", async ({ page }) => {
   await newWorkspace(page);
   await expect(page.getByTestId("preview-empty")).toBeVisible();

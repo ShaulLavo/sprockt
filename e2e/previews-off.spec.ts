@@ -90,12 +90,6 @@ async function deployChangesUnderAnOpenTab(
 }
 
 test.describe("with a tab of the earlier build still open", () => {
-  test.beforeEach(({ browserName }) => {
-    // The earlier build has to run a server, and Bun's browser engine traps in Playwright's
-    // WebKit (ARCHITECTURE.md "Known gaps").
-    test.fixme(browserName === "webkit", "Bun's browser engine traps in WebKit");
-  });
-
   test("a page of a build without previews removes the earlier build's worker", async ({ page, context }) => {
     // The worker file is still the old one here, so the browser finds nothing to update to: only
     // the new build's page can take the worker down.

@@ -77,7 +77,7 @@ Bun.serve({
 
 const urlBar = (page: Page) => page.getByTestId("preview-url");
 const frameSrc = (page: Page) => page.getByTestId("preview-frame").getAttribute("src");
-const heading = (page: Page, text: string, frame?: string) => expectPreviewText(page, "h1", text, frame);
+const heading = (page: Page, text: string, frame?: string) => expectPreviewText(page, "h1", text, { frame });
 
 /** The preview host of a port: 52 characters derived from the workspace, the port, the marker. */
 const hostOf = (port: number) => new RegExp(`^[a-z2-7]{52}-${port}-pv\\.localhost:${TWO_BUILDS_PORT}$`);
@@ -152,9 +152,11 @@ test("the toolbar drives a preview on its own origin", async ({ page }) => {
   await page.getByRole("button", { name: "Forward" }).click();
   await heading(page, "Hello from Bun.serve");
 
-  // Reload asks the server again and stays on the page.
-  await navigate(page, "/about");
+  // Reload asks the server again and stays on the page, also when the address ends in a
+  // fragment, which a frame sent to the same address would only scroll to.
+  await navigate(page, "/about#team");
   await heading(page, "About page");
+  await expect(urlBar(page)).toHaveValue("/about#team");
   await inPreview(page, () => void document.body.setAttribute("data-stale", ""));
   await page.getByRole("button", { name: "Reload preview" }).click();
   await expect.poll(() => inPreview(page, () => document.body.hasAttribute("data-stale"))).toBe(false);

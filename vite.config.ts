@@ -30,13 +30,7 @@ function crossOriginIsolation(): Plugin {
 
 export default defineConfig({
   plugins: [solid(), crossOriginIsolation(), previewScripts()],
-  build: {
-    target: "esnext",
-    sourcemap: true,
-    // Two pages: the app, and the page that shows an isolated preview in a tab of its own
-    // (src/preview/frame-page.ts), which loads none of the app.
-    rolldownOptions: { input: { index: "index.html", "preview-frame": "preview-frame.html" } },
-  },
+  build: { target: "esnext", sourcemap: true },
   // Each worker is one file. A split worker chunk imports back from the worker's entry file, and
   // WebKit evaluates that entry a second time instead of reusing the running one: the second copy
   // replaces the first's message handler, so in attach mode Waffle's filesystem worker answered

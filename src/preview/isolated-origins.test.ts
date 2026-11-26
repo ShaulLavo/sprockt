@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { previewOriginId } from "bun-wasm/preview-origins";
-import { framePage, placeReport, previewOrigins, RETRY_DELAYS_MS } from "./isolated-origins";
+import { createRetries, framePage, placeReport, previewOrigins, RETRY_DELAYS_MS } from "./isolated-origins";
 
 const IDE = "https://sprockt.dev";
 const config = { domain: "sprockt.dev" };
@@ -82,6 +82,32 @@ test("a page's report of where it is becomes the pane's location message", () =>
 });
 
 test("a frame whose server is not reachable yet is tried again a few times, then left alone", () => {
+  const retries = createRetries([10, 20]);
+  expect(retries.unanswered("https://a/", true)).toBe(10);
+  expect(retries.unanswered("https://a/", true)).toBe(20);
+  // It has had its tries: the worker's own page stays, instead of a frame that reloads for ever.
+  expect(retries.unanswered("https://a/", true)).toBeUndefined();
+  expect(retries.unanswered("https://a/", true)).toBeUndefined();
+});
+
+test("a failure a retry cannot help is left alone at once", () => {
+  const retries = createRetries([10, 20]);
+  expect(retries.unanswered("https://a/", false)).toBeUndefined();
+  // It used up none of the tries.
+  expect(retries.unanswered("https://a/", true)).toBe(10);
+});
+
+test("a frame sent to another address, or one that loaded, starts over", () => {
+  const retries = createRetries([10, 20]);
+  retries.unanswered("https://a/", true);
+  retries.unanswered("https://a/", true);
+  expect(retries.unanswered("https://a/about", true)).toBe(10);
+  retries.unanswered("https://a/about", true);
+  retries.answered();
+  expect(retries.unanswered("https://a/about", true)).toBe(10);
+});
+
+test("the tries are few: a hang cap for a tab that is still attaching, not a polling loop", () => {
   expect(RETRY_DELAYS_MS.length).toBeGreaterThan(0);
   expect(RETRY_DELAYS_MS.length).toBeLessThanOrEqual(5);
 });

@@ -79,9 +79,7 @@ test.describe("on a phone", () => {
     await expect(await menuItem(page, "Turn off autosave")).toBeVisible();
   });
 
-  test("an edit by touch reaches a running dev server's preview", async ({ page, browserName }) => {
-    // Bun's browser engine traps in Playwright's WebKit (ARCHITECTURE.md "Known gaps").
-    test.fixme(browserName === "webkit", "Bun's browser engine traps in WebKit");
+  test("an edit by touch reaches a running dev server's preview", async ({ page }) => {
     await newWorkspace(page);
     await expect(page.getByTestId("terminal-state")).toHaveText("ready");
     // A server that reads its heading from a page file when it starts; the task runs it again

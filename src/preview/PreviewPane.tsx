@@ -9,7 +9,16 @@ import { STATUS_SLOT } from "../workbench/slots";
 import { useWorkspace } from "../workspace/session";
 import { frameCommand, type FrameMessage } from "./bridge";
 import { ui } from "./copy";
-import { canGoBack, canGoForward, currentPath, emptyHistory, stepped, visited } from "./history";
+import {
+  canGoBack,
+  canGoForward,
+  currentPath,
+  emptyHistory,
+  replaced,
+  stepped,
+  visited,
+  withoutFragment,
+} from "./history";
 import { BackIcon, DesktopIcon, ExternalIcon, ForwardIcon, PhoneIcon, PlayIcon, TabletIcon } from "./icons";
 import { normalizePreviewPath } from "./paths";
 import "./preview.css";
@@ -157,8 +166,12 @@ export function PreviewPane() {
     if (!element || active === undefined) return;
     const href = preview.frameUrl(active, path());
     if (bridged)
-      element.contentWindow?.postMessage(frameCommand({ command: "reload" }), new URL(href).origin);
-    else element.src = href;
+      return element.contentWindow?.postMessage(frameCommand({ command: "reload" }), new URL(href).origin);
+    // A page that takes no commands is reloaded by its address. One that ends in a fragment
+    // would only scroll there, so the page is asked for without it, in the same history entry.
+    const target = withoutFragment(path());
+    setHistory((current) => replaced(current, target));
+    element.src = preview.frameUrl(active, target);
   }
 
   function submitUrl(event: SubmitEvent): void {

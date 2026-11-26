@@ -14,6 +14,14 @@ export const CLIENT_SCRIPT_PATH = "/preview-client.js";
  */
 export const PREVIEW_MODE_PATH = "/preview-mode.json";
 
+/**
+ * The page on the IDE's origin that shows an isolated preview in a tab of its own
+ * (frame-page.ts), and its one script. A tab opened on a preview origin itself is refused: it
+ * cannot reach the IDE tab in every browser.
+ */
+export const FRAME_PAGE_PATH = "/preview-frame";
+export const FRAME_PAGE_SCRIPT_PATH = "/preview-frame.js";
+
 export interface MountedLocation {
   readonly workspace: string;
   readonly port: number;

@@ -18,7 +18,12 @@ async function workbenchState(page: Page): Promise<string> {
     // The preview as the page has it: its port, where its frame points and what the frame shows.
     const frame = document.querySelector<HTMLIFrameElement>("[data-testid=preview-frame]");
     const port = document.querySelector<HTMLSelectElement>("[data-testid=preview-port]");
+    const task = document.querySelector("[data-testid=preview-task]");
+    const output = document.querySelector("[data-testid=preview-task-output]")?.textContent ?? "";
     const preview = [
+      `task=${task?.getAttribute("data-status")}`,
+      // A dev server that never listened says why in the end of its output.
+      `task-output=${JSON.stringify(output.slice(-400))}`,
       `preview-port=${port?.value}`,
       `frame-src=${frame?.getAttribute("src")}`,
       `frame-at=${frame?.contentWindow?.location.href}`,

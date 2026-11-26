@@ -75,14 +75,22 @@ export async function inPreview<Result, Argument = undefined>(
 export const previewText = (page: Page, selector: string, frame?: string): Promise<string | undefined> =>
   inPreview(page, (query) => document.querySelector(query)?.textContent ?? undefined, selector, frame);
 
+export interface PreviewWait {
+  /** The frame that holds the preview, when it is not the pane's. */
+  readonly frame?: string;
+  /** A hang cap for a wait that includes a download or an install. */
+  readonly timeout?: number;
+}
+
 /** Waits until an element of the previewed page has exactly this text. */
 export async function expectPreviewText(
   page: Page,
   selector: string,
   text: string,
-  frame?: string,
+  wait: PreviewWait = {},
 ): Promise<void> {
-  await expect.poll(() => previewText(page, selector, frame), `${selector} in the preview`).toBe(text);
+  const settings = { message: `${selector} in the preview`, timeout: wait.timeout };
+  await expect.poll(() => previewText(page, selector, wait.frame), settings).toBe(text);
 }
 
 /** Clicks an element of the previewed page, as the page's own script would. */

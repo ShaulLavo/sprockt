@@ -7,11 +7,6 @@ import { TAB_POLICY } from "../src/runtime/tab-policy";
 // live tab, and e2e/preview.spec.ts and e2e/hmr.spec.ts cover it.
 test.skip(TAB_POLICY !== "attach", "tabs share a workspace only with the attach policy");
 
-test.beforeEach(({ browserName }) => {
-  // Bun's browser engine traps in Playwright's WebKit (ARCHITECTURE.md "Known gaps").
-  test.fixme(browserName === "webkit", "Bun's browser engine traps in WebKit");
-});
-
 const SERVER = `
 Bun.serve({
   port: 3000,

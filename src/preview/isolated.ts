@@ -13,10 +13,10 @@ import {
   type PreviewOriginConfig,
 } from "bun-wasm/preview-origins";
 import {
+  createRetries,
   framePage,
   placeReport,
   previewOrigins,
-  RETRY_DELAYS_MS,
   type PreviewOrigins,
 } from "./isolated-origins";
 import type { PreviewBackend, PreviewServer, PreviewTransport } from "./transport";
@@ -35,15 +35,21 @@ export function createIsolatedPreviewTransport(options: IsolatedPreviewOptions):
   const listed = new Map<number, PreviewBackend>();
   const listeners = new Set<(servers: readonly PreviewServer[]) => void>();
   let identity: Promise<string> | undefined;
-  let naming: Promise<PreviewOrigins> | undefined;
   let origins: PreviewOrigins | undefined;
 
-  const readIdentity = (): Promise<string> => (identity ??= options.identity());
+  /** Read once and shared by everything that needs it. A read that failed is tried again. */
+  function readIdentity(): Promise<string> {
+    const reading = (identity ??= options.identity());
+    reading.catch(() => {
+      if (identity === reading) identity = undefined;
+    });
+    return reading;
+  }
 
-  async function name(): Promise<PreviewOrigins> {
+  async function name(): Promise<void> {
+    if (origins) return;
     const id = await previewOriginId(ideOrigin, await readIdentity());
     origins = previewOrigins(config, id);
-    return origins;
   }
 
   /** The workspace's names. They exist once `whenReady` resolved, which the pane waits for. */
@@ -81,24 +87,25 @@ export function createIsolatedPreviewTransport(options: IsolatedPreviewOptions):
   }
 
   function watch(frame: HTMLIFrameElement, listener: Parameters<PreviewTransport["watch"]>[1]): () => void {
-    let retries = 0;
+    const retries = createRetries();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const again = (): void => {
       // Assigning the address again loads it again.
       // oxlint-disable-next-line no-self-assign
       frame.src = frame.src;
     };
-    const stop = previews.observeFrame(frame, (message) => {
-      const report = placeReport(message);
-      if (report) {
-        retries = 0;
-        return listener(report);
-      }
-      const delay = message.transient ? RETRY_DELAYS_MS[retries] : undefined;
+    /** The origin's worker answered in the server's place; `transient` says a retry may help. */
+    function unanswered(transient: boolean): void {
+      const delay = retries.unanswered(frame.src, transient);
       if (delay === undefined) return;
-      retries += 1;
       clearTimeout(timer);
       timer = setTimeout(again, delay);
+    }
+    const stop = previews.observeFrame(frame, (message) => {
+      const report = placeReport(message);
+      if (!report) return unanswered(message.transient === true);
+      retries.answered();
+      listener(report);
     });
     return () => {
       clearTimeout(timer);
@@ -114,7 +121,7 @@ export function createIsolatedPreviewTransport(options: IsolatedPreviewOptions):
     async whenReady() {
       if (!navigator.serviceWorker)
         throw new Error("This browser has no service workers, so previews cannot load");
-      await (naming ??= name());
+      await name();
     },
     register(port, backend) {
       const token = previews.registerListener(port, backend);

@@ -274,7 +274,7 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
               <Prompt command="bun install" entered={step() >= 1} />
               <Show when={step() >= 2}>
                 <span class="lp-wb-tline">
-                  <span class="a-bold">bun install</span> <span class="a-dim">v1.4.4</span>
+                  <span class="a-bold">bun install</span> <span class="a-dim">v1.4.5</span>
                 </span>
                 <span class="lp-wb-tline"> </span>
                 <span class="lp-wb-tline">

@@ -9,14 +9,8 @@ import {
   type PreviewOriginConfig,
 } from "bun-wasm/preview-origins";
 import { frameMessage, type FrameMessage } from "./bridge";
-import { normalizePreviewPath } from "./paths";
+import { FRAME_PAGE_PATH, normalizePreviewPath } from "./paths";
 import type { PreviewPlace } from "./transport";
-
-/**
- * The page on the IDE's origin that shows a preview in a tab of its own (frame-page.ts). A tab
- * opened on a preview origin itself is refused: it cannot reach the IDE tab in every browser.
- */
-export const FRAME_PAGE_PATH = "/preview-frame";
 
 export interface PreviewOrigins {
   /** The origin a server's pages live on. */
@@ -69,3 +63,32 @@ export function placeReport(message: OriginMessage): FrameMessage | undefined {
  * on the worker's own error page after the last try.
  */
 export const RETRY_DELAYS_MS: readonly number[] = [500, 1000, 1500, 2000];
+
+export interface Retries {
+  /**
+   * The worker answered in the server's place for the frame at `address`. Returns how long to
+   * wait before sending the frame there again, or undefined when it is left on that answer:
+   * the failure is not one a retry helps, or this address has had its tries.
+   */
+  unanswered(address: string, transient: boolean): number | undefined;
+  /** A page of the server reported itself: whatever fails next starts over. */
+  answered(): void;
+}
+
+/** Counts tries per address: a frame that was sent somewhere else starts over. */
+export function createRetries(delays: readonly number[] = RETRY_DELAYS_MS): Retries {
+  let failing: string | undefined;
+  let tries = 0;
+  return {
+    unanswered(address, transient) {
+      if (address !== failing) tries = 0;
+      failing = address;
+      const delay = transient ? delays[tries] : undefined;
+      if (delay !== undefined) tries += 1;
+      return delay;
+    },
+    answered() {
+      failing = undefined;
+    },
+  };
+}
