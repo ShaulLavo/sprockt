@@ -4,6 +4,7 @@
   "ignorePatterns": [
     "dist",
     "dist-previews-off",
+    "dist-isolated",
     "public/guests",
     "test-results",
     "playwright-report",

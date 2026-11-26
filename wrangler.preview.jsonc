@@ -1,0 +1,32 @@
+{
+  // The preview hosts of sprockt.dev: `<id>-<port>-pv.sprockt.dev`, one origin per dev server
+  // of a workspace (worker/preview.ts, ARCHITECTURE.md "Deploy"). A Worker of its own, so a
+  // preview host never serves a file of the IDE: the Worker runs first on every path and
+  // answers with the four fixed files of bun-wasm's preview origins, or refuses.
+  //
+  // Nothing deploys this file by itself. Before `wrangler deploy --config wrangler.preview.jsonc`:
+  //   1. a proxied wildcard DNS record `*` on sprockt.dev (single-level names, so the zone's
+  //      Universal SSL certificate covers them);
+  //   2. the route below must not belong to another Worker. bun-wasm's `bun-wasm-preview`
+  //      Worker declares the same pattern for the playground; one Worker serves the hosts of
+  //      both IDEs, so IDE_ORIGINS lists both and their bun-wasm pins must agree on the preview
+  //      protocol.
+  // The IDE build that goes with it names the same domain: VITE_SPROCKT_PREVIEW_DOMAIN=sprockt.dev.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sprockt-preview-hosts",
+  "main": "worker/preview.ts",
+  "compatibility_date": "2026-10-15",
+  "assets": {
+    // The files exactly as the pinned bun-wasm package built them; no copy step to drift.
+    "directory": "./node_modules/bun-wasm/dist/package/preview-origin",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+    "not_found_handling": "none",
+  },
+  "vars": {
+    "PREVIEW_DOMAIN": "sprockt.dev",
+    "IDE_ORIGINS": "https://sprockt.dev,https://bun.sprockt.dev",
+  },
+  "routes": [{ "pattern": "*-pv.sprockt.dev/*", "zone_name": "sprockt.dev" }],
+}

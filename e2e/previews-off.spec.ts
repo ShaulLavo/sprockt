@@ -1,6 +1,7 @@
 import type { BrowserContext, Page } from "@playwright/test";
 import { expect, newWorkspace, runInTerminal, test, writeFile } from "./helpers";
 import { TWO_BUILDS_ORIGIN } from "./origins";
+import { expectPreviewText, PROBE } from "./preview-probe";
 import { BUILD_COOKIE, type Deploy } from "../scripts/serve-builds";
 
 // These tests run on the origin that serves two builds (scripts/serve-builds.ts): the test build
@@ -19,6 +20,19 @@ Bun.serve({
     new Response("<!doctype html><html><head><title>Guest</title></head><body><h1>Guest page</h1></body></html>", {
       headers: { "content-type": "text/html; charset=utf-8" },
     }),
+});
+`;
+
+/** The same page with the probe that lets a test read it on an origin of its own (preview-probe.ts). */
+const PROBED_SERVER = `
+Bun.serve({
+  port: 3000,
+  fetch: (request) =>
+    new URL(request.url).pathname === "/probe.js"
+      ? new Response(Bun.file("probe.js"), { headers: { "content-type": "text/javascript" } })
+      : new Response("<!doctype html><title>Guest</title><script src='/probe.js'></script><h1>Guest page</h1>", {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
 });
 `;
 
@@ -93,6 +107,24 @@ test.describe("with a tab of the earlier build still open", () => {
     context,
   }) => {
     await deployChangesUnderAnOpenTab(page, context, "off");
+  });
+
+  test("a deploy that moves to isolated previews takes the mounted worker down, and previews on its own origins", async ({
+    page,
+    context,
+  }) => {
+    await deployChangesUnderAnOpenTab(page, context, "isolated");
+
+    // The new build's previews are not on this origin at all: a server gets a host of its own.
+    const fresh = await context.newPage();
+    await newWorkspace(fresh);
+    await writeFile(fresh, "probe.js", PROBE);
+    await writeFile(fresh, "server.ts", PROBED_SERVER);
+    await runInTerminal(fresh, "bun server.ts");
+    await expectPreviewText(fresh, "h1", "Guest page");
+    const address = new URL((await fresh.getByTestId("preview-frame").getAttribute("src")) ?? "");
+    expect(address.host).toMatch(/^[a-z2-7]{52}-3000-pv\.localhost:\d+$/);
+    expect(await registrations(fresh)).toBe(0);
   });
 
   test("a preview address opened right after the deploy changed is not served by the old worker", async ({

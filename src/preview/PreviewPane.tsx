@@ -7,7 +7,7 @@ import { fill } from "../ui/format";
 import { Icon } from "../ui/icons";
 import { STATUS_SLOT } from "../workbench/slots";
 import { useWorkspace } from "../workspace/session";
-import { frameCommand, isFrameMessage, type FrameMessage } from "./bridge";
+import { frameCommand, type FrameMessage } from "./bridge";
 import { ui } from "./copy";
 import { canGoBack, canGoForward, currentPath, emptyHistory, stepped, visited } from "./history";
 import { BackIcon, DesktopIcon, ExternalIcon, ForwardIcon, PhoneIcon, PlayIcon, TabletIcon } from "./icons";
@@ -66,7 +66,12 @@ export function PreviewPane() {
 
   function mountFrame(element: HTMLIFrameElement): void {
     setFrame(element);
-    onCleanup(() => setFrame(undefined));
+    // The transport hears only this frame, and only from an origin it serves.
+    const unwatch = preview.watch(element, onFrameMessage);
+    onCleanup(() => {
+      unwatch();
+      setFrame(undefined);
+    });
   }
 
   onCleanup(preview.subscribe(setServers));
@@ -131,21 +136,12 @@ export function PreviewPane() {
     }
     const place = preview.locate(message.href);
     if (!place || place.port !== port()) return;
-    bridged = true;
+    bridged = preview.takesCommands;
     announced = true;
     if (message.type === "started") setErrors([]);
     setHistory((current) => visited(current, place.path));
     setDraft(undefined);
   }
-
-  function onMessage(event: MessageEvent<unknown>): void {
-    const active = port();
-    if (active === undefined || event.source !== frame()?.contentWindow) return;
-    if (!preview.ownsOrigin(event.origin, active) || !isFrameMessage(event.data)) return;
-    onFrameMessage(event.data);
-  }
-  addEventListener("message", onMessage);
-  onCleanup(() => removeEventListener("message", onMessage));
 
   function step(delta: -1 | 1): void {
     const next = stepped(history(), delta);
@@ -362,6 +358,8 @@ export function PreviewPane() {
             class="preview-frame"
             title={ui.preview}
             data-testid="preview-frame"
+            // A page on its own origin has SharedArrayBuffer only if its embedder allows it.
+            allow="cross-origin-isolated"
             onLoad={onFrameLoad}
             ref={mountFrame}
           />

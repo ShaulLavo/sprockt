@@ -32,7 +32,7 @@
     "@singapore-editor/solid": "0.2.13",
     "@waffle-os/relay": "0.0.150",
     "bash-web": "0.0.114",
-    "bun-wasm": "git+https://github.com/ShaulLavo/bun-wasm.git#7b25271e30bd41ca54d115d01d557084068cf930",
+    "bun-wasm": "git+https://github.com/ShaulLavo/bun-wasm.git#a997a2069c5201c75c83e6eb68e0995a8f7254f5",
     "ghostty-webgpu": "0.3.34",
     "solid-js": "1.9.20",
     "waffle": "npm:@waffle-os/runtime@0.0.150",

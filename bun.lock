@@ -17,7 +17,7 @@
         "@singapore-editor/solid": "0.2.13",
         "@waffle-os/relay": "0.0.150",
         "bash-web": "0.0.114",
-        "bun-wasm": "git+https://github.com/ShaulLavo/bun-wasm.git#7b25271e30bd41ca54d115d01d557084068cf930",
+        "bun-wasm": "git+https://github.com/ShaulLavo/bun-wasm.git#a997a2069c5201c75c83e6eb68e0995a8f7254f5",
         "ghostty-webgpu": "0.3.34",
         "solid-js": "1.9.20",
         "waffle": "npm:@waffle-os/runtime@0.0.150",
@@ -494,7 +494,7 @@
 
     "bun-types": ["bun-types@1.4.4", "", { "dependencies": { "@types/node": "*", "undici-types": "*" } }, "sha512-yjrJh5oGX7mMPKGd19YXyIjmEuj4G4zNC30bs7PM9Az7NQ3ndF3j6hbeRdvJTRQEhJ/FYQwW0a2moweEi2hMxQ=="],
 
-    "bun-wasm": ["bun-wasm@github:ShaulLavo/bun-wasm#7b25271", { "peerDependencies": { "@waffle-os/relay": "0.0.148", "waffle": "*", "waffle-base": "https://github.com/ShaulLavo/waffle/releases/download/programs-v0.0.23/waffle-base-0.0.23.tgz" }, "optionalPeers": ["@waffle-os/relay"], "hasInstallScript": true }, "ShaulLavo-bun-wasm-7b25271", "sha512-Wk0Sbd5BU5ww/dd1aoeH6IjYAp69H9kECytgtEmCjcLepVuqv6vjeX8rWNFYmDdO+JhvebcbRbckmbBfoFh7LA=="],
+    "bun-wasm": ["bun-wasm@github:ShaulLavo/bun-wasm#a997a20", { "peerDependencies": { "@waffle-os/relay": "0.0.150", "waffle": "*", "waffle-base": "https://github.com/ShaulLavo/waffle/releases/download/programs-v0.0.23/waffle-base-0.0.23.tgz" }, "optionalPeers": ["@waffle-os/relay"], "hasInstallScript": true }, "ShaulLavo-bun-wasm-a997a20", "sha512-t4I3MGgjPdc+WdRxaJhKWAeMmBPnqdmU64q6Q4yW6d2Sdiv9zTQEaKXQM6HPpXGq0LIwJNWRqAgRNhre5cHqtw=="],
 
     "call-bind": ["call-bind@1.0.9", "", { "dependencies": { "call-bind-apply-helpers": "^1.0.2", "es-define-property": "^1.0.1", "get-intrinsic": "^1.3.0", "set-function-length": "^1.2.2" } }, "sha512-a/hy+pNsFUTR+Iz8TCJvXudKVLAnz/DyeSUo10I5yvFDQJBFU2s9uqQpoSrJlroHUKoKqzg+epxyP9lqFdzfBQ=="],
 

@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { E2E_PORT as port, TWO_BUILDS_ORIGIN, TWO_BUILDS_PORT } from "./e2e/origins";
+import { E2E_PORT as port, PREVIEW_DOMAIN, TWO_BUILDS_ORIGIN, TWO_BUILDS_PORT } from "./e2e/origins";
 
 // The suite runs against the production build on the persistent IndexedDB filesystem, the same
 // path a visitor takes. SPROCKT_E2E_PORT picks the port when the default is taken.
@@ -23,15 +23,21 @@ export default defineConfig({
       url: `http://localhost:${port}`,
       reuseExistingServer: false,
     },
-    // For e2e/previews-off.spec.ts: the app built a second time, without previews, and one
-    // origin that serves either build (scripts/serve-builds.ts). The spec moves a browser from
-    // the build with previews to the one without, as a new deploy would.
+    // The app built twice more, and one origin that serves any of the builds
+    // (scripts/serve-builds.ts): without previews, for e2e/previews-off.spec.ts, which moves a
+    // browser from the build with previews to the one without, as a new deploy would; and with
+    // isolated previews, for e2e/isolated-preview.spec.ts. That build names the server's own
+    // port as its preview domain, and the server answers as the preview hosts too.
     {
-      command: `env VITE_SPROCKT_PREVIEWS= bunx vite build --outDir dist-previews-off --logLevel warn && bun scripts/serve-builds.ts --port ${TWO_BUILDS_PORT}`,
+      command: [
+        `env VITE_SPROCKT_PREVIEWS= VITE_SPROCKT_PREVIEW_DOMAIN= bunx vite build --outDir dist-previews-off --logLevel warn`,
+        `env VITE_SPROCKT_PREVIEWS= VITE_SPROCKT_PREVIEW_DOMAIN=${PREVIEW_DOMAIN} bunx vite build --outDir dist-isolated --logLevel warn`,
+        `bun scripts/serve-builds.ts --port ${TWO_BUILDS_PORT}`,
+      ].join(" && "),
       url: TWO_BUILDS_ORIGIN,
       reuseExistingServer: false,
-      // A hang cap for the second build, not a speed target.
-      timeout: 300_000,
+      // A hang cap for the two builds, not a speed target.
+      timeout: 600_000,
     },
   ],
   projects: [

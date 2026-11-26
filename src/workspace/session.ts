@@ -3,11 +3,13 @@
 import { createContext, useContext } from "solid-js";
 import { createFileService, type FileService } from "../files/service";
 import { createPreviewTransport } from "../preview";
+import { previewIdentity } from "../preview/identity";
 import type { PreviewTransport } from "../preview/transport";
 import { bootWorkspace, type BootOptions, type BootStage, type WorkspaceRuntime } from "../runtime/boot";
 import { createTerminalStore, type TerminalStore } from "../terminal/store";
 import { createCommands, createStatusItems, type Commands, type StatusItems } from "../workbench/slots";
 import { tearDownAll } from "./lifecycle";
+import { withServerEnv } from "./shell-env";
 
 export interface WorkspaceSession extends WorkspaceRuntime {
   readonly files: FileService;
@@ -29,7 +31,10 @@ export async function openWorkspace(
 ): Promise<WorkspaceSession> {
   let moved = false;
   let revoke = (): void => void (moved = true);
-  const preview = createPreviewTransport(id);
+  // The transport exists before the runtime it serves; its identity is read from the
+  // workspace's own files, which are there once the runtime is.
+  const filesystem = Promise.withResolvers<WorkspaceRuntime["runtime"]["filesystem"]>();
+  const preview = createPreviewTransport(id, async () => previewIdentity(id, await filesystem.promise));
   const booted = await bootWorkspace(
     id,
     (stage) => {
@@ -49,6 +54,7 @@ export async function openWorkspace(
     await preview.dispose();
     throw error;
   });
+  filesystem.resolve(booted.runtime.filesystem);
   const files = createFileService(booted.runtime, booted.id);
   const terminals = createTerminalStore();
   // Revoking saves first leaves the editor's unsaved text for the new owner; then this tab's
@@ -64,6 +70,7 @@ export async function openWorkspace(
   terminals.create();
   return {
     ...booted,
+    shell: withServerEnv(booted.shell, preview.serverEnv),
     files,
     preview,
     terminals,

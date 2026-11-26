@@ -1,5 +1,5 @@
 // The seam between the preview pane and whatever carries a dev server's responses to a frame.
-// The pane only ever asks this interface for URLs.
+// The pane only ever asks this interface for URLs and for what a frame's page reports.
 //
 // A transport belongs to one workspace, and every route it builds is keyed by that workspace
 // and the port, never by the port alone: two workspaces with a server on the same port must
@@ -9,9 +9,9 @@
 // worker. The previewed code then shares the IDE's origin and can reach its storage, so
 // `mounted` is a development stopgap for trusted local projects and is never in a public
 // build. `isolated` gives each server an origin of its own (`<id>-<port>-pv.sprockt.dev`);
-// that is what keeps a previewed project away from the IDE, and it is required before any
-// public deploy.
+// that is what keeps a previewed project away from the IDE, and it is what a public build has.
 import type { PreviewServer as PreviewBackend } from "waffle/browser/preview";
+import type { FrameMessage } from "./bridge";
 
 export type { PreviewBackend };
 
@@ -31,12 +31,22 @@ export interface PreviewPlace {
 
 export interface PreviewTransport {
   readonly kind: "none" | "mounted" | "isolated";
+  /**
+   * Whether a page that reported itself takes the pane's commands (bridge.ts) by message.
+   * Otherwise the pane steers the frame by its address alone.
+   */
+  readonly takesCommands: boolean;
+  /**
+   * What a dev server's shell needs in its environment so the server accepts requests under
+   * this transport's host names (Vite refuses a Host it does not know).
+   */
+  readonly serverEnv: Readonly<Record<string, string>>;
   /** Resolves when frames can load. Rejects when previews cannot work in this browser. */
   whenReady(): Promise<void>;
   /** The runtime reports a listening port and the connection to it; `unregister` when it stops. */
   register(port: number, backend: PreviewBackend): void;
   unregister(port: number, backend: PreviewBackend): void;
-  /** Servers that are listening right now, lowest port first. */
+  /** Servers that are listening right now and that a frame can load, lowest port first. */
   servers(): readonly PreviewServer[];
   /** Calls back with the full list whenever a server starts or stops. Returns the unsubscribe. */
   subscribe(listener: (servers: readonly PreviewServer[]) => void): () => void;
@@ -49,8 +59,11 @@ export interface PreviewTransport {
   tabUrl(port: number, path: string): string;
   /** The server and path behind a frame URL the page reported, or undefined for a foreign URL. */
   locate(href: string): PreviewPlace | undefined;
-  /** Whether `origin` (of a message from a frame) is one this transport serves `port` from. */
-  ownsOrigin(origin: string, port: number): boolean;
+  /**
+   * Calls back with what the page in `frame` says about itself: only messages that really come
+   * from that frame and from an origin this transport serves. Returns the function that stops it.
+   */
+  watch(frame: HTMLIFrameElement, listener: (message: FrameMessage) => void): () => void;
   /** Calls back when frames must reload, for example after the bridge restarted. */
   onReloadNeeded(listener: () => void): () => void;
   dispose(): Promise<void>;
@@ -64,6 +77,8 @@ function unavailable(port: number): never {
 export function createInactivePreviewTransport(): PreviewTransport {
   return {
     kind: "none",
+    takesCommands: false,
+    serverEnv: {},
     whenReady: async () => {},
     register: () => {},
     unregister: () => {},
@@ -72,7 +87,7 @@ export function createInactivePreviewTransport(): PreviewTransport {
     frameUrl: unavailable,
     tabUrl: unavailable,
     locate: () => undefined,
-    ownsOrigin: () => false,
+    watch: () => () => {},
     onReloadNeeded: () => () => {},
     dispose: async () => {},
   };

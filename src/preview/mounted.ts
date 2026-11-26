@@ -7,6 +7,7 @@
 import { PreviewRouter } from "waffle/browser/preview";
 import type { PreviewMessage, PreviewReply } from "waffle/browser/preview-protocol";
 import { activated } from "waffle/browser/service-worker";
+import { isFrameMessage } from "./bridge";
 import { askedWorkspace, hostAnnouncement, isHostQuery } from "./host-protocol";
 import { mountedPath, parseMountedUrl, PREVIEW_PREFIX, SERVICE_WORKER_PATH, workspaceMount } from "./paths";
 import { retiredFlag } from "./retirement";
@@ -67,6 +68,9 @@ export function createMountedPreviewTransport(workspace: string): PreviewTranspo
 
   return {
     kind: "mounted",
+    takesCommands: true,
+    // The server sees a loopback Host here, which every dev server accepts.
+    serverEnv: {},
     whenReady: () => (ready ??= start()),
     register(port, backend) {
       backends.set(port, backend);
@@ -87,7 +91,15 @@ export function createMountedPreviewTransport(workspace: string): PreviewTranspo
     frameUrl: (port, path) => origin + mountedPath(workspace, port, path),
     tabUrl: (port, path) => origin + mountedPath(workspace, port, path),
     locate,
-    ownsOrigin: (candidate) => candidate === origin,
+    watch(frame, listener) {
+      // A mounted page shares the IDE's origin, so that is the only origin heard.
+      const hear = (event: MessageEvent<unknown>): void => {
+        if (event.source !== frame.contentWindow || event.origin !== origin) return;
+        if (isFrameMessage(event.data)) listener(event.data);
+      };
+      addEventListener("message", hear);
+      return () => removeEventListener("message", hear);
+    },
     onReloadNeeded: () => () => {},
     async dispose() {
       container?.removeEventListener("message", onMessage);

@@ -3,15 +3,16 @@
 // module service workers are not available in every browser we support, and the client script
 // has to run before the previewed page's own scripts.
 //
-// A build without previews publishes neither. In the worker's place it puts one that serves
-// nothing and removes itself (sw-off.ts), for browsers that still hold an earlier build's worker.
+// A build without mounted previews (none at all, or isolated ones) publishes neither. In the
+// worker's place it puts one that serves nothing and removes itself (sw-off.ts), for browsers
+// that still hold an earlier build's worker.
 import { resolve } from "node:path";
 import { build, type Plugin } from "vite";
 //
 // A build with previews also publishes `/preview-mode.json`, which says so. The service worker
 // asks for it to learn whether the deployed build still has previews (retirement.ts); a build
 // without them has no such file.
-import { previewKind } from "./kind";
+import { previewKind, type PreviewKind } from "./kind";
 import { CLIENT_SCRIPT_PATH, PREVIEW_MODE_PATH, SERVICE_WORKER_PATH } from "./paths";
 import { MOUNTED_MODE } from "./retirement";
 
@@ -26,8 +27,12 @@ const ENTRIES_OFF: Entries = { [SERVICE_WORKER_PATH]: "src/preview/sw-off.ts" };
 
 const MODE_FILE = `${JSON.stringify(MOUNTED_MODE)}\n`;
 
-/** What a build publishes at the preview scripts' addresses, by whether it has previews. */
-export function publishedEntries(kind: "mounted" | "none"): Entries {
+/**
+ * What a build publishes at the preview scripts' addresses. Only mounted previews have scripts
+ * of ours: isolated ones are served by their own hosts, so a build with them takes the mounted
+ * worker down exactly as a build with no previews does.
+ */
+export function publishedEntries(kind: PreviewKind): Entries {
   return kind === "mounted" ? ENTRIES : ENTRIES_OFF;
 }
 
@@ -53,7 +58,7 @@ async function bundle(root: string, entry: string, minify: boolean): Promise<str
 
 export function previewScripts(): Plugin {
   let root = process.cwd();
-  let kind: "mounted" | "none" = "none";
+  let kind: PreviewKind = "none";
   const cache = new Map<string, Promise<string>>();
   return {
     name: "sprockt:preview-scripts",
@@ -63,6 +68,8 @@ export function previewScripts(): Plugin {
       kind = previewKind({
         DEV: config.env.DEV === true,
         VITE_SPROCKT_PREVIEWS: config.env.VITE_SPROCKT_PREVIEWS,
+        // A malformed domain fails the build here, not in a visitor's browser.
+        VITE_SPROCKT_PREVIEW_DOMAIN: config.env.VITE_SPROCKT_PREVIEW_DOMAIN,
       });
     },
     async generateBundle() {
