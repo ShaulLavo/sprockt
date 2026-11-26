@@ -28,9 +28,10 @@
   --g-ink: light-dark(#25303a, #dbe4ee);
   --g-hi: light-dark(#dde5ed, #24344a);
   --g-deep: light-dark(#98afc5, #23405d);
-  --g-paint-deep: light-dark(#7d9aba, #1f3a58);
-  --g-paint-hi: light-dark(#e2e9f0, #1c2838);
-  --g-paint-far: light-dark(#a9bdd1, #172638);
+  --g-paint-base: light-dark(#bccbd9, #131d2b);
+  --g-paint-deep: light-dark(#7896b7, #24476b);
+  --g-paint-hi: light-dark(#dfe6ee, #1d2a3b);
+  --g-paint-far: light-dark(#9fb5cb, #1a304a);
   --g-calm: light-dark(rgb(255 255 255 / 0.34), rgb(10 13 20 / 0.3));
 
   /* the one dark band (#4 ground-inverse); on the dark page a step darker, with hairlines */
@@ -341,15 +342,17 @@ body:has(.landing-page) {
    drawn once in CSS instead of a shader) */
 .lp-grain {
   background-image:
-    radial-gradient(48% 70% at 6% 96%, var(--g-paint-deep), transparent 72%),
-    radial-gradient(40% 55% at 24% 8%, var(--g-paint-hi), transparent 70%),
-    radial-gradient(55% 70% at 94% 26%, var(--g-paint-hi), transparent 72%),
-    radial-gradient(45% 60% at 70% 100%, var(--g-paint-far), transparent 70%),
+    radial-gradient(34% 46% at 3% 64%, var(--g-paint-deep), transparent 74%),
+    radial-gradient(30% 40% at 14% 30%, var(--g-paint-far), transparent 72%),
+    radial-gradient(42% 50% at 30% 4%, var(--g-paint-hi), transparent 70%),
+    radial-gradient(50% 64% at 96% 22%, var(--g-paint-hi), transparent 72%),
+    radial-gradient(40% 50% at 98% 78%, var(--g-paint-far), transparent 70%),
     radial-gradient(
-      35% 45% at 50% 40%,
+      38% 48% at 52% 46%,
       color-mix(in oklab, var(--g-surface) 70%, transparent),
       transparent 72%
     );
+  background-color: var(--g-paint-base);
 }
 
 .lp-grain::before {
@@ -361,7 +364,7 @@ body:has(.landing-page) {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0' intercept='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-size: 160px 160px;
   mix-blend-mode: overlay;
-  opacity: 0.3;
+  opacity: 0.42;
 }
 
 /* ───────────── Nav (#4 nav--centre, sticky) ───────────── */
@@ -1303,6 +1306,10 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   padding-top: 6px;
 }
 
+.lp-device .lp-wb-crumb {
+  display: none;
+}
+
 .lp-marquee {
   position: relative;
   display: flex;
@@ -1350,9 +1357,14 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   cursor: pointer;
 }
 
-.lp-loop-pause .lp-ico {
-  width: 14px;
-  height: 14px;
+.lp-loop-pause svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* ───────────── What runs inside: the list and the Waffle hub ───────────── */
@@ -1429,25 +1441,40 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   vector-effect: non-scaling-stroke;
 }
 
-.lp-hub-lines .lp-hub-pulse {
-  stroke: var(--accent);
-  stroke-width: 2.5;
-  stroke-linecap: round;
-  stroke-dasharray: 10 110;
-  stroke-dashoffset: 10;
-  animation: lp-pulse 2.8s var(--ease-in-out) 0.6s 4 both;
+/* a dot of the accent travels out from Waffle a few times, then rests (a finite loop, no control needed) */
+.lp-hub-dot {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 24%, transparent);
+  opacity: 0;
+  animation: lp-hub-dot 2.6s var(--ease-in-out) 0.6s 4;
 }
 
-.lp-hub-lines .lp-hub-pulse:last-of-type {
-  animation-delay: 2s;
+.lp-hub-dot:last-of-type {
+  animation-delay: 1.9s;
 }
 
-@keyframes lp-pulse {
-  from {
-    stroke-dashoffset: 10;
+@keyframes lp-hub-dot {
+  0% {
+    top: 50%;
+    left: 50%;
+    opacity: 0;
   }
-  to {
-    stroke-dashoffset: -100;
+  15%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    top: var(--y);
+    left: var(--x);
+    opacity: 0;
   }
 }
 
@@ -1941,7 +1968,7 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
 @media (prefers-reduced-motion: reduce) {
   html.m-enter:not(.m-enter-done) .lp-hero-c,
   html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media],
-  .lp-hub-lines .lp-hub-pulse,
+  .lp-hub-dot,
   .lp-wb-run,
   .lp-wb-hover,
   .lp-wb-app,
@@ -1950,7 +1977,7 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
     animation: none !important;
   }
 
-  .lp-hub-lines .lp-hub-pulse {
+  .lp-hub-dot {
     display: none;
   }
 

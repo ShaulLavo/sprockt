@@ -72,17 +72,17 @@ export function HubDiagram() {
         {(size) => <span class="lp-hub-ring" style={{ "--ring": `${size}%` }} aria-hidden="true" />}
       </For>
       <svg class="lp-hub-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <For each={SPOKES}>
-          {(spoke) => (
-            <>
-              <line x1="50" y1="50" x2={spoke.x} y2={spoke.y} />
-              <Show when={spoke.pulse}>
-                <line class="lp-hub-pulse" x1="50" y1="50" x2={spoke.x} y2={spoke.y} pathLength="100" />
-              </Show>
-            </>
-          )}
-        </For>
+        <For each={SPOKES}>{(spoke) => <line x1="50" y1="50" x2={spoke.x} y2={spoke.y} />}</For>
       </svg>
+      <For each={SPOKES.filter((spoke) => spoke.pulse)}>
+        {(spoke) => (
+          <span
+            class="lp-hub-dot"
+            style={{ "--x": `${spoke.x}%`, "--y": `${spoke.y}%` }}
+            aria-hidden="true"
+          />
+        )}
+      </For>
       <For each={SPOKES}>{(spoke) => <Chip spoke={spoke} />}</For>
       <a
         class="lp-hub-chip lp-hub-core lp-hub-c"

@@ -513,7 +513,11 @@ export function Landing() {
                 title={marqueePaused() ? LANDING_COPY.marqueePlay : LANDING_COPY.marqueePause}
                 onClick={() => setMarqueePaused(!marqueePaused())}
               >
-                <Icon name={marqueePaused() ? "play" : "stop"} />
+                <svg viewBox="0 0 12 12" aria-hidden="true">
+                  <Show when={marqueePaused()} fallback={<path d="M4 3v6M8 3v6" />}>
+                    <path d="M4 2.8v6.4L9.2 6z" />
+                  </Show>
+                </svg>
               </button>
             </div>
           </div>
