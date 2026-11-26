@@ -28,7 +28,7 @@ function memoryFilesystem(setup: Setup = {}) {
   const flushes: PromiseWithResolvers<void>[] = [];
 
   function real(path: string, followLast: boolean, hops = 0): string {
-    if (hops > 16) throw new Error("ELOOP: too many levels of symbolic links");
+    if (hops > 40) throw new Error("ELOOP: too many levels of symbolic links");
     const parts = path.split("/").filter(Boolean);
     const walked: string[] = [];
     for (const [index, name] of parts.entries()) {
@@ -712,4 +712,84 @@ test("a failed upload keeps its lock until started operations settle, stops new 
   expect(changes.flat()).toContain("docs/done.txt");
   await memory.finishFlushes();
   expect(uploader.saveState()).toBe("saved");
+});
+
+test("a bulk write locks every link in a 17-hop chain supported by Waffle against a concurrent move", async () => {
+  const links: Record<string, string> = {};
+  for (let index = 1; index < 17; index += 1) {
+    links[`/workspace/chain/l${index}`] = `/workspace/chain/l${index + 1}`;
+  }
+  links["/workspace/chain/l17"] = "/workspace/original";
+  const memory = memoryFilesystem({
+    links,
+    directories: ["/workspace/chain", "/workspace/original", "/workspace/replacement"],
+    files: {
+      "/workspace/original/notes.txt": "before",
+      "/workspace/replacement/notes.txt": "untouched",
+    },
+  });
+  const locks = localPathLocks();
+  const writeStarted = Promise.withResolvers<void>();
+  const finishWrite = Promise.withResolvers<void>();
+  const gatedFs: ProjectFilesystem = {
+    ...memory.filesystem,
+    async writeFile(path, content, mode) {
+      if (path === "/workspace/chain/l1/notes.txt") {
+        writeStarted.resolve();
+        await finishWrite.promise;
+      }
+      return memory.filesystem.writeFile(path, content, mode);
+    },
+  };
+  const writer = createProjectFiles(gatedFs, noWatch, undefined, locks);
+  const mover = createProjectFiles(memory.filesystem, noWatch, undefined, locks);
+
+  const bulk = writer.writeMany({ "chain/l1/notes.txt": "from bulk" });
+  await writeStarted.promise;
+
+  // A second FileService tries to move the 17th link aside while the bulk write holds its locks.
+  let moved = false;
+  const swap = mover.move("chain/l17", "chain/l17-aside").then(() => (moved = true));
+  await later(15);
+  expect(moved).toBe(false);
+
+  finishWrite.resolve();
+  await Promise.all([bulk, swap]);
+  expect(moved).toBe(true);
+  expect(memory.text("/workspace/original/notes.txt")).toBe("from bulk");
+  expect(memory.text("/workspace/replacement/notes.txt")).toBe("untouched");
+});
+
+function symlinkChainFilesystem(length: number) {
+  const links: Record<string, string> = {};
+  for (let index = 1; index < length; index += 1) {
+    links[`/workspace/chain/l${index}`] = `/workspace/chain/l${index + 1}`;
+  }
+  links[`/workspace/chain/l${length}`] = "/workspace/target";
+  return memoryFilesystem({
+    links,
+    directories: ["/workspace/chain", "/workspace/target"],
+    files: { "/workspace/target/notes.txt": "before" },
+  });
+}
+
+test("a bulk write locks a 40-hop symlink chain and fails closed on a 41-hop chain", async () => {
+  const forty = symlinkChainFilesystem(40);
+  const lockedShared: string[][] = [];
+  const spyLocks: PathLocks = {
+    hold(request, work) {
+      lockedShared.push(Array.from(request.shared ?? []));
+      return localPathLocks().hold(request, work);
+    },
+  };
+  const okService = createProjectFiles(forty.filesystem, noWatch, undefined, spyLocks);
+  await okService.writeMany({ "chain/l1/notes.txt": "forty" });
+  expect(forty.text("/workspace/target/notes.txt")).toBe("forty");
+  expect(lockedShared[0]).toContain("/workspace/chain/l40");
+
+  // 41 hops exceeds the resolver cap: must fail closed and write nothing.
+  const fortyOne = symlinkChainFilesystem(41);
+  const failService = createProjectFiles(fortyOne.filesystem, noWatch);
+  await expect(failService.writeMany({ "chain/l1/notes.txt": "too deep" })).rejects.toThrow(/ELOOP/);
+  expect(fortyOne.text("/workspace/target/notes.txt")).toBe("before");
 });

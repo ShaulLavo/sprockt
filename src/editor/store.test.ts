@@ -476,3 +476,54 @@ test("a detached draft left on page hide opens on reload and is discovered even 
   expect(recoveryKeys()).toEqual([]);
   reopened.dispose();
 });
+
+test("an earlier flush finishing does not erase a draft detached after its file was deleted and replaced", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+  // Save an edit to target/a.txt and hold its flush.
+  type(first.store, "target/a.txt", "saved-but-unflushed ");
+  await first.store.save("target/a.txt");
+  expect(first.flushes).toHaveLength(1);
+
+  // Shell deletes target/a.txt and the editor syncs: the buffer becomes dirty and missing.
+  first.disk.delete("target/a.txt");
+  await first.store.buffers.sync();
+  expect(first.store.buffers.get("target/a.txt")?.dirty()).toBe(true);
+  expect(first.store.buffers.get("target/a.txt")?.missing()).toBe(true);
+
+  // Move another open file into target/a.txt, detaching the original buffer, then hide the page.
+  first.store.open("src/a.txt");
+  await first.store.buffers.load("src/a.txt");
+  first.disk.set("target/a.txt", "replacement");
+  first.disk.delete("src/a.txt");
+  first.emit({
+    moves: [
+      { from: "src", to: "target", operation: 1 },
+      { from: "src/a.txt", to: "target/a.txt", operation: 1 },
+    ],
+  });
+  await tick();
+  const aside = first.store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+
+  // Completing the old flush for target/a.txt must NOT delete the detached draft's recovery copy.
+  first.flushes.shift()?.resolve();
+  await tick();
+  expect(recoveryKeys()).toHaveLength(1);
+  first.dispose();
+
+  // Reloading recovers the detached draft while the replacement file stays intact on disk.
+  const reopened = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  const buffer = await reopened.store.buffers.load(aside as string);
+  expect(buffer?.session.materializeFullText()).toBe("saved-but-unflushed old");
+  expect(first.disk.get("target/a.txt")).toBe("replacement");
+  reopened.dispose();
+});

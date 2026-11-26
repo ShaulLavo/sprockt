@@ -180,9 +180,13 @@ function planBulkLocks(places: readonly Located[]): LockRequest {
   return { exclusive, shared: Array.from(shared) };
 }
 
+/** Matches Waffle's symlink expansion cap (`walkTree` in `waffle/fs/memory.ts` rejects at 40). */
+const MAX_LINK_EXPANSIONS = 40;
+
 /**
  * Memoized path inspector for one planning or revalidation pass: resolves canonical destinations
- * and collects every symbolic link entry traversed along the way.
+ * and collects every symbolic link entry traversed along the way. Fails closed if a link target
+ * is missing, cycles, or exceeds the resolver's expansion cap so no partial lock set is ever used.
  */
 function createInspector(resolve: Lookup): (absolute: string) => Promise<Located> {
   const resolved = new Map<string, Promise<ResolvedEntry | undefined>>();
@@ -194,18 +198,34 @@ function createInspector(resolve: Lookup): (absolute: string) => Promise<Located
     return known;
   };
 
-  async function collectLinks(entry: ResolvedEntry, links: Set<string>, hops = 0): Promise<void> {
-    if (entry.kind !== "symlink" || hops >= 16 || links.has(entry.path)) return;
+  async function collectLinks(
+    entry: ResolvedEntry,
+    links: Set<string>,
+    visiting: Set<string>,
+    done: Set<string>,
+  ): Promise<void> {
+    if (entry.kind !== "symlink") return;
+    if (visiting.has(entry.path)) throw new Error("ELOOP: too many levels of symbolic links");
+    if (done.has(entry.path)) return;
+    if (links.size >= MAX_LINK_EXPANSIONS) throw new Error("ELOOP: too many levels of symbolic links");
+    if (!entry.target) throw new Error(`Cannot resolve symbolic link target for ${entry.path}`);
     links.add(entry.path);
-    if (!entry.target) return;
-    const next = entry.target.startsWith("/") ? entry.target : `${parentOf(entry.path)}/${entry.target}`;
-    const parts = next.split("/").filter(Boolean);
-    const steps = await Promise.all(
-      parts.map((_, index) => lookup(`/${parts.slice(0, index + 1).join("/")}`)),
-    );
-    await Promise.all(
-      steps.map((step) => (step?.kind === "symlink" ? collectLinks(step, links, hops + 1) : undefined)),
-    );
+    visiting.add(entry.path);
+    try {
+      const next = entry.target.startsWith("/") ? entry.target : `${parentOf(entry.path)}/${entry.target}`;
+      const parts = next.split("/").filter(Boolean);
+      const steps = await Promise.all(
+        parts.map((_, index) => lookup(`/${parts.slice(0, index + 1).join("/")}`)),
+      );
+      for (const step of steps) {
+        if (step?.kind !== "symlink") continue;
+        // oxlint-disable-next-line no-await-in-loop -- depth-first so `visiting` accurately tracks cycles
+        await collectLinks(step, links, visiting, done);
+      }
+      done.add(entry.path);
+    } finally {
+      visiting.delete(entry.path);
+    }
   }
 
   function inspectDir(directory: string): Promise<Located> {
@@ -231,7 +251,7 @@ function createInspector(resolve: Lookup): (absolute: string) => Promise<Located
       return { real: entry.path, exists: true, base: parentOf(entry.path), links: parent.links };
     }
     const links = new Set(parent.links);
-    await collectLinks(entry, links);
+    await collectLinks(entry, links, new Set(), new Set(parent.links));
     return { real: entry.path, exists: true, base: parentOf(entry.path), links: Array.from(links).sort() };
   }
 
