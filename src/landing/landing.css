@@ -536,12 +536,18 @@ body:has(.landing-page) {
 
 /* ───────────── Hero (#4 hero--centred: words, then the window rising from the frame) ───────────── */
 
+/* one screen: the words start 48px under the header and the frame takes the rest, down to 64px
+   above the fold, fading at its foot (#4 layout.css hero--centred) */
 .lp-hero {
-  padding: 48px 0 var(--lp-padb);
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100svh - var(--lp-nav));
+  padding: 48px 0 64px;
 }
 
 .lp-hero-inner {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
 }
 
@@ -577,9 +583,15 @@ body:has(.landing-page) {
 
 .lp-hero-frame {
   position: relative;
-  height: 540px;
+  flex: 1 1 0;
+  min-height: clamp(220px, 32svh, 340px);
   margin-top: var(--space-8);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 72px), transparent);
+  mask-image: linear-gradient(to bottom, #000 82%, transparent);
+}
+
+/* the running app sits at the top of its pane, so it shows above the frame's fade */
+.lp-hero-window .lp-wb-app {
+  align-content: start;
 }
 
 .lp-hero-window {
@@ -617,6 +629,23 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
 .lp-section {
   position: relative;
   padding: var(--lp-padt) 0 var(--lp-padb);
+}
+
+/* #4's rhythm on a laptop or larger: each section is a screen (the cards two), so a screen shows
+   one section and its neighbour does not peek in */
+@media (min-width: 1024px) {
+  .lp-section,
+  .lp-closing {
+    min-height: 100svh;
+  }
+
+  #features {
+    min-height: 200svh;
+  }
+
+  #features .lp-cards {
+    row-gap: calc(var(--lp-padt) + var(--lp-padb));
+  }
 }
 
 .lp-section-head {
@@ -1525,14 +1554,6 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   font-size: 13.5px;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  a.lp-hub-chip:hover {
-    box-shadow:
-      0 0 0 2px var(--accent),
-      0 8px 18px -10px light-dark(rgb(17 24 40 / 0.4), rgb(0 0 0 / 0.7));
-  }
-}
-
 /* ───────────── Questions ───────────── */
 
 .lp-faq-side {
@@ -1804,7 +1825,9 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   }
 
   .lp-hero-frame {
+    flex: none;
     height: auto;
+    min-height: 0;
     margin-top: var(--space-8);
     padding: var(--space-4);
     mask-image: none;
@@ -1907,13 +1930,22 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   }
 
   .lp-hub-chip {
-    height: 28px;
-    padding: 0 8px;
-    font-size: 11.5px;
+    gap: 4px;
+    height: 26px;
+    padding: 0 6px;
+    font-size: 11px;
+  }
+
+  .lp-hub-chip img,
+  .lp-hub-chip .lp-ico {
+    width: 12px;
+    height: 12px;
   }
 
   .lp-hub-core {
-    height: 34px;
+    height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
   }
 
   .lp-hub-l {

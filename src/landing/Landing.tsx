@@ -80,6 +80,7 @@ const MARQUEE = [
 ] as const;
 
 const STACK = [
+  { name: "Waffle", repo: "waffle", role: LANDING_COPY.hoodRoleWaffle },
   { name: "Singapore", repo: "singapore", role: LANDING_COPY.hoodRoleSingapore },
   { name: "Ghostty WebGPU", repo: "ghostty-webgpu", role: LANDING_COPY.hoodRoleGhostty },
   { name: "Bun 1.4.5", repo: "bun-wasm", role: LANDING_COPY.hoodRoleBun },
@@ -253,8 +254,8 @@ export function Landing() {
       <a class="lp-skip" href="#main">
         {LANDING_COPY.skip}
       </a>
-      <header class="lp-nav" classList={{ "is-open": menuOpen() }}>
-        <div class="lp-wrap lp-nav-bar">
+      <header class="nav lp-nav" classList={{ "is-open": menuOpen() }}>
+        <div class="wrap lp-wrap lp-nav-bar">
           <a
             class="lp-brand"
             href={routePath({ kind: "landing" })}
@@ -346,7 +347,7 @@ export function Landing() {
 
       <main id="main">
         <section class="lp-hero" aria-labelledby="hero-title">
-          <div class="lp-wrap lp-hero-inner">
+          <div class="wrap lp-wrap lp-hero-inner">
             <div class="lp-hero-c">
               <a class="lp-pill" href="#hood">
                 <span>{LANDING_COPY.heroPill}</span>
@@ -378,7 +379,7 @@ export function Landing() {
         </section>
 
         <section class="lp-section" id="features" aria-labelledby="features-title">
-          <div class="lp-wrap">
+          <div class="wrap lp-wrap">
             <div class="lp-section-head">
               <h2 id="features-title">
                 <Muted lead={LANDING_COPY.featuresTitle} rest={LANDING_COPY.featuresTitleMuted} />
@@ -389,7 +390,7 @@ export function Landing() {
         </section>
 
         <section class="lp-section" id="start" aria-labelledby="start-title">
-          <div class="lp-wrap">
+          <div class="wrap lp-wrap">
             <div class="lp-section-head">
               <h2 id="start-title">
                 <Muted lead={LANDING_COPY.templatesTitle} rest={LANDING_COPY.templatesTitleMuted} />
@@ -470,7 +471,7 @@ export function Landing() {
         </section>
 
         <section class="lp-section lp-band" id="browsers" aria-labelledby="browsers-title">
-          <div class="lp-wrap">
+          <div class="wrap lp-wrap">
             <div class="lp-split">
               <div class="lp-split-text">
                 <div class="lp-section-head">
@@ -524,7 +525,7 @@ export function Landing() {
         </section>
 
         <section class="lp-section" id="hood" aria-labelledby="hood-title">
-          <div class="lp-wrap">
+          <div class="wrap lp-wrap">
             <div class="lp-split">
               <div class="lp-split-text">
                 <div class="lp-section-head">
@@ -555,7 +556,7 @@ export function Landing() {
         </section>
 
         <section class="lp-section" id="faq" aria-labelledby="faq-title">
-          <div class="lp-wrap">
+          <div class="wrap lp-wrap">
             <div class="lp-split">
               <div class="lp-faq-side">
                 <h2 id="faq-title">{LANDING_COPY.faqTitle}</h2>
@@ -595,8 +596,8 @@ export function Landing() {
         </section>
       </main>
 
-      <footer class="lp-closing" aria-labelledby="close-title">
-        <div class="lp-wrap">
+      <footer class="closing lp-closing" aria-labelledby="close-title">
+        <div class="wrap lp-wrap">
           <div class="lp-close-head">
             <div>
               <h2 id="close-title">{LANDING_COPY.closingTitle}</h2>

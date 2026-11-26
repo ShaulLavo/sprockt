@@ -79,6 +79,7 @@ export const LANDING_COPY = {
   hoodTitleMuted: "Open source, MIT licensed.",
   hoodLede:
     "Waffle is a small operating system for the browser: processes, pipes, a filesystem and networking for WebAssembly programs. Everything else in Sprockt runs on it.",
+  hoodRoleWaffle: "the operating system for the browser",
   hoodRoleSingapore: "the code editor",
   hoodRoleGhostty: "the terminal",
   hoodRoleBun: "the runtime for installs, scripts and the dev server",
