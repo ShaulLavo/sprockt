@@ -18,3 +18,11 @@ export class MoveIntoItselfError extends Error {
     this.name = "MoveIntoItselfError";
   }
 }
+
+/** The folder an entry was to be written in was moved or deleted meanwhile; it is not recreated. */
+export class FolderGoneError extends Error {
+  constructor(readonly path: string) {
+    super(`The folder of "${path}" was moved or deleted`);
+    this.name = "FolderGoneError";
+  }
+}

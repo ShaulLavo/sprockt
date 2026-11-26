@@ -181,3 +181,93 @@ test("a save that never reached storage survives the hosting tab closing, as a c
   await expect(second.getByTestId("save-state")).toHaveText("saved");
   await expect(second.getByTestId("editor-dirty")).toHaveCount(0);
 });
+
+const conditionalSave = (tab: Page, path: string, text: string, expected: string) =>
+  tab.evaluate(
+    ([file, content, before]) => globalThis.sprockt!.workspace!.files.writeIfUnchanged(file, content, before),
+    [path, text, expected] as const,
+  );
+const remove = (tab: Page, path: string) =>
+  tab.evaluate((target) => globalThis.sprockt!.workspace!.files.remove(target), path);
+
+/** One tab saves a file while another moves or deletes its folder, at the same moment. */
+async function folderRace(page: Page, second: Page, round: number, how: "move" | "delete"): Promise<void> {
+  const folder = `src-${how}-${round}`;
+  await writeFile(page, `${folder}/file.txt`, "old\n");
+  const [saved] = await Promise.all([
+    conditionalSave(page, `${folder}/file.txt`, "new\n", "old\n"),
+    how === "move" ? move(second, folder, `moved-${round}`) : remove(second, folder),
+  ]);
+  // The folder never comes back. The save either came first (and moved or went with the folder)
+  // or found its folder gone and reports a conflict with a deleted file.
+  expect(await fileText(page, `${folder}/file.txt`)).toBeUndefined();
+  if (!saved.written) expect(saved.current).toBeUndefined();
+  if (how === "move")
+    expect(await fileText(page, `moved-${round}/file.txt`)).toBe(saved.written ? "new\n" : "old\n");
+}
+
+for (const how of ["move", "delete"] as const) {
+  test(`a save racing another tab's ${how} of its folder never brings the folder back`, async ({ page }) => {
+    const id = await newWorkspace(page);
+    const second = await openSecondTab(page, id);
+    for (let round = 0; round < 5; round++) {
+      // oxlint-disable-next-line no-await-in-loop
+      await folderRace(page, second, round, how);
+    }
+  });
+}
+
+/** `alias` links to `real`, so `real/sub/x` and `alias/sub/x` name one file. */
+async function makeAlias(page: Page): Promise<void> {
+  // The base programs have no `ln`, so Bun makes the link.
+  await writeFile(page, "link.ts", `require("fs").symlinkSync("real", "alias"); console.log("link made");\n`);
+  await runInTerminal(page, "bun link.ts");
+  await expect.poll(() => terminalText(page)).toMatch(/^link made$/m);
+}
+
+/** Two tabs save one file at the same moment, one through the link and one through its target. */
+async function aliasedSaveRace(page: Page, second: Page, round: number): Promise<void> {
+  await writeFile(page, `real/sub/file-${round}.txt`, "base\n");
+  const outcomes = await Promise.all([
+    conditionalSave(page, `real/sub/file-${round}.txt`, "through the folder\n", "base\n"),
+    conditionalSave(second, `alias/sub/file-${round}.txt`, "through the link\n", "base\n"),
+  ]);
+  expect(outcomes.filter((outcome) => outcome.written)).toHaveLength(1);
+}
+
+test("two tabs saving one file through a folder link and its target: one lands", async ({ page }) => {
+  const id = await newWorkspace(page);
+  await writeFile(page, "real/sub/keep.txt", "");
+  await makeAlias(page);
+  const second = await openSecondTab(page, id);
+  for (let round = 0; round < 5; round++) {
+    // oxlint-disable-next-line no-await-in-loop
+    await aliasedSaveRace(page, second, round);
+  }
+});
+
+/** Two tabs move files to one free name at the same moment, spelled through the link and its target. */
+async function aliasedMoveRace(page: Page, second: Page, round: number): Promise<void> {
+  await writeFile(page, `a-${round}.txt`, "first payload");
+  await writeFile(page, `b-${round}.txt`, "second payload");
+  const moves = await Promise.allSettled([
+    move(page, `a-${round}.txt`, `real/sub/out-${round}.txt`),
+    move(second, `b-${round}.txt`, `alias/sub/out-${round}.txt`),
+  ]);
+  expect(moves.map((result) => result.status).toSorted()).toEqual(["fulfilled", "rejected"]);
+  const kept = moves[0].status === "rejected" ? `a-${round}.txt` : `b-${round}.txt`;
+  expect(await fileText(page, kept)).toBe(kept.startsWith("a-") ? "first payload" : "second payload");
+}
+
+test("two tabs moving files to one free name through a folder link and its target: one fails", async ({
+  page,
+}) => {
+  const id = await newWorkspace(page);
+  await writeFile(page, "real/sub/keep.txt", "");
+  await makeAlias(page);
+  const second = await openSecondTab(page, id);
+  for (let round = 0; round < 5; round++) {
+    // oxlint-disable-next-line no-await-in-loop
+    await aliasedMoveRace(page, second, round);
+  }
+});

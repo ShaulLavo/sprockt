@@ -347,18 +347,28 @@ where the bytes live.
 5. **Waffle has no conditional or confined file operation.** Several FileService rules are a
    check followed by an operation: `writeIfUnchanged` (read, compare, write), create, move and
    rename (destination free, then write or rename), and the project boundary (resolve, then
-   read or write). Across tabs, FileService makes each check-and-act one step with a Web Lock
-   per path (`files/path-locks.ts`, `sprockt:<id>:path:<absolute path>`; a move takes both
-   names, in sorted order), so two editors' saves or two tabs' moves to one name cannot both
-   succeed. Programs in a terminal do not take these locks, and a link swapped in between the
-   boundary check and the operation is still not caught. Closing both needs Waffle to do it in
-   one step: a write that fails unless the file still holds the expected bytes, a rename that
+   read or write). Across tabs, FileService makes each check-and-act one step with Web Locks
+   (`files/path-locks.ts`, `sprockt:<id>:path:<path>`):
+   - an operation locks its own paths exclusively and every folder above them shared, so a
+     folder move or delete waits for writes inside the folder and keeps new ones out;
+   - locks are keyed by real paths (links on the way followed), so two spellings of one file
+     through a folder link take the same lock; under the locks the paths are resolved again,
+     and a write whose folder was moved or deleted meanwhile fails (`FolderGoneError`, a
+     conflict for an editor save) instead of recreating the folder;
+   - all locks of an operation are taken in one sorted order, so two operations never wait on
+     each other in a cycle; a bulk write locks the folder holding all its files once (1,000
+     files: 0.4 to 1.1 s on the PC).
+
+   Programs in a terminal do not take these locks, and a link swapped by one between the
+   boundary check and the operation is not caught. Closing both needs Waffle to do it in one
+   step: a write that fails unless the file still holds the expected bytes, a rename that
    refuses to replace, and operations that refuse to leave a given root.
    - Upload, listing and move resolve the path again inside the operation after the boundary
      check, so a link changed in between can lead somewhere else.
    - Waffle returns a failed change to its caller and keeps the same error to throw at the next
      flush. FileService retries a flush that throws an error its own operation already reported,
      and lets any other error fail the save state; Waffle should report a failure once.
+
 6. **A save is unsaved until storage holds it.** Waffle acknowledges a write from memory. If its
    flush fails, or the files come back from storage (a hosting tab closed) without it, the
    editor keeps the buffer's text as unsaved and shows a conflict against what storage holds,

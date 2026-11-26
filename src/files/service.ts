@@ -72,7 +72,8 @@ export interface FileService {
    * Writes only when the file still holds `expected` (undefined: still does not exist), so an
    * edit made meanwhile by the shell or another tab is not overwritten unseen. Waffle has no
    * conditional write yet, so the check and the write hold the file's lock (`path-locks.ts`):
-   * no FileService write from any tab lands between them. A terminal program still can.
+   * no FileService change from any tab lands between them. A terminal program still can. A
+   * folder moved or deleted meanwhile by another tab gives `{ written: false, current: undefined }`.
    */
   writeIfUnchanged(path: string, content: string, expected: string | undefined): Promise<WriteOutcome>;
   /** Writes a whole file set, such as a template or an imported repository. */
