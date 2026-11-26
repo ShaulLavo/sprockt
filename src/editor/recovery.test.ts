@@ -183,3 +183,34 @@ test("full or blocked storage never throws", () => {
   };
   expect(() => leaveForRecovery(blocked, "ws1", "t", drafts({ "a.txt": { text: "x" } }))).not.toThrow();
 });
+
+test("settled with an earlier version keeps a newer left draft until a covering version settles", () => {
+  const storage = memoryStorage();
+  const locks = memoryLocks();
+  const tab = keeper(storage, locks, "tab-1");
+  tab.leave(drafts({ "a.txt": { text: "A+B", baseText: "base" } }), new Map([["a.txt", 2]]));
+
+  tab.settled("a.txt", 1);
+  expect(storage.items.has(draftKey("ws1", "a.txt", "tab-1"))).toBe(true);
+
+  tab.settled("a.txt", 2);
+  expect(storage.items.has(draftKey("ws1", "a.txt", "tab-1"))).toBe(false);
+});
+
+test("recoverablePaths finds unclaimed matching drafts and skips live tabs", async () => {
+  const storage = memoryStorage();
+  const locks = memoryLocks();
+  const gone = keeper(storage, locks, "tab-1");
+  gone.leave(drafts({ "\u0000unsaved:1/a.txt": { text: "from gone" }, "normal.txt": { text: "n" } }));
+  gone.release();
+  const live = keeper(storage, locks, "tab-2");
+  live.leave(drafts({ "\u0000unsaved:2/b.txt": { text: "from live" } }));
+
+  const next = keeper(storage, locks, "tab-3");
+  expect(await next.recoverablePaths((path) => path.startsWith("\u0000"))).toEqual(["\u0000unsaved:1/a.txt"]);
+  live.release();
+  expect((await next.recoverablePaths((path) => path.startsWith("\u0000"))).toSorted()).toEqual([
+    "\u0000unsaved:1/a.txt",
+    "\u0000unsaved:2/b.txt",
+  ]);
+});

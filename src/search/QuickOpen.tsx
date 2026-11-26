@@ -16,6 +16,7 @@ import { SEARCH_COPY } from "./copy";
 import { commandsOnly, matchCommands, type PaletteCommand } from "./commands";
 import { rankPaths, splitLocation, type FuzzyMatch } from "./fuzzy";
 import { CommandIcon, FileIcon, Highlighted, SearchIcon } from "./icons";
+import { createQuickOpenSession } from "./quick-open-state";
 import "./search.css";
 
 const LIMIT = 50;
@@ -111,27 +112,21 @@ function Dialog(props: QuickOpenProps) {
   const [selected, setSelected] = createSignal(0);
   // A plain signal, not a resource: a resource that is loading would suspend the workbench.
   const [paths, setPaths] = createSignal<readonly string[]>([]);
-  let listing = 0;
-  let open = true;
-  // Enter pressed before the first listing arrived: it opens the best match once there is one.
-  let listed = false;
-  let enterWaiting = false;
-  onCleanup(() => (open = false));
-  function landed(list: readonly string[]): void {
+  const session = createQuickOpenSession();
+  onCleanup(() => session.close());
+  function landed(request: number, list: readonly string[]): void {
+    const outcome = session.finishListing(request);
+    if (!outcome.accept) return;
     setPaths(list);
-    listed = true;
-    if (!enterWaiting) return;
-    enterWaiting = false;
-    pick(results()[0]);
+    if (outcome.submit) pick(results()[selected()]);
   }
   createEffect(
     on(props.files.revision, () => {
-      listing += 1;
-      const mine = listing;
+      const request = session.beginListing();
       // Only the newest listing lands, and none after the dialog closed.
       void props.files.list().then(
-        (list) => open && mine === listing && landed(list),
-        () => {},
+        (list) => landed(request, list),
+        () => session.failListing(request),
       );
     }),
   );
@@ -164,13 +159,21 @@ function Dialog(props: QuickOpenProps) {
     props.onOpen(item.match.path, { line: location().line, column: location().column });
   }
 
+  function submit(): void {
+    if (session.submit(commandsOnly(query())) === "now") pick(results()[selected()]);
+  }
+
+  function stepSelection(delta: number, count: number): void {
+    session.cancelPending();
+    setSelected((selected() + delta + count) % count);
+  }
+
   function onKeyDown(event: KeyboardEvent): void {
     const count = results().length;
     if (event.key === "Escape") props.onClose();
-    else if (event.key === "Enter" && !listed && !commandsOnly(query())) enterWaiting = true;
-    else if (event.key === "Enter") pick(results()[selected()]);
-    else if (event.key === "ArrowDown" && count > 0) setSelected((selected() + 1) % count);
-    else if (event.key === "ArrowUp" && count > 0) setSelected((selected() - 1 + count) % count);
+    else if (event.key === "Enter") submit();
+    else if (event.key === "ArrowDown" && count > 0) stepSelection(1, count);
+    else if (event.key === "ArrowUp" && count > 0) stepSelection(-1, count);
     else return;
     event.preventDefault();
   }
@@ -194,7 +197,10 @@ function Dialog(props: QuickOpenProps) {
             autocomplete="off"
             spellcheck={false}
             value={query()}
-            onInput={(event) => setQuery(event.currentTarget.value)}
+            onInput={(event) => {
+              session.cancelPending();
+              setQuery(event.currentTarget.value);
+            }}
             onKeyDown={onKeyDown}
             onBlur={(event) => {
               // Leaving the dialog (not just moving within it) closes it.
@@ -216,14 +222,20 @@ function Dialog(props: QuickOpenProps) {
                   command={item.command}
                   selected={selected() === index()}
                   onPick={() => pick(item)}
-                  onHover={() => setSelected(index())}
+                  onHover={() => {
+                    session.cancelPending();
+                    setSelected(index());
+                  }}
                 />
               ) : (
                 <Row
                   match={item.match}
                   selected={selected() === index()}
                   onPick={() => pick(item)}
-                  onHover={() => setSelected(index())}
+                  onHover={() => {
+                    session.cancelPending();
+                    setSelected(index());
+                  }}
                 />
               )
             }

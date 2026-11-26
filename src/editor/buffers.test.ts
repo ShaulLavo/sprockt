@@ -586,3 +586,90 @@ test("reloading from disk after a lost save leaves the buffer clean", async () =
   expect(buffers.get("a.txt")?.dirty()).toBe(false);
   expect(buffers.unsaved().size).toBe(0);
 });
+
+test("a renamed buffer serializes saves across its old and new paths without self-conflict", async () => {
+  const { files, buffers } = setUp({ "a.txt": "base" });
+  await buffers.load("a.txt");
+  type(buffers, "a.txt", "1");
+  const lock = await buffers.lock(["a.txt", "b.txt"]);
+  files.gateWrites();
+  // First save queued while the buffer is still at a.txt.
+  const first = buffers.save("a.txt");
+  await tick();
+  // File moves to b.txt; the first save now starts writing to b.txt and parks inside writeIfUnchanged.
+  files.disk.set("b.txt", "base");
+  files.disk.delete("a.txt");
+  buffers.rename("a.txt", "b.txt");
+  lock.release();
+  await tick();
+  expect(files.gates).toHaveLength(1);
+
+  // User types edit 2 and presses Save at b.txt while the first save is still writing b.txt.
+  type(buffers, "b.txt", "2");
+  const second = buffers.save("b.txt");
+  await tick();
+  // Second save must wait for the first save of the same buffer instead of starting on a second queue.
+  expect(files.gates).toHaveLength(1);
+
+  files.gates.shift()?.resolve();
+  await tick();
+  expect(files.gates).toHaveLength(1);
+  files.gates.shift()?.resolve();
+  await Promise.all([first, second]);
+
+  expect(files.disk.get("b.txt")).toBe("base12");
+  expect(buffers.get("b.txt")?.dirty()).toBe(false);
+  expect(buffers.get("b.txt")?.conflict()).toBeUndefined();
+});
+
+test("distinct buffers writing the same final path run one after another", async () => {
+  const { files, buffers } = setUp({ "a.txt": "base", "c.txt": "other" });
+  await buffers.load("a.txt");
+  await buffers.load("c.txt");
+  type(buffers, "a.txt", "1");
+  files.gateWrites();
+  // Buffer 1 starts writing a.txt and parks in flight.
+  const first = buffers.save("a.txt");
+  await tick();
+  expect(files.gates).toHaveLength(1);
+
+  // Buffer 1 moves away to b.txt while its write to a.txt is still in flight; buffer 2 moves onto a.txt.
+  buffers.rename("a.txt", "b.txt");
+  buffers.rename("c.txt", "a.txt");
+  type(buffers, "a.txt", "2");
+  const second = buffers.save("a.txt");
+  await tick();
+  // Buffer 2 must wait on the final path queue until buffer 1's write to a.txt settles.
+  expect(files.gates).toHaveLength(1);
+
+  files.gates.shift()?.resolve();
+  await tick();
+  for (const gate of files.gates.splice(0)) gate.resolve();
+  await Promise.all([first, second]);
+  expect(files.disk.get("a.txt")).toBe("base1");
+  expect(buffers.get("a.txt")?.conflict()).toEqual({ diskText: "base1" });
+});
+
+test("a detached draft loads from recovery without calling FileService.read", async () => {
+  const key = "\u0000unsaved:1/target/a.txt";
+  const reads: string[] = [];
+  const files = {
+    read: async (path: string) => {
+      reads.push(path);
+      if (path.includes("\u0000")) throw new Error("ProjectPathError: NUL in path");
+      return undefined;
+    },
+    writeIfUnchanged: async () => ({ written: true as const }),
+    saved: async () => {},
+  };
+  const buffers = createBufferSet(files, {
+    recover: (path) => (path === key ? { text: "recovered detached", baseText: undefined } : undefined),
+  });
+
+  const buffer = await buffers.load(key);
+  expect(reads).toEqual([]);
+  expect(buffer?.session.materializeFullText()).toBe("recovered detached");
+  expect(buffer?.dirty()).toBe(true);
+  expect(buffer?.missing()).toBe(true);
+  expect(buffer?.conflict()).toBeUndefined();
+});

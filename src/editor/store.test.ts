@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import { createRoot } from "solid-js";
 import type { FileChange } from "../files/service";
+import { ProjectPathError } from "../workspace/paths";
 import { isDetached, originalPath } from "./buffers";
 import { createEditorStore } from "./store";
 
@@ -24,18 +25,29 @@ function setUpStore(files: Record<string, string>, shared?: Map<string, string>)
   const disk = shared ?? new Map(Object.entries(files));
   const writes: string[] = [];
   const listeners = new Set<(change: FileChange) => void>();
+  const flushes: PromiseWithResolvers<void>[] = [];
+  let holdingFlushes = false;
   const workspace = {
     id: "test",
     files: {
-      read: async (path: string) => disk.get(path),
+      read: async (path: string) => {
+        if (path.includes("\u0000")) throw new ProjectPathError(path, "it contains a NUL");
+        return disk.get(path);
+      },
       async writeIfUnchanged(path: string, content: string, expected: string | undefined) {
+        if (path.includes("\u0000")) throw new ProjectPathError(path, "it contains a NUL");
         const current = disk.get(path);
         if (current !== expected) return { written: false as const, current };
         writes.push(path);
         disk.set(path, content);
         return { written: true as const };
       },
-      saved: async () => {},
+      saved() {
+        if (!holdingFlushes) return Promise.resolve();
+        const flush = Promise.withResolvers<void>();
+        flushes.push(flush);
+        return flush.promise;
+      },
       revision: () => 0,
       writable: () => true,
       subscribe(listener: (change: FileChange) => void) {
@@ -49,7 +61,20 @@ function setUpStore(files: Record<string, string>, shared?: Map<string, string>)
     for (const listener of listeners) listener(full);
   };
   const { store, dispose } = createRoot((end) => ({ store: createEditorStore(workspace), dispose: end }));
-  return { store, dispose, disk, emit, writes };
+  return {
+    store,
+    dispose,
+    disk,
+    emit,
+    writes,
+    flushes,
+    holdFlushes() {
+      holdingFlushes = true;
+    },
+    releaseFlushes() {
+      holdingFlushes = false;
+    },
+  };
 }
 
 const storeWith = (files: Record<string, string>) => setUpStore(files).store;
@@ -365,4 +390,89 @@ test("a hidden page's copy goes once its own save is durable, and a visible page
   expect(disk.get("a.ts")).toBe("typed a");
   expect(recoveryKeys()).toEqual([]);
   dispose();
+});
+
+test("an earlier flush finishing does not delete a newer page-hide draft", async () => {
+  const first = setUpStore({ "a.ts": "base" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("a.ts");
+  await first.store.buffers.load("a.ts");
+  // Save edit A and hold its flush.
+  type(first.store, "a.ts", "A:");
+  await first.store.save("a.ts");
+  expect(first.disk.get("a.ts")).toBe("A:base");
+  expect(first.flushes).toHaveLength(1);
+
+  // Type edit B, then hide the page: recovery stores B+A.
+  type(first.store, "a.ts", "B:");
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+
+  // Now the earlier flush for A completes: it must NOT delete the newer B+A recovery entry.
+  first.flushes.shift()?.resolve();
+  await tick();
+  expect(recoveryKeys()).toHaveLength(1);
+  first.dispose();
+
+  // Reopening in a new tab recovers B+A instead of losing B.
+  const second = setUpStore({}, first.disk);
+  second.store.open("a.ts");
+  const buffer = await second.store.buffers.load("a.ts");
+  expect(buffer?.session.materializeFullText()).toBe("B:A:base");
+  expect(buffer?.dirty()).toBe(true);
+  second.store.setDisplayed("a.ts");
+  await second.store.keepMine();
+  await tick();
+  expect(first.disk.get("a.ts")).toBe("B:A:base");
+  expect(recoveryKeys()).toEqual([]);
+  second.dispose();
+});
+
+test("a detached draft left on page hide opens on reload and is discovered even if another tab wrote the tab list", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "new", "other.txt": "o" });
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+  type(first.store, "target/a.txt", "draft ");
+  first.disk.delete("target/a.txt");
+  first.emit({ removed: ["target", "target/a.txt"] });
+  first.store.open("src/a.txt");
+  await first.store.buffers.load("src/a.txt");
+  first.disk.set("target/a.txt", "new");
+  first.disk.delete("src/a.txt");
+  first.emit({
+    moves: [
+      { from: "src", to: "target", operation: 1 },
+      { from: "src/a.txt", to: "target/a.txt", operation: 1 },
+    ],
+  });
+  await tick();
+  const aside = first.store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+
+  // Tab 1 hides and closes, leaving the detached draft in recovery.
+  await first.store.pageHidden();
+  first.dispose();
+
+  // Another attached tab opens a different file and overwrites the saved tab list without the detached key.
+  const attached = setUpStore({}, first.disk);
+  attached.store.open("other.txt");
+  attached.dispose();
+
+  // Reopening discovers the detached draft from recovery and loads it without FileService rejecting the NUL key.
+  const reopened = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  expect(reopened.store.tabs().map((tab) => tab.path)).toContain(aside as string);
+  const buffer = await reopened.store.buffers.load(aside as string);
+  expect(buffer?.session.materializeFullText()).toBe("draft old");
+  expect(buffer?.dirty()).toBe(true);
+  expect(buffer?.missing()).toBe(true);
+
+  // Saving attaches it to a free name and clears the recovery entry once durable.
+  await reopened.store.save(aside);
+  await tick();
+  expect(first.disk.get("target/a (draft).txt")).toBe("draft old");
+  expect(recoveryKeys()).toEqual([]);
+  reopened.dispose();
 });

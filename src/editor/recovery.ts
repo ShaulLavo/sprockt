@@ -129,11 +129,16 @@ export function discardRecovered(storage: TextStore, keys: readonly string[]): v
 /** One tab's side of recovery: what it leaves, what it took from gone tabs, and when they go. */
 export interface DraftKeeper {
   /** The draft to show when `path` is opened in this tab, if a tab that can no longer save left one. */
-  recover(path: string): Promise<Draft | undefined>;
+  recover(path: string, version?: number): Promise<Draft | undefined>;
+  /** Paths of drafts left by gone tabs that match `match` (for discovering detached drafts). */
+  recoverablePaths(match: (path: string) => boolean): Promise<string[]>;
   /** Leaves this tab's unsaved text, replacing what it left before (page hidden, workspace lost). */
-  leave(drafts: ReadonlyMap<string, Draft>): void;
-  /** The file's text is durable, or the person dropped it: this tab's entry and those it took go. */
-  settled(path: string): void;
+  leave(drafts: ReadonlyMap<string, Draft>, versions?: ReadonlyMap<string, number>): void;
+  /**
+   * Removes recovery entries for `path`. Without `version`, removes unconditionally (close,
+   * reload from disk). With `version`, removes only entries covered by that durable write.
+   */
+  settled(path: string, version?: number): void;
   /** Entries follow a file or folder this tab saw move. */
   renamed(from: string, to: string): void;
   /** This tab can no longer save (or is closing): other tabs may take what it left. */
@@ -150,11 +155,27 @@ export interface DraftKeeperOptions {
   now?(): number;
 }
 
+function parseRecoveryKey(
+  key: string,
+  prefix: string,
+): { readonly path: string; readonly owner: string } | undefined {
+  const rest = key.slice(prefix.length);
+  const separator = rest.lastIndexOf(":");
+  if (separator <= 0) return undefined;
+  try {
+    return { path: decodeURIComponent(rest.slice(0, separator)), owner: rest.slice(separator + 1) };
+  } catch {
+    return undefined;
+  }
+}
+
 export function createDraftKeeper(options: DraftKeeperOptions): DraftKeeper {
   const { storage, workspace, tab } = options;
   const releaseLease = holdTabLease(tab, options.locks);
   /** Entries other tabs left that this tab showed, by the path they are open at here. */
-  const taken = new Map<string, readonly string[]>();
+  const taken = new Map<string, { readonly keys: readonly string[]; readonly version: number }>();
+  /** The buffer version of each entry this tab last wrote via `leave`, by path. */
+  const ownVersions = new Map<string, number>();
 
   /** This tab's own entries, by the path they are for. */
   function ownEntries(): Map<string, string> {
@@ -162,9 +183,28 @@ export function createDraftKeeper(options: DraftKeeperOptions): DraftKeeper {
     const prefix = `${PREFIX}${workspace}:`;
     for (const key of keysStartingWith(storage, prefix)) {
       if (!key.endsWith(`:${tab}`)) continue;
-      own.set(decodeURIComponent(key.slice(prefix.length, key.length - tab.length - 1)), key);
+      const parsed = parseRecoveryKey(key, prefix);
+      if (parsed) own.set(parsed.path, key);
     }
     return own;
+  }
+
+  function matchingStored(
+    match: (path: string) => boolean,
+  ): { readonly path: string; readonly owner: string; readonly at: number }[] {
+    try {
+      const prefix = `${PREFIX}${workspace}:`;
+      const found: { readonly path: string; readonly owner: string; readonly at: number }[] = [];
+      for (const key of keysStartingWith(storage, prefix)) {
+        const parsed = parseRecoveryKey(key, prefix);
+        if (!parsed || !match(parsed.path)) continue;
+        const draft = read(storage, key);
+        if (draft) found.push({ path: parsed.path, owner: parsed.owner, at: draft.at });
+      }
+      return found;
+    } catch {
+      return [];
+    }
   }
 
   function moveOwn(path: string, key: string, from: string, to: string): void {
@@ -175,30 +215,61 @@ export function createDraftKeeper(options: DraftKeeperOptions): DraftKeeper {
     if (value !== null) storage.setItem(draftKey(workspace, target, tab), value);
   }
 
+  function renameMap<V>(map: Map<string, V>, from: string, to: string): void {
+    const moved = Array.from(map.entries()).filter(([path]) => options.renamedPath(path, from, to) !== path);
+    for (const [path] of moved) map.delete(path);
+    for (const [path, value] of moved) map.set(options.renamedPath(path, from, to), value);
+  }
+
   return {
-    async recover(path) {
+    async recover(path, version = 0) {
       const left = draftsLeftFor(storage, workspace, path);
       if (left.length === 0) return undefined;
       const live = await liveTabs(options.locks);
       const picked = pickRecovered(left, (owner) => owner !== tab && live.has(owner));
       if (!picked) return undefined;
-      taken.set(path, picked.keys);
+      taken.set(path, { keys: picked.keys, version });
       return picked.draft;
     },
-    leave(drafts) {
-      leaveForRecovery(storage, workspace, tab, drafts, options.now?.());
+    async recoverablePaths(match) {
+      const entries = matchingStored(match);
+      if (entries.length === 0) return [];
+      const live = await liveTabs(options.locks);
+      const paths = new Set<string>();
+      for (const entry of entries.toSorted((a, b) => b.at - a.at)) {
+        if (entry.owner !== tab && live.has(entry.owner)) continue;
+        paths.add(entry.path);
+      }
+      return Array.from(paths);
     },
-    settled(path) {
-      discardRecovered(storage, (taken.get(path) ?? []).concat([draftKey(workspace, path, tab)]));
-      taken.delete(path);
+    leave(drafts, versions) {
+      leaveForRecovery(storage, workspace, tab, drafts, options.now?.());
+      ownVersions.clear();
+      for (const path of drafts.keys()) ownVersions.set(path, versions?.get(path) ?? 0);
+    },
+    settled(path, version) {
+      const takenEntry = taken.get(path);
+      const ownVersion = ownVersions.get(path);
+      if (version === undefined) {
+        discardRecovered(storage, (takenEntry?.keys ?? []).concat([draftKey(workspace, path, tab)]));
+        taken.delete(path);
+        ownVersions.delete(path);
+        return;
+      }
+      const keys: string[] = [];
+      if (takenEntry && takenEntry.version <= version) {
+        keys.push(...takenEntry.keys);
+        taken.delete(path);
+      }
+      if (ownVersion !== undefined && ownVersion <= version) {
+        keys.push(draftKey(workspace, path, tab));
+        ownVersions.delete(path);
+      }
+      if (keys.length > 0) discardRecovered(storage, keys);
     },
     renamed(from, to) {
-      for (const [path, keys] of Array.from(taken)) {
-        const target = options.renamedPath(path, from, to);
-        if (target === path) continue;
-        taken.delete(path);
-        taken.set(target, keys);
-      }
+      renameMap(taken, from, to);
+      renameMap(ownVersions, from, to);
       try {
         for (const [path, key] of ownEntries()) moveOwn(path, key, from, to);
       } catch {
