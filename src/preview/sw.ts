@@ -10,10 +10,12 @@ import {
   CLIENT_SCRIPT_PATH,
   mountedRedirect,
   parseMountedUrl,
+  PREVIEW_MODE_PATH,
   workspaceMount,
   workspaceOfPath,
   type MountedLocation,
 } from "./paths";
+import { createRetirement, retiredFlag } from "./retirement";
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -102,16 +104,46 @@ async function askHosts(): Promise<void> {
 }
 
 /**
- * Set when a page of a build without previews said so (retire.ts). From then on this worker
- * answers nothing: pages it still controls go to the network like any other page.
+ * Whether this worker may answer at all (retirement.ts). Nothing about that is kept in memory
+ * alone: the browser stops and restarts a worker at will, and a restarted worker reads the
+ * retired flag and asks the deploy again before it serves anything.
  */
-let retired = false;
+const retirement = createRetirement({
+  flag: retiredFlag(self.caches),
+  fetchMode: () => fetch(PREVIEW_MODE_PATH, { cache: "no-store" }),
+  unregister: () => self.registration.unregister(),
+});
 
-function retire(): Promise<boolean> {
-  retired = true;
+async function retire(): Promise<void> {
   routers.clear();
   hosts.clear();
-  return self.registration.unregister();
+  await retirement.retire();
+}
+
+/**
+ * Answers a request from the workspace, unless this worker is retired or the deploy no longer
+ * has previews: then the request goes to the network like any page's.
+ */
+async function answer(request: Request, clientId: string, workspace: string | undefined): Promise<Response> {
+  // A navigation asks the deploy now: it is what would show a page that should be gone.
+  if (!(await retirement.allowed(request.mode === "navigate"))) return fetch(request);
+  const routed = workspace ? routerFor(workspace).fetch(request, clientId) : undefined;
+  if (!routed) return clientId ? fromPreviewPage(request, clientId) : fetch(request);
+  const asked = parseMountedUrl(request.url, location.origin);
+  const response = await routed;
+  return asked ? keepRedirectMounted(response, asked) : response;
+}
+
+/** Hands a previewed page's socket to its server, or refuses it as a closed port would. */
+async function connect(socket: MessagePort, port: number, pageUrl: string): Promise<void> {
+  const workspace = workspaceOfPath(new URL(pageUrl).pathname);
+  const allowed = workspace !== undefined && (await retirement.allowed(false));
+  const routed = allowed ? routerFor(workspace).socket(port, pageUrl, socket) : undefined;
+  if (routed) return routed;
+  // A message port has no target origin: it reaches its other end only.
+  // oxlint-disable-next-line unicorn/require-post-message-target-origin
+  socket.postMessage({ type: "error" });
+  socket.close();
 }
 
 self.addEventListener("install", () => void self.skipWaiting());
@@ -119,16 +151,12 @@ self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim(
 void askHosts();
 
 self.addEventListener("fetch", (event) => {
-  if (retired) return;
   const url = new URL(event.request.url);
-  // Our own client script is a real file; everything else a preview asks for is the server's.
-  if (url.origin !== location.origin || url.pathname === CLIENT_SCRIPT_PATH) return;
+  // Our own files are real files; everything else a preview asks for is its server's.
+  const ownFile = url.pathname === CLIENT_SCRIPT_PATH || url.pathname === PREVIEW_MODE_PATH;
+  if (url.origin !== location.origin || ownFile) return;
   const workspace = workspaceOfPath(url.pathname);
-  const routed = workspace ? routerFor(workspace).fetch(event.request, event.clientId) : undefined;
-  const asked = routed && parseMountedUrl(event.request.url, location.origin);
-  if (routed && asked) event.respondWith(routed.then((response) => keepRedirectMounted(response, asked)));
-  else if (routed) event.respondWith(routed);
-  else if (event.clientId) event.respondWith(fromPreviewPage(event.request, event.clientId));
+  if (workspace || event.clientId) event.respondWith(answer(event.request, event.clientId, workspace));
 });
 
 /** A previewed page opens a WebSocket by handing us one end of a channel to its server. */
@@ -137,12 +165,10 @@ self.addEventListener("message", (event) => {
   const source = event.source;
   const data: unknown = event.data;
   if (isPreviewsOff(data)) return void event.waitUntil(retire());
-  if (retired || !source || !("url" in source)) return;
+  if (!source || !("url" in source)) return;
   if (isHostAnnouncement(data)) return void hosts.set(source.id, data.workspace);
   if (!socket) return;
   if (!data || typeof data !== "object" || !("type" in data) || data.type !== "preview-socket") return;
   if (!("port" in data) || typeof data.port !== "number") return;
-  const workspace = workspaceOfPath(new URL(source.url).pathname);
-  const routed = workspace ? routerFor(workspace).socket(data.port, source.url, socket) : undefined;
-  if (routed) event.waitUntil(routed);
+  event.waitUntil(connect(socket, data.port, source.url));
 });

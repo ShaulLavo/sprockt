@@ -1,6 +1,11 @@
 // A server command that does not reload itself (plain `bun server.ts`), kept current by running
-// it again when the project's source changes. bun-wasm has no `--watch`, and its `--hot` refuses
-// ordinary servers, so for a bare entry file this is what makes an edit show.
+// it again when a person edits the project's source. bun-wasm has no `--watch`, and its `--hot`
+// refuses ordinary servers, so for a bare entry file this is what makes an edit show.
+//
+// Only edits made through the file service count (the editor, the explorer, an upload). What
+// a program writes does not, whatever the file is called: a server that generates a page when it
+// starts would otherwise restart itself for ever. The restarts are also capped, so that nothing
+// else can make a loop of them either.
 import type { FileChange } from "../files/service";
 import type { ServerProcess } from "./dev-server-line";
 
@@ -12,16 +17,34 @@ export interface Run {
   interrupt(): void;
 }
 
+/** How many restarts are allowed within how long. */
+export interface RestartLimit {
+  readonly restarts: number;
+  readonly windowMs: number;
+}
+
+export const RESTART_LIMIT: RestartLimit = { restarts: 3, windowMs: 30_000 };
+
 export interface RestartingOptions {
   /** The command for the first run, which may install first. */
   readonly script: string;
-  /** The command for every run after a change, or undefined for a command that reloads itself. */
+  /** The command for every run after an edit, or undefined for a command that reloads itself. */
   readonly rerun: string | undefined;
+  /** Aborted when the server is no longer wanted: a run created after that is ended at once. */
+  readonly signal?: AbortSignal;
   open(script: string): Promise<Run>;
-  /** Calls back when the project's source changed. Returns the unsubscribe. */
-  onSourceChange(listener: () => void): () => void;
+  /** Calls back when a person edited the project's source. Returns the unsubscribe. */
+  onSourceEdit(listener: () => void): () => void;
   /** Called before each run after the first. */
   onRestart?(): void;
+  /**
+   * Called with true when an edit was not picked up because the restarts of the window were
+   * used up, and with false when a later restart went through.
+   */
+  onHeld?(held: boolean): void;
+  readonly limit?: RestartLimit;
+  /** The clock the limit is counted on, in milliseconds. */
+  now?(): number;
 }
 
 /** Code, and the pages and styles a server reads when it starts. */
@@ -35,30 +58,40 @@ export function affectsProject(change: Pick<FileChange, "paths" | "reset">): boo
   return change.reset || change.paths.some((path) => !installed(path));
 }
 
-/**
- * Whether a change is one the server has to be run again for. Data the server writes itself (a
- * database, a JSON file, a log) is not: restarting for it would never end.
- */
-export function isSourceChange(change: Pick<FileChange, "paths" | "reset">): boolean {
-  return change.reset || change.paths.some((path) => SOURCE.test(path) && !installed(path));
+/** Whether an edit is one the server has to be run again for: source, and not installed code. */
+export function isSourceEdit(paths: readonly string[]): boolean {
+  return paths.some((path) => SOURCE.test(path) && !installed(path));
 }
 
 /**
- * Runs the command, and runs it again after each source change. As a process it has ended when
- * a run ended by itself or `stop` was called; a restart in between is not an end.
+ * Runs the command, and runs it again after an edit to the source. As a process it has ended
+ * when a run ended by itself or `stop` was called; a restart in between is not an end.
  */
 export async function restartingProcess(options: RestartingOptions): Promise<ServerProcess> {
+  const limit = options.limit ?? RESTART_LIMIT;
+  const now = options.now ?? Date.now;
+  /** When the restarts of the current window happened. */
+  const recent: number[] = [];
   let run = await options.open(options.script);
-  let stopped = false;
+  let stopped = options.signal?.aborted ?? false;
   let changed = false;
+  if (stopped) run.interrupt();
 
-  const unsubscribe =
-    options.rerun === undefined
-      ? () => {}
-      : options.onSourceChange(() => {
-          changed = true;
-          run.interrupt();
-        });
+  function mayRestart(): boolean {
+    const time = now();
+    while (recent.length > 0 && time - (recent[0] ?? time) >= limit.windowMs) recent.shift();
+    return recent.length < limit.restarts;
+  }
+
+  function onEdit(): void {
+    if (stopped) return;
+    // Used up: the server keeps running what it has, and the pane says the edit is not in it.
+    if (!changed && !mayRestart()) return void options.onHeld?.(true);
+    changed = true;
+    run.interrupt();
+  }
+
+  const unsubscribe = options.rerun === undefined ? () => {} : options.onSourceEdit(onEdit);
 
   async function runs(rerun: string | undefined): Promise<void> {
     for (;;) {
@@ -67,10 +100,12 @@ export async function restartingProcess(options: RestartingOptions): Promise<Ser
       await run.done;
       if (stopped || !changed || rerun === undefined) return;
       changed = false;
+      recent.push(now());
+      options.onHeld?.(false);
       options.onRestart?.();
       // oxlint-disable-next-line no-await-in-loop
       run = await options.open(rerun);
-      // A stop or another change may have come while this run was being created.
+      // A stop or another edit may have come while this run was being created.
       if (stopped || changed) run.interrupt();
     }
   }

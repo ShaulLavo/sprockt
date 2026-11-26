@@ -38,6 +38,8 @@ interface FakeTab {
   looking: Promise<void>;
   /** How often the command was looked up. */
   lookups: number;
+  /** How often a process was asked for, whether or not it came to exist. */
+  spawns: number;
   /** Creating the process takes until this resolves. */
   ready: Promise<void>;
   readonly processes: FakeProcess[];
@@ -64,6 +66,7 @@ function browser() {
       command: "bun run dev",
       looking: Promise.resolve(),
       lookups: 0,
+      spawns: 0,
       ready: Promise.resolve(),
       processes,
       listen(ports: readonly number[]) {
@@ -84,10 +87,13 @@ function browser() {
           await tab.looking;
           return tab.command;
         },
-        async spawn(command) {
+        async spawn(command, signal) {
+          tab.spawns++;
           await tab.ready;
           const process = fakeProcess(command);
           processes.push(process);
+          // As the real one does: a server nobody wants any more ends as soon as it exists.
+          if (signal.aborted) process.stop();
           return process;
         },
       }),
@@ -218,7 +224,7 @@ test("a stop while the server is still being started stops it, and no tab takes 
   first.line.stop();
   ready.resolve();
   await settle();
-  expect(first.processes[0]?.stops).toBe(1);
+  expect(first.processes[0]?.stops).toBeGreaterThanOrEqual(1);
   expect(second.processes).toHaveLength(0);
   expect(second.line.state().status).toBe("stopped");
 });
@@ -289,7 +295,7 @@ test("closing the tab while the command is looked up, or the process is created,
   // Disposal waits for the process that was being created, and stops it.
   await closing;
   expect(creator.processes).toHaveLength(1);
-  expect(creator.processes[0]?.stops).toBe(1);
+  expect(creator.processes[0]?.stops).toBeGreaterThanOrEqual(1);
 });
 
 test("a lookup that fails gives the claim back, and the next start tries again", async () => {
@@ -303,4 +309,79 @@ test("a lookup that fails gives the claim back, and the next start tries again",
   expect(await first.line.start()).toBe(true);
   await settle();
   expect(first.processes).toHaveLength(1);
+});
+
+test("a tab stopped while it looks the command up for a takeover never creates a process", async () => {
+  const openTab = browser();
+  const [first, second] = [openTab("tab-0"), openTab("tab-1")];
+  void first.line.start();
+  await settle();
+  first.listen([5173]);
+  await settle();
+
+  // The owner's tab goes away, and the tab behind it takes the lease and looks the command up.
+  const looking = Promise.withResolvers<void>();
+  second.looking = looking.promise;
+  await first.line.dispose();
+  await settle();
+  expect(second.lookups).toBe(1);
+
+  second.line.stop();
+  looking.resolve();
+  await settle();
+  // Not "created and then stopped": it was never asked for.
+  expect(second.spawns).toBe(0);
+  expect(second.processes).toHaveLength(0);
+  expect(second.line.state()).toEqual({ status: "stopped", owned: false, remotePorts: [] });
+});
+
+test("start, stop, start while the first lookup is still under way: the second start wins", async () => {
+  const first = browser()("tab-0");
+  const looking = Promise.withResolvers<void>();
+  first.looking = looking.promise;
+  const one = first.line.start();
+  first.line.stop();
+  const two = first.line.start();
+  // The second start is its own start, not the cancelled one handed back.
+  expect(two).not.toBe(one);
+  expect(first.line.state()).toEqual({ status: "starting", owned: true, remotePorts: [] });
+
+  looking.resolve();
+  expect(await Promise.all([one, two])).toEqual([true, true]);
+  await settle();
+  expect(first.processes).toHaveLength(1);
+  expect(first.processes[0]?.stops).toBe(0);
+  expect(first.line.state().owned).toBe(true);
+});
+
+test("stop, start, stop in a row leaves nothing running, whatever each had reached", async () => {
+  const openTab = browser();
+  const [first, second] = [openTab("tab-0"), openTab("tab-1")];
+  const looking = Promise.withResolvers<void>();
+  first.looking = looking.promise;
+  void first.line.start();
+  first.line.stop();
+  void first.line.start();
+  first.line.stop();
+  looking.resolve();
+  await settle();
+  expect(first.spawns).toBe(0);
+  expect(first.line.state().status).toBe("stopped");
+  expect(second.processes).toHaveLength(0);
+});
+
+test("a process still being created when its lease ends is told so, and ends", async () => {
+  const first = browser()("tab-0");
+  const ready = Promise.withResolvers<void>();
+  first.ready = ready.promise;
+  void first.line.start();
+  await settle();
+  expect(first.spawns).toBe(1);
+  first.line.stop();
+  ready.resolve();
+  await settle();
+  expect(first.processes).toHaveLength(1);
+  // Ended by the lease's signal when it came to exist, and asked once more by the line: both harmless.
+  expect(first.processes[0]?.stops).toBeGreaterThanOrEqual(1);
+  expect(first.line.state().status).toBe("stopped");
 });

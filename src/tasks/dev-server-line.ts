@@ -43,8 +43,11 @@ export interface DevServerLineOptions<Command> {
   readonly ports: LocalPorts;
   /** What starts the project's server, or nothing when it has none. */
   command(): Promise<Command | undefined>;
-  /** Runs `command` in this tab. */
-  spawn(command: Command): Promise<ServerProcess>;
+  /**
+   * Runs `command` in this tab. `signal` is the lease's: once it is aborted the server is no
+   * longer wanted, and whatever is still being created has to end at once.
+   */
+  spawn(command: Command, signal: AbortSignal): Promise<ServerProcess>;
 }
 
 export interface DevServerLine {
@@ -140,8 +143,10 @@ export function createDevServerLine<Command>(options: DevServerLineOptions<Comma
     found = undefined;
     try {
       const command = known ?? (await options.command());
+      // Stopped or closed while the command was looked up: nothing is created at all.
+      if (current.signal.aborted) return;
       // The process is this lease's from here on: `serve` stops it if the lease ended meanwhile.
-      const process = command === undefined ? undefined : await options.spawn(command);
+      const process = command === undefined ? undefined : await options.spawn(command, current.signal);
       if (process) await serve(current, process);
       else current.announce(DOWN);
     } catch (error) {
@@ -177,6 +182,8 @@ export function createDevServerLine<Command>(options: DevServerLineOptions<Comma
   /** Ends whatever this tab has under way: a start still looking for its command, or its lease. */
   function giveUp(): void {
     generation++;
+    // The start under way belongs to the generation that just ended: a later `start` begins anew.
+    starting = undefined;
     leaveLine();
   }
 
@@ -216,10 +223,14 @@ export function createDevServerLine<Command>(options: DevServerLineOptions<Comma
       return () => listeners.delete(listener);
     },
     start() {
-      starting ??= begin().finally(() => {
-        starting = undefined;
-      });
-      return starting;
+      if (starting) return starting;
+      const mine = begin();
+      starting = mine;
+      const settled = () => {
+        if (starting === mine) starting = undefined;
+      };
+      mine.then(settled, settled);
+      return mine;
     },
     stop() {
       // Said before the lease ends, so the tabs behind this one leave instead of taking over.

@@ -216,6 +216,13 @@ a server on port 5173 never see each other's HTTP or WebSocket traffic.
   answering (`preview/retire.ts`), and where the worker's file was it publishes one that serves
   nothing and removes itself (`preview/sw-off.ts`). Otherwise a tab of the earlier build that
   is still open would keep answering `/__preview/…` through the old worker.
+  The worker itself decides from what lasts, never from memory (`preview/retirement.ts`): the
+  browser stops an idle worker and starts it again with nothing remembered, and an unregistered
+  worker stays in charge of pages it already controls. So retiring sets a flag in the origin's
+  cache storage, which the worker reads whenever it starts; and a build with previews publishes
+  `/preview-mode.json`, which the worker asks for when it starts, again before every page
+  navigation, and otherwise at most every thirty seconds. A deploy that has no such file
+  retires the worker on the spot.
 - `isolated` (preview-origins lane): bun-wasm's planned `RootPreviews`, whose `url(port, path)`
   returns `https://<id>-<port>-pv.sprockt.dev/…`, where `<id>` is derived from the workspace.
   Each server gets its own origin, which is what keeps a previewed project away from the IDE.
@@ -240,7 +247,10 @@ How the mounted transport works:
   root, as a browser resolves it, before the mount is put in front (`preview/paths.ts`): `..`
   segments, written out or encoded, stop at that root and cannot reach another port's mount,
   another workspace's or the IDE. A redirect is resolved the same way, against the path that
-  was asked for, and rewritten to the same place under the mount.
+  was asked for, and rewritten to the same place under the mount. A loopback address
+  (`http://localhost:3000/…`, which is how a server names itself and the servers beside it)
+  is the mount of the server at that port, never the person's own machine; a redirect to
+  another site passes as the server wrote it.
 - **Isolation headers.** Every response carries the opener, embedder and resource policies
   (`preview/isolation.ts`), so a preview opened in its own tab is cross-origin isolated like
   the framed one and has `SharedArrayBuffer`.
@@ -250,11 +260,18 @@ How the mounted transport works:
   script gives the page a `WebSocket` that reaches its own server: the worker hands it a byte
   channel, and `preview/websocket-frames.ts` speaks the WebSocket protocol over it. That is
   what makes hot reload work. Frames that arrive while the handshake is being checked wait
-  until the socket is open, and a page that is reloaded or removed ends its sockets, because
+  until the socket is open, and so does the end of the channel if it comes meanwhile, so a
+  server that answers, sends, closes and hangs up at once is heard in that order. A page that
+  is reloaded or removed ends its sockets, because
   the server learns that only from the channel. It also reports the page's location and
   errors to the pane and takes "reload" and "go to" from it (`preview/bridge.ts`,
-  `window.postMessage`, the same for an isolated origin), and keeps links and form posts to
-  `/path` inside the mount (`preview/inject/mounting.ts`).
+  `window.postMessage`, the same for an isolated origin). And it keeps the page's links and
+  forms inside the preview (`preview/inject/navigation.ts`, the rule in `mounting.ts`): an
+  address is resolved where the page is on its server, put under that server's mount, and
+  written back with the element's own attribute functions (a form control named `action`
+  hides `form.action`); `form.submit()` is covered as well as the submit event; a `_top` or
+  `_parent` target becomes the preview's own frame; and what would still land on the IDE's own
+  pages is not followed at all.
 - **The pane** (`preview/PreviewPane.tsx`) keeps its own back and forward list
   (`preview/history.ts`). A frame's browser history is shared with the IDE page, so stepping
   through it could walk the IDE itself back. Its toolbar is the panes' header band with the
@@ -279,10 +296,20 @@ stopping the task never touches what was started by hand.
 
 A dev script reloads the way its author chose (Vite, `bun --hot`). A bare entry file is run
 with plain `bun <file>`, which never looks at the file again, so the task runs it again when
-the source changes (`tasks/restarting.ts`): code, pages and styles count, and what a server
-writes itself (a database, a JSON file) and what is installed do not. The server's port goes
-away and comes back, and the pane loads the page again. A run that ends by itself is not
-started again: a crashed server stays down, with its output on screen.
+a person edits the source (`tasks/restarting.ts`): code, pages and styles count, installed
+files do not. Only edits made through the file service count (`FileService.subscribeEdits`:
+the editor, the explorer, an upload). The watcher cannot say who wrote a file, so what the
+shell or a program writes never restarts the server, whatever the file is called: a server
+that generates a page when it starts would otherwise restart itself for ever. Restarts are
+also capped at three in thirty seconds; an edit past that is not picked up, and the pane says
+so until a later restart goes through. The server's port goes away and comes back, and the
+pane loads the page again. A run that ends by itself is not started again: a crashed server
+stays down, with its output on screen.
+
+Start and stop are one small state machine (`tasks/dev-server-line.ts`): a start is claimed
+before anything is awaited, a stop or a closed tab ends everything begun before it (a command
+still being looked up starts nothing, a process still being created ends as soon as it
+exists), and a start after a stop is a new start.
 
 One tab of a workspace runs the task (`tasks/dev-server-line.ts`, on
 `workspace/coordinator.ts`). Asking for the server stands in the workspace's line; the tab that

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { acceptFor } from "../websocket-frames";
+import { acceptFor, closePayload } from "../websocket-frames";
 import { endTunnels, TunnelWebSocket } from "./websocket";
 
 const TARGET = { port: 3000, target: "/ws", url: "ws://localhost:3000/ws" };
@@ -9,6 +9,12 @@ const encoder = new TextEncoder();
 const textFrame = (text: string) => {
   const payload = encoder.encode(text);
   return new Uint8Array([0x81, payload.length, ...payload]);
+};
+
+/** A server's close frame. */
+const closeFrame = (code: number, reason: string) => {
+  const payload = closePayload(code, reason);
+  return new Uint8Array([0x88, payload.length, ...payload]);
 };
 
 const joined = (...parts: Uint8Array[]) => new Uint8Array(parts.flatMap((part) => Array.from(part)));
@@ -47,7 +53,10 @@ function connect() {
   socket.addEventListener("message", (event) =>
     events.push(`message ${String((event as MessageEvent).data)} state=${socket.readyState}`),
   );
-  socket.addEventListener("close", () => events.push("close"));
+  socket.addEventListener("close", (event) => {
+    const { code, wasClean } = event as CloseEvent;
+    events.push(`close ${code} clean=${wasClean}`);
+  });
   // A message port has no target origin: it reaches its other end only.
   // oxlint-disable-next-line unicorn/require-post-message-target-origin
   const say = (message: unknown) => far?.postMessage(message);
@@ -68,7 +77,7 @@ function connect() {
     return encoder.encode(`${lines.join("\r\n")}\r\n\r\n`);
   }
 
-  return { socket, events, received, send, answer };
+  return { socket, events, received, send, say, answer };
 }
 
 test("a frame that arrives right behind the handshake is delivered after open, not before", async () => {
@@ -114,7 +123,36 @@ test("when the document goes away its open sockets tell the server they ended", 
   expect(open.socket.readyState).toBe(open.socket.CLOSED);
   expect(connecting.socket.readyState).toBe(connecting.socket.CLOSED);
   await until(() => ended(open.received) && ended(connecting.received));
-  expect(open.events.at(-1)).toBe("close");
+  expect(open.events.at(-1)).toBe("close 1001 clean=false");
+});
+
+test("a server that answers, sends, closes and hangs up at once is heard in that order", async () => {
+  const { events, send, say, answer } = connect();
+  const handshake = await answer();
+  // Everything arrives while the handshake's answer is still being checked.
+  send(handshake);
+  send(textFrame("only message"));
+  send(closeFrame(1000, "bye"));
+  say({ type: "end" });
+  await until(() => events.some((event) => event.startsWith("close")));
+  expect(events).toEqual(["open state=1", "message only message state=1", "close 1000 clean=true"]);
+});
+
+test("a server that hangs up right after its first message still delivers it", async () => {
+  const { events, send, say, answer } = connect();
+  send(joined(await answer(), textFrame("last words")));
+  say({ type: "end" });
+  await until(() => events.some((event) => event.startsWith("close")));
+  // No close frame came, so the close is not a clean one; the message is not lost for it.
+  expect(events).toEqual(["open state=1", "message last words state=1", "close 1006 clean=false"]);
+});
+
+test("a channel that ends before any answer fails the socket without opening it", async () => {
+  const { events, say } = connect();
+  say({ type: "accepted" });
+  say({ type: "end" });
+  await until(() => events.length > 0);
+  expect(events).toEqual(["close 1006 clean=false"]);
 });
 
 test("a socket that already closed is not ended a second time", async () => {

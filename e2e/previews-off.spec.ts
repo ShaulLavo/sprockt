@@ -27,16 +27,10 @@ const registrations = (page: Page) =>
   page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
 
 /**
- * A workspace of the build with previews serves a guest page; then the deploy changes while that
- * tab stays open. Afterwards the old build's worker must be gone and the guest's address must
- * not reach the old tab's server.
+ * The build with previews: a workspace in `page` runs a server, and its address works in a tab
+ * of its own. Returns that address. `page` stays open and keeps hosting the server.
  */
-async function deployChangesUnderAnOpenTab(
-  page: Page,
-  context: BrowserContext,
-  deploy: Exclude<Deploy, "on">,
-): Promise<void> {
-  // The build with previews: a workspace runs a server, and its address works in a tab.
+async function hostAGuest(page: Page, context: BrowserContext): Promise<string> {
   const id = await newWorkspace(page);
   await writeFile(page, "server.ts", SERVER);
   await runInTerminal(page, "bun server.ts");
@@ -49,6 +43,20 @@ async function deployChangesUnderAnOpenTab(
   await expect(before.getByRole("heading")).toHaveText("Guest page");
   await before.close();
   expect(await registrations(page)).toBe(1);
+  return address;
+}
+
+/**
+ * A workspace of the build with previews serves a guest page; then the deploy changes while that
+ * tab stays open. Afterwards the old build's worker must be gone and the guest's address must
+ * not reach the old tab's server.
+ */
+async function deployChangesUnderAnOpenTab(
+  page: Page,
+  context: BrowserContext,
+  deploy: Exclude<Deploy, "on">,
+): Promise<void> {
+  const address = await hostAGuest(page, context);
 
   // The deploy changes. The tab that hosts the server stays open on the old build.
   await deployWithoutPreviews(context, deploy);
@@ -85,6 +93,28 @@ test.describe("with a tab of the earlier build still open", () => {
     context,
   }) => {
     await deployChangesUnderAnOpenTab(page, context, "off");
+  });
+
+  test("a preview address opened right after the deploy changed is not served by the old worker", async ({
+    page,
+    context,
+  }) => {
+    const address = await hostAGuest(page, context);
+    // The deploy changes, and nobody opens a page of the new build: no page retires the worker,
+    // and the worker file is still the old one, so the browser has nothing to update it to.
+    await deployWithoutPreviews(context, "off-old-worker");
+    expect(await registrations(page)).toBe(1);
+
+    // The old worker is asked directly. It asks the deploy before it answers, and does not.
+    const after = await context.newPage();
+    await after.goto(address);
+    await expect(after.locator("#app")).toBeAttached();
+    await expect(after.getByText("Guest page")).toHaveCount(0);
+    // Having learned that, it retired itself: the registration is gone for every page.
+    await expect.poll(() => registrations(after)).toBe(0);
+    await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "ready");
+    await after.reload();
+    await expect(after.getByText("Guest page")).toHaveCount(0);
   });
 });
 

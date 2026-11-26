@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { affectsProject, isSourceChange, restartingProcess, type Run } from "./restarting";
+import { affectsProject, isSourceEdit, restartingProcess, RESTART_LIMIT, type Run } from "./restarting";
 
 interface FakeRun extends Run {
   readonly script: string;
@@ -8,15 +8,22 @@ interface FakeRun extends Run {
   end(): void;
 }
 
-function harness(rerun: string | undefined) {
+function harness(rerun: string | undefined, signal?: AbortSignal) {
   const runs: FakeRun[] = [];
   const listeners = new Set<() => void>();
+  /** Every call of `onHeld`, in order. */
+  const held: boolean[] = [];
   let restarts = 0;
   /** Creating the next run takes until this resolves. */
   const gate = { ready: Promise.resolve() };
+  /** The time the restart limit is counted on, moved by hand. */
+  const clock = { now: 0 };
   const started = restartingProcess({
     script: "bun install && bun server.ts",
     rerun,
+    ...(signal ? { signal } : {}),
+    now: () => clock.now,
+    onHeld: (value) => void held.push(value),
     async open(script) {
       await gate.ready;
       const ended = Promise.withResolvers<void>();
@@ -33,7 +40,7 @@ function harness(rerun: string | undefined) {
       runs.push(run);
       return run;
     },
-    onSourceChange(listener) {
+    onSourceEdit(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
@@ -42,6 +49,8 @@ function harness(rerun: string | undefined) {
   return {
     runs,
     gate,
+    clock,
+    held,
     started,
     listeners,
     restarts: () => restarts,
@@ -141,25 +150,67 @@ test("a command that reloads itself is left alone", async () => {
   await process.exited;
 });
 
-const change = (paths: string[], reset = false) => ({ paths, reset });
+const seen = (paths: string[], reset = false) => ({ paths, reset });
 
-test("code, pages and styles are source; what a server writes and what is installed are not", () => {
-  expect(isSourceChange(change(["server.ts"]))).toBe(true);
-  expect(isSourceChange(change(["src/routes/index.tsx", "notes.sqlite"]))).toBe(true);
-  expect(isSourceChange(change(["lib/util.mjs"]))).toBe(true);
-  expect(isSourceChange(change(["src/page.html"]))).toBe(true);
-  expect(isSourceChange(change(["notes.sqlite", "notes.sqlite-wal", "data.json", "app.log"]))).toBe(false);
-  expect(isSourceChange(change(["node_modules/hono/dist/index.js"]))).toBe(false);
-  expect(isSourceChange(change([".git/hooks/pre-commit.js"]))).toBe(false);
-  expect(isSourceChange(change([]))).toBe(false);
-  // Events were lost: anything may have changed.
-  expect(isSourceChange(change([], true))).toBe(true);
+test("an edit to code, a page or a style is one to restart for; data and installed files are not", () => {
+  expect(isSourceEdit(["server.ts"])).toBe(true);
+  expect(isSourceEdit(["src/routes/index.tsx", "notes.sqlite"])).toBe(true);
+  expect(isSourceEdit(["lib/util.mjs"])).toBe(true);
+  expect(isSourceEdit(["src/page.html"])).toBe(true);
+  expect(isSourceEdit(["notes.sqlite", "notes.sqlite-wal", "data.json", "app.log"])).toBe(false);
+  expect(isSourceEdit(["node_modules/hono/dist/index.js"])).toBe(false);
+  expect(isSourceEdit([".git/hooks/pre-commit.js"])).toBe(false);
+  expect(isSourceEdit([])).toBe(false);
+});
+
+test("after three restarts in thirty seconds the next edit is not picked up, and that is said", async () => {
+  const { runs, clock, held, started, change } = harness("bun server.ts");
+  await started;
+  for (let edit = 0; edit < RESTART_LIMIT.restarts; edit++) {
+    clock.now += 1000;
+    change();
+    // oxlint-disable-next-line no-await-in-loop
+    await settle();
+  }
+  expect(runs).toHaveLength(1 + RESTART_LIMIT.restarts);
+  expect(held).not.toContain(true);
+
+  // The fourth edit within the window: the server keeps running what it has.
+  clock.now += 1000;
+  change();
+  await settle();
+  expect(runs).toHaveLength(1 + RESTART_LIMIT.restarts);
+  expect(runs.at(-1)?.interrupts).toBe(0);
+  expect(held.at(-1)).toBe(true);
+
+  // Once the window has passed, an edit restarts it again, with everything edited since.
+  clock.now += RESTART_LIMIT.windowMs;
+  change();
+  await settle();
+  expect(runs).toHaveLength(2 + RESTART_LIMIT.restarts);
+  expect(held.at(-1)).toBe(false);
+});
+
+test("a server that is no longer wanted when its run is ready is ended at once", async () => {
+  const cancel = new AbortController();
+  const { runs, gate, started, change } = harness("bun server.ts", cancel.signal);
+  const ready = Promise.withResolvers<void>();
+  gate.ready = ready.promise;
+  cancel.abort();
+  ready.resolve();
+  const process = await started;
+  await process.exited;
+  expect(runs).toHaveLength(1);
+  expect(runs[0]?.interrupts).toBe(1);
+  change();
+  await settle();
+  expect(runs).toHaveLength(1);
 });
 
 test("any file of the project itself may change what there is to start; installed files do not", () => {
-  expect(affectsProject(change(["package.json"]))).toBe(true);
-  expect(affectsProject(change(["notes.sqlite"]))).toBe(true);
-  expect(affectsProject(change(["node_modules/vite/package.json", ".git/index"]))).toBe(false);
-  expect(affectsProject(change([]))).toBe(false);
-  expect(affectsProject(change([], true))).toBe(true);
+  expect(affectsProject(seen(["package.json"]))).toBe(true);
+  expect(affectsProject(seen(["notes.sqlite"]))).toBe(true);
+  expect(affectsProject(seen(["node_modules/vite/package.json", ".git/index"]))).toBe(false);
+  expect(affectsProject(seen([]))).toBe(false);
+  expect(affectsProject(seen([], true))).toBe(true);
 });

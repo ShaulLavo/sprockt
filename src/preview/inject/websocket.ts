@@ -102,6 +102,8 @@ export class TunnelWebSocket extends EventTarget {
    * an earlier one. Undefined at every other time.
    */
   private early: Uint8Array[] | undefined;
+  /** How the channel ended while `early` was collecting, to be acted on after those frames. */
+  private earlyEnd: "end" | "error" | undefined;
   private fragments: Uint8Array[] = [];
   private fragmentOpcode = 0;
   private sends: Promise<void> = Promise.resolve();
@@ -171,8 +173,21 @@ export class TunnelWebSocket extends EventTarget {
     if (message.type === "accepted") return this.startHandshake();
     if (message.type === "data" && "chunk" in message && message.chunk instanceof Uint8Array)
       return this.data(message.chunk);
-    if (message.type === "end") return this.finish(1006, "", false);
-    if (message.type === "error") this.fail();
+    if (message.type === "end" || message.type === "error") this.transportEnded(message.type);
+  }
+
+  /**
+   * The channel ended. While the handshake's answer is still being checked, that waits its turn
+   * behind the frames that came before it: a server may answer, send a message and a close
+   * frame and hang up, all at once, and the page has to see all of it in that order.
+   */
+  private transportEnded(how: "end" | "error"): void {
+    if (this.early) {
+      this.earlyEnd = how;
+      return;
+    }
+    if (how === "error") return this.fail();
+    this.finish(1006, "", false);
   }
 
   private startHandshake(): void {
@@ -201,14 +216,18 @@ export class TunnelWebSocket extends EventTarget {
   private async accept(status: number, headers: ReadonlyMap<string, string>): Promise<void> {
     const expected = await acceptFor(this.key);
     const waiting = this.early ?? [];
+    const ended = this.earlyEnd;
     this.early = undefined;
+    this.earlyEnd = undefined;
     if (status !== 101 || headers.get("sec-websocket-accept") !== expected) return this.fail();
     if (this.readyState !== CONNECTING) return;
     this.protocol = headers.get("sec-websocket-protocol") ?? "";
     this.readyState = OPEN;
     this.dispatchEvent(new Event("open"));
-    // Open first, then the frames in the order they arrived.
+    // Open first, then the frames in the order they arrived, then the end of the channel if it
+    // came meanwhile (a close frame among the frames has closed the socket cleanly by then).
     for (const chunk of waiting) this.handleFrames(chunk);
+    if (ended) this.transportEnded(ended);
   }
 
   private handleFrames(chunk: Uint8Array): void {

@@ -9,6 +9,7 @@ import type { PreviewMessage, PreviewReply } from "waffle/browser/preview-protoc
 import { activated } from "waffle/browser/service-worker";
 import { askedWorkspace, hostAnnouncement, isHostQuery } from "./host-protocol";
 import { mountedPath, parseMountedUrl, PREVIEW_PREFIX, SERVICE_WORKER_PATH, workspaceMount } from "./paths";
+import { retiredFlag } from "./retirement";
 import type { PreviewBackend, PreviewServer, PreviewTransport } from "./transport";
 
 export function createMountedPreviewTransport(workspace: string): PreviewTransport {
@@ -38,6 +39,11 @@ export function createMountedPreviewTransport(workspace: string): PreviewTranspo
     if (!container) throw new Error("This browser has no service workers, so previews cannot load");
     container.addEventListener("message", onMessage);
     container.startMessages();
+    // A build without previews may have retired the worker on this origin earlier and left its
+    // flag (retirement.ts). This build has previews, so the flag goes before the worker comes.
+    await retiredFlag(globalThis.caches)
+      .clear()
+      .catch(() => {});
     registration = await container.register(SERVICE_WORKER_PATH, {
       scope: `${PREVIEW_PREFIX}/`,
       updateViaCache: "none",

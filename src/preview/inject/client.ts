@@ -2,7 +2,7 @@
 // WebSocket that reaches its dev server (hot reload needs one), and it tells the preview pane
 // where the page is and what went wrong in it.
 import { frameMessage, isFrameCommand, type FrameMessage } from "../bridge";
-import { remounted } from "./mounting";
+import { keepNavigationMounted } from "./navigation";
 import { tunnelTarget, type PageServer } from "./tunnel";
 import { endTunnels, TunnelWebSocket } from "./websocket";
 
@@ -78,49 +78,9 @@ function installBridge(pane: Window): void {
   });
 }
 
-/**
- * A link to `/about` means the server's `/about`, but in a mounted preview the browser would
- * leave the mount and load the IDE's own `/about`. Such a click is sent to the mounted path
- * instead. A click the page's own router already handled is left alone.
- */
-function keepLinksMounted(): void {
-  window.addEventListener("click", (event) => {
-    const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
-    if (!(anchor instanceof HTMLAnchorElement) || event.defaultPrevented || event.button !== 0) return;
-    if (event.metaKey || event.ctrlKey || event.shiftKey || (anchor.target && anchor.target !== "_self"))
-      return;
-    const target = remounted(anchor.href, new URL(location.href), server.mount);
-    if (target === undefined) return;
-    event.preventDefault();
-    location.assign(target);
-  });
-}
-
-type Submitter = HTMLButtonElement | HTMLInputElement;
-
-const isSubmitter = (element: HTMLElement | null): element is Submitter =>
-  element instanceof HTMLButtonElement || element instanceof HTMLInputElement;
-
-/**
- * The same for a form: `action="/notes"` is the server's `/notes`. The address is corrected
- * while the submit event is under way, before the browser reads it. A form the page submits
- * itself (it called `preventDefault`) is left alone.
- */
-function keepFormsMounted(): void {
-  window.addEventListener("submit", (event) => {
-    const form = event.target;
-    if (!(form instanceof HTMLFormElement) || event.defaultPrevented) return;
-    // A submit button may name its own address, which then wins over the form's.
-    const button =
-      isSubmitter(event.submitter) && event.submitter.hasAttribute("formaction") ? event.submitter : null;
-    const target = remounted(button ? button.formAction : form.action, new URL(location.href), server.mount);
-    if (target === undefined) return;
-    if (button) button.formAction = target;
-    else form.action = target;
-  });
-}
-
-if (Number.isInteger(server.port) && server.port > 0) installWebSocket();
-if (server.mount) keepLinksMounted();
-if (server.mount) keepFormsMounted();
+const served = Number.isInteger(server.port) && server.port > 0;
+if (served) installWebSocket();
+// Links and forms that say `/about` or `http://localhost:5173/login` mean the server's own
+// places; they are kept inside its mount (navigation.ts).
+if (served && server.mount) keepNavigationMounted(server, parent !== window);
 if (parent !== window) installBridge(parent);

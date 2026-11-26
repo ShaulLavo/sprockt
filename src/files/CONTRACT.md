@@ -14,6 +14,11 @@ existed before changed meaning.
 | `subscribe(listener)`      | Like `revision` but says what changed (below).                                                                                                                                                                                                          |
 | `size(path)`               | A file's size in bytes without reading it (a stat through the filesystem worker); `undefined` when it is missing or not a file. Search skips large files with it.                                                                                       |
 
+`subscribeEdits(listener)` calls back with the paths of each change made through this service
+(the editor, the explorer, an upload), as soon as it is made. A change the shell, a program or
+another tab made never arrives there. The dev-server task restarts a server on these and only
+these, so a server that writes files when it starts cannot restart itself.
+
 ## `subscribe` events
 
 `{ paths, reset, moves, removed }`, delivered after changes are coalesced over 50 ms.

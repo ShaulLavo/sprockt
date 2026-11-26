@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show, type JSX } from "solid-js";
 import { createDevServer } from "../tasks/dev-server";
 import { plainOutput } from "../tasks/output";
+import { RESTART_LIMIT } from "../tasks/restarting";
 import { trackOverflowFade } from "../ui/fade";
 import { fill } from "../ui/format";
 import { Icon } from "../ui/icons";
@@ -313,6 +314,12 @@ export function PreviewPane() {
           <ExternalIcon />
         </button>
       </form>
+      {/* The server runs older code than the files hold: said where the page is, not hidden. */}
+      <Show when={devServer.restartHeld()}>
+        <p class="preview-notice" role="status" data-testid="preview-restart-held">
+          {fill(ui.restartHeld, { restarts: RESTART_LIMIT.restarts, seconds: RESTART_LIMIT.windowMs / 1000 })}
+        </p>
+      </Show>
       <Show when={showErrors() && errors().length > 0}>
         <ul class="preview-error-list" data-testid="preview-error-list">
           <For each={errors()}>{(message) => <li>{message}</li>}</For>

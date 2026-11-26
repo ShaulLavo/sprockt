@@ -28,4 +28,6 @@ export const ui = {
   emptyStartable: "No dev server is running yet. Start it to preview this project here.",
   nothingToStart: "Nothing to start in this project.",
   serverEnded: "The dev server stopped. Its last output:",
+  restartHeld:
+    "The server was restarted {restarts} times in {seconds} seconds, so your last change is not in it yet. Save again in a moment, or stop and start the server.",
 } as const;

@@ -278,6 +278,32 @@ test("watcher events become project paths, and churn in node_modules and .git is
   expect(service.revision()).toBeGreaterThan(0);
 });
 
+test("edit subscribers hear what was changed through the service, and never what the watcher saw", async () => {
+  const { service, emit, next } = setup();
+  const edits: (readonly string[])[] = [];
+  const stop = service.subscribeEdits((paths) => edits.push(paths));
+
+  await service.write("src/a.ts", "a");
+  await service.move("src/a.ts", "src/b.ts");
+  await service.remove("src/b.ts");
+  expect(edits).toEqual([["src/a.ts"], ["src/a.ts", "src/b.ts"], ["src/b.ts"]]);
+
+  // A program writes a file: everyone who watches the project hears it, edit subscribers do not.
+  const seen = next();
+  emit("workspace/generated.html", "workspace/src/from-shell.ts");
+  expect((await seen).paths).toContain("generated.html");
+  expect(edits).toHaveLength(3);
+
+  // A change that was refused is not an edit.
+  await service.write("kept.txt", "x");
+  await expect(service.create("kept.txt")).rejects.toThrow();
+  expect(edits).toHaveLength(4);
+
+  stop();
+  await service.write("later.ts", "x");
+  expect(edits).toHaveLength(4);
+});
+
 test("a watcher that lost events, or cannot name a change, makes subscribers list everything again", async () => {
   const { emit, next } = setup();
   const change = next();

@@ -172,6 +172,18 @@
 
 /* ───────────── Below the toolbar ───────────── */
 
+/* A word about the server itself, between the toolbar and the page. */
+.preview-notice {
+  flex: none;
+  margin: 0;
+  padding: var(--space-1_5) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-panel);
+  color: var(--warn);
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
+}
+
 .preview-error-list {
   flex: none;
   max-height: 96px;

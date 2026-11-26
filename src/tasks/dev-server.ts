@@ -15,7 +15,7 @@ import { PROJECT_ROOT } from "../workspace/paths";
 import { createDevServerLine, type DevServerStatus, type ServerProcess } from "./dev-server-line";
 import { detectWorkspace, devStart, type DevStart } from "./detect";
 import { latestOnly } from "./latest";
-import { affectsProject, isSourceChange, restartingProcess, type Run } from "./restarting";
+import { affectsProject, isSourceEdit, restartingProcess, type Run } from "./restarting";
 
 export type { DevServerStatus } from "./dev-server-line";
 
@@ -33,6 +33,11 @@ export interface DevServer {
    * finished. The pane then keeps `output` on screen, which says why.
    */
   readonly ended: Accessor<boolean>;
+  /**
+   * Whether an edit was not picked up because the server had been restarted too often in a
+   * short time (tasks/restarting.ts). False again once a restart goes through or the server stops.
+   */
+  readonly restartHeld: Accessor<boolean>;
   /** Whether the project has something to start: a dev script or a server entry file. */
   readonly startable: Accessor<boolean>;
   /**
@@ -77,6 +82,7 @@ async function pump(
 export function createDevServer(host: DevServerHost): DevServer {
   const [output, setOutput] = createSignal("");
   const [ended, setEnded] = createSignal(false);
+  const [restartHeld, setRestartHeld] = createSignal(false);
   const decoder = new TextDecoder();
 
   function append(bytes: Uint8Array): void {
@@ -123,19 +129,24 @@ export function createDevServer(host: DevServerHost): DevServer {
   }
 
   /** Starts the server. A command that does not reload itself runs again when the source changes. */
-  async function spawn(start: DevStart): Promise<ServerProcess> {
+  async function spawn(start: DevStart, signal: AbortSignal): Promise<ServerProcess> {
     setOutput("");
     setEnded(false);
+    setRestartHeld(false);
     let stopped = false;
     const process = await restartingProcess({
       script: start.script,
       rerun: start.rerun,
+      signal,
       open: openRun,
-      onSourceChange: (listener) =>
-        host.files.subscribe((change) => {
-          if (isSourceChange(change)) listener();
+      // Only what a person changed through the file service: what the server writes itself, or
+      // anything else a program writes, must never restart it.
+      onSourceEdit: (listener) =>
+        host.files.subscribeEdits((paths) => {
+          if (isSourceEdit(paths)) listener();
         }),
       onRestart: () => setOutput(""),
+      onHeld: setRestartHeld,
     }).catch((error: unknown) => {
       // No shell, so no server: what went wrong is the output, and it stays on screen.
       setEnded(true);
@@ -144,7 +155,10 @@ export function createDevServer(host: DevServerHost): DevServer {
     return {
       command: process.command,
       // It ended without being asked to: its last output says why, and the pane keeps it.
-      exited: process.exited.catch(report).finally(() => setEnded(!stopped)),
+      exited: process.exited.catch(report).finally(() => {
+        setRestartHeld(false);
+        setEnded(!stopped && !signal.aborted);
+      }),
       stop() {
         stopped = true;
         process.stop();
@@ -178,6 +192,7 @@ export function createDevServer(host: DevServerHost): DevServer {
     remotePorts: () => state().remotePorts,
     output,
     ended,
+    restartHeld,
     startable,
     start: () => line.start(),
     stop: () => line.stop(),

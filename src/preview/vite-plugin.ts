@@ -7,8 +7,13 @@
 // nothing and removes itself (sw-off.ts), for browsers that still hold an earlier build's worker.
 import { resolve } from "node:path";
 import { build, type Plugin } from "vite";
+//
+// A build with previews also publishes `/preview-mode.json`, which says so. The service worker
+// asks for it to learn whether the deployed build still has previews (retirement.ts); a build
+// without them has no such file.
 import { previewKind } from "./kind";
-import { CLIENT_SCRIPT_PATH, SERVICE_WORKER_PATH } from "./paths";
+import { CLIENT_SCRIPT_PATH, PREVIEW_MODE_PATH, SERVICE_WORKER_PATH } from "./paths";
+import { MOUNTED_MODE } from "./retirement";
 
 type Entries = Readonly<Record<string, string>>;
 
@@ -18,6 +23,8 @@ const ENTRIES: Entries = {
 };
 
 const ENTRIES_OFF: Entries = { [SERVICE_WORKER_PATH]: "src/preview/sw-off.ts" };
+
+const MODE_FILE = `${JSON.stringify(MOUNTED_MODE)}\n`;
 
 /** What a build publishes at the preview scripts' addresses, by whether it has previews. */
 export function publishedEntries(kind: "mounted" | "none"): Entries {
@@ -46,31 +53,38 @@ async function bundle(root: string, entry: string, minify: boolean): Promise<str
 
 export function previewScripts(): Plugin {
   let root = process.cwd();
-  let published = ENTRIES_OFF;
+  let kind: "mounted" | "none" = "none";
   const cache = new Map<string, Promise<string>>();
   return {
     name: "sprockt:preview-scripts",
     configResolved(config) {
       root = config.root;
       // The same rule, from the same settings, as the app's own `import.meta.env` check.
-      published = publishedEntries(
-        previewKind({
-          DEV: config.env.DEV === true,
-          VITE_SPROCKT_PREVIEWS: config.env.VITE_SPROCKT_PREVIEWS,
-        }),
-      );
+      kind = previewKind({
+        DEV: config.env.DEV === true,
+        VITE_SPROCKT_PREVIEWS: config.env.VITE_SPROCKT_PREVIEWS,
+      });
     },
     async generateBundle() {
+      const published = publishedEntries(kind);
       const paths = Object.keys(published);
       const sources = await Promise.all(paths.map((path) => bundle(root, published[path] ?? "", true)));
       for (const [index, path] of paths.entries()) {
         this.emitFile({ type: "asset", fileName: path.slice(1), source: sources[index] ?? "" });
       }
+      if (kind !== "mounted") return;
+      this.emitFile({ type: "asset", fileName: PREVIEW_MODE_PATH.slice(1), source: MODE_FILE });
     },
     configureServer(server) {
       server.watcher.on("change", () => cache.clear());
       server.middlewares.use((request, response, next) => {
         const path = request.url?.split("?")[0] ?? "";
+        // The dev server always has previews.
+        if (path === PREVIEW_MODE_PATH) {
+          response.setHeader("content-type", "application/json");
+          response.setHeader("cache-control", "no-store");
+          return void response.end(MODE_FILE);
+        }
         const entry = ENTRIES[path];
         if (!entry) return next();
         const built = cache.get(path) ?? bundle(root, entry, false);

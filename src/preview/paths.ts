@@ -8,6 +8,11 @@ export const PREVIEW_PREFIX = "/__preview";
 export const SERVICE_WORKER_PATH = "/preview-sw.js";
 /** The script the service worker adds to every previewed HTML page. */
 export const CLIENT_SCRIPT_PATH = "/preview-client.js";
+/**
+ * A small file only a build with previews publishes. The service worker asks for it to learn
+ * whether the build that is deployed now still has previews (retirement.ts).
+ */
+export const PREVIEW_MODE_PATH = "/preview-mode.json";
 
 export interface MountedLocation {
   readonly workspace: string;
@@ -35,15 +40,59 @@ export function normalizePreviewPath(input: string): string {
   return url?.origin === GUEST_ORIGIN ? pathOf(url) : "/";
 }
 
+/** A place inside the workspace: a server, by its port, and a path on it. */
+export interface GuestPlace {
+  readonly port: number;
+  readonly path: string;
+}
+
+const DEFAULT_PORTS: Readonly<Record<string, number>> = {
+  "http:": 80,
+  "ws:": 80,
+  "https:": 443,
+  "wss:": 443,
+};
+
 /**
- * Where a redirect leads on the dev server that sent it, given the path that was asked for:
- * a path on that server, resolved and kept under its root. Undefined for a redirect to another
- * site, which is left as the server wrote it.
+ * The port of a loopback address, or undefined for any other address. A server in the workspace
+ * knows itself, and the servers beside it, as `localhost:<port>` (Waffle gives it a loopback
+ * Host), so that is what it writes into an absolute redirect or link. In the browser those
+ * names mean the person's own machine, which a preview must never be sent to.
  */
-export function redirectedPath(location: string, from: string): string | undefined {
+function loopbackPort(url: URL): number | undefined {
+  const fallback = DEFAULT_PORTS[url.protocol];
+  if (fallback === undefined) return undefined;
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  const loopback =
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "[::1]" ||
+    host === "0.0.0.0" ||
+    /^127(?:\.\d{1,3}){3}$/.test(host);
+  if (!loopback) return undefined;
+  return url.port === "" ? fallback : Number(url.port);
+}
+
+/**
+ * Where an address a server wrote (a redirect, a link, a form's action) leads, given the server
+ * that wrote it and the path it was written on:
+ *
+ * - a place in the workspace: a path on that server, resolved and kept under its root, or a path
+ *   on the server at the loopback port the address names;
+ * - `"elsewhere"` for another site, which is left as the server wrote it;
+ * - undefined for something that is not an address.
+ */
+export function guestPlace(
+  address: string,
+  from: string,
+  port: number,
+): GuestPlace | "elsewhere" | undefined {
   const base = URL.parse(normalizePreviewPath(from), GUEST_ORIGIN);
-  const url = base && URL.parse(location, base);
-  return url?.origin === GUEST_ORIGIN ? pathOf(url) : undefined;
+  const url = base && URL.parse(address, base);
+  if (!url) return undefined;
+  if (url.origin === GUEST_ORIGIN) return { port, path: pathOf(url) };
+  const other = loopbackPort(url);
+  return other === undefined ? "elsewhere" : { port: other, path: pathOf(url) };
 }
 
 /** The directory all previews of one workspace live under, without a trailing slash. */
@@ -74,8 +123,9 @@ export function mountedPath(workspace: string, port: number, path: string): stri
 
 /**
  * The `Location` to send instead of the one a server on `port` sent in answer to a request for
- * `from`: the same place on that server, under its mount. Undefined when the header is right as
- * it is: it already names a path in the mount, or it leads to another site.
+ * `from`: the same place in the workspace, under its server's mount. Undefined when the header
+ * is right as it is: it already names a path in the mount, or it leads to another site. A
+ * loopback address never passes as it is: it becomes the mount of the server at that port.
  */
 export function mountedRedirect(
   workspace: string,
@@ -83,9 +133,11 @@ export function mountedRedirect(
   location: string,
   from: string,
 ): string | undefined {
-  if (location.startsWith("/") && isUnderMount(location, workspace, port)) return undefined;
-  const path = redirectedPath(location, from);
-  return path === undefined ? undefined : mountedPath(workspace, port, path);
+  const mounted = location.startsWith("/") && !location.startsWith("//");
+  if (mounted && isUnderMount(location, workspace, port)) return undefined;
+  const place = guestPlace(location, from, port);
+  if (place === undefined || place === "elsewhere") return undefined;
+  return mountedPath(workspace, place.port, place.path);
 }
 
 /** The workspace a path under `/__preview/` belongs to, or undefined for any other path. */

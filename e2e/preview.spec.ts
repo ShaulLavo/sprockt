@@ -14,6 +14,18 @@ const page = (title: string, body: string) =>
   });
 const redirect = (location: string) => new Response(null, { status: 302, headers: { location } });
 let sockets = 0;
+// Forms and links that try, each in its own way, to send the browser somewhere outside the preview.
+const FORMS =
+  "<h1>Forms</h1>" +
+  "<form id='named' method='post' action='/submitted/named'><input name='action' value='shadow'><input name='target' value='shadow'><button id='send-named'>named</button></form>" +
+  "<form id='top' method='get' action='/submitted/top' target='_top'><input name='q' value='1'><button id='send-top'>top</button></form>" +
+  "<form id='native' method='post' action='/submitted/native'><button type='button' id='send-native' onclick='document.forms.native.submit()'>native</button></form>" +
+  "<form id='request' method='post' action='/submitted/request'><button type='button' id='send-request' onclick='document.forms.request.requestSubmit()'>request</button></form>" +
+  "<form id='override' method='get' action='/wrong'><button id='send-override' formaction='/submitted/override' formmethod='post'>override</button></form>" +
+  "<form id='climb' method='post' action='../../../../submitted/climb'><button id='send-climb'>climb</button></form>" +
+  "<form id='loop' method='post' action='http://localhost:3000/submitted/loop'><button id='send-loop'>loop</button></form>" +
+  "<a id='send-toplink' href='/submitted/toplink' target='_top'>top link</a> " +
+  "<a id='send-looplink' href='http://127.0.0.1:3000/submitted/looplink'>loopback link</a>";
 
 Bun.serve({
   port: 3000,
@@ -25,6 +37,11 @@ Bun.serve({
     if (url.pathname === "/old/place") return redirect("/about");
     if (url.pathname === "/deep/inside/up") return redirect("../../../../../about");
     if (url.pathname === "/to-other-port") return redirect("/../5174/about");
+    // What a server builds from the request it was sent: its own loopback address, in full.
+    if (url.pathname === "/absolute") return redirect(new URL("/about?from=absolute", request.url).href);
+    if (url.pathname === "/absolute-ip") return redirect("http://127.0.0.1:3000/about?from=ip");
+    if (url.pathname === "/forms") return page("Forms", FORMS);
+    if (url.pathname.startsWith("/submitted/")) return page("Submitted", "<h1>" + request.method + " " + url.pathname + url.search + "</h1>");
     if (url.pathname === "/echo") return page("Echo", "<h1 id='echo'>waiting</h1><script>const socket = new WebSocket('ws://' + location.host + '/ws'); socket.onopen = () => socket.send('ping'); socket.onmessage = (event) => { document.getElementById('echo').textContent = 'echo: ' + event.data; };</script>");
     return page("Home", "<h1>Hello from Bun.serve</h1><a href='/about'>About</a><button id='boom' onclick='console.error(\\"kaboom\\")'>Boom</button>");
   },
@@ -131,7 +148,108 @@ test("typed paths and the server's redirects stay on the server they belong to",
   await expect(urlBar(page)).toHaveValue("/5174/about");
   await expect(page.getByTestId("preview-port")).toHaveValue("3000");
   expect(await framePath()).toBe(`${mount}/5174/about`);
+
+  // A redirect to the server's own loopback address, as a server builds it from the request it
+  // was sent, stays in the preview: followed as written it would go to the real localhost.
+  const frameAddress = () =>
+    frame(page)
+      .locator("html")
+      .evaluate(() => location.pathname + location.search);
+  await navigate(page, "/absolute");
+  await expect(urlBar(page)).toHaveValue("/about?from=absolute");
+  await expect(frame(page).getByRole("heading")).toHaveText("About page");
+  expect(await frameAddress()).toBe(`${mount}/about?from=absolute`);
+  await navigate(page, "/absolute-ip");
+  await expect(urlBar(page)).toHaveValue("/about?from=ip");
+  expect(await frameAddress()).toBe(`${mount}/about?from=ip`);
   await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
+});
+
+test("forms and links that aim outside the preview are sent inside it", async ({ page }) => {
+  const id = await newWorkspace(page);
+  await writeFile(page, "server.ts", SERVER);
+  await runInTerminal(page, "bun server.ts");
+  await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
+  const mount = `/__preview/${id}/3000`;
+  const frameAddress = () =>
+    frame(page)
+      .locator("html")
+      .evaluate(() => location.pathname + location.search);
+
+  /** Uses one form or link of the forms page and says what the server received. */
+  async function send(which: string, received: string, address: string): Promise<void> {
+    await navigate(page, "/forms");
+    await expect(frame(page).getByRole("heading")).toHaveText("Forms");
+    await frame(page).locator(`#send-${which}`).click();
+    await expect(frame(page).getByRole("heading")).toHaveText(received);
+    expect(await frameAddress()).toBe(mount + address);
+    // The IDE around the preview is still the IDE.
+    await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
+    await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "ready");
+  }
+
+  // Controls named "action" and "target" hide the form's own properties of those names.
+  await send("named", "POST /submitted/named", "/submitted/named");
+  // A form aimed at the top frame would replace the IDE; it stays in the preview's frame.
+  await send("top", "GET /submitted/top?q=1", "/submitted/top?q=1");
+  // form.submit() sends no submit event; requestSubmit() does.
+  await send("native", "POST /submitted/native", "/submitted/native");
+  await send("request", "POST /submitted/request", "/submitted/request");
+  // The submit button's own address wins over the form's.
+  await send("override", "POST /submitted/override", "/submitted/override");
+  // A relative address that climbs is resolved on the server, where the page is /forms.
+  await send("climb", "POST /submitted/climb", "/submitted/climb");
+  // The server's loopback name for itself.
+  await send("loop", "POST /submitted/loop", "/submitted/loop");
+  await send("toplink", "GET /submitted/toplink", "/submitted/toplink");
+  await send("looplink", "GET /submitted/looplink", "/submitted/looplink");
+});
+
+test("a server that writes files when it starts is started once, and edits restart it within limits", async ({
+  page,
+}) => {
+  await newWorkspace(page);
+  // Each start adds a line to a log and writes a page, as a server that generates files does.
+  const server = [
+    'import { appendFileSync, readFileSync, writeFileSync } from "node:fs";',
+    'appendFileSync("boots.log", "boot\\n");',
+    'writeFileSync("generated.html", "<p>written at " + Date.now() + "</p>");',
+    'const boots = readFileSync("boots.log", "utf8").trim().split("\\n").length;',
+    'const html = "<!doctype html><html><head><title>Boots</title></head><body><h1>boots: " + boots + "</h1></body></html>";',
+    'Bun.serve({ port: 3000, fetch: () => new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } }) });',
+  ].join("\n");
+  await writeFile(page, "server.ts", server);
+  await page.getByTestId("preview-start").click();
+  const heading = frame(page).getByRole("heading");
+  await expect(heading).toHaveText("boots: 1");
+
+  // What the server wrote reaches the explorer, and does not start the server again.
+  await expect(page.getByTestId("file-tree")).toContainText("generated.html");
+  const reload = page.getByRole("button", { name: "Reload preview" });
+  const stillOne = async () => {
+    await page.waitForTimeout(1000);
+    await reload.click();
+    await expect(heading).toHaveText("boots: 1");
+  };
+  await stillOne();
+  await stillOne();
+  await stillOne();
+
+  // A person's edits do restart it: three of them, each picked up.
+  await writeFile(page, "page.html", "<p>edit 1</p>");
+  await expect(heading).toHaveText("boots: 2");
+  await writeFile(page, "page.html", "<p>edit 2</p>");
+  await expect(heading).toHaveText("boots: 3");
+  await writeFile(page, "page.html", "<p>edit 3</p>");
+  await expect(heading).toHaveText("boots: 4");
+  await expect(page.getByTestId("preview-restart-held")).toHaveCount(0);
+
+  // The fourth within half a minute is not picked up, and the pane says so.
+  await writeFile(page, "page.html", "<p>edit 4</p>");
+  await expect(page.getByTestId("preview-restart-held")).toBeVisible();
+  await reload.click();
+  await expect(heading).toHaveText("boots: 4");
+  await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "running");
 });
 
 test("reload, the error indicator and the viewport switch", async ({ page }) => {
@@ -352,16 +470,17 @@ test("the preview opens in its own tab", async ({ page, context }) => {
 test("a worker told that previews are off stops serving, with the hosting tab still open", async ({
   page,
   context,
+  browserName,
 }) => {
   const id = await newWorkspace(page);
   await writeFile(page, "server.ts", SERVER);
   await runInTerminal(page, "bun server.ts");
   await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
   const address = `/__preview/${id}/3000/`;
+  // A preview in its own tab, which stays open: the worker stays in charge of it.
   const direct = await context.newPage();
   await direct.goto(address);
   await expect(direct.getByRole("heading")).toHaveText("Hello from Bun.serve");
-  await direct.close();
 
   // What a page of a build without previews sends (src/preview/retire.ts), sent by hand here.
   const other = await context.newPage();
@@ -382,6 +501,18 @@ test("a worker told that previews are off stops serving, with the hosting tab st
   await expect(visit.locator("#app")).toBeAttached();
   await expect(visit.getByText("Hello from Bun.serve")).toHaveCount(0);
   expect(await visit.evaluate(() => navigator.serviceWorker.controller)).toBeNull();
+
+  // The tab the worker still controls asks for its page again. The retired worker answers
+  // nothing from the workspace, and neither does a new instance of it: the browser stops idle
+  // workers and starts them again with nothing remembered (Chromium lets a test do that).
+  const asked = () => direct.evaluate(async () => (await fetch(location.href, { cache: "no-store" })).text());
+  expect(await asked()).not.toContain("Hello from Bun.serve");
+  if (browserName !== "chromium") return;
+  const devtools = await context.newCDPSession(other);
+  await devtools.send("ServiceWorker.enable");
+  await devtools.send("ServiceWorker.stopAllWorkers");
+  expect(await asked()).not.toContain("Hello from Bun.serve");
+  expect(await asked()).not.toContain("Hello from Bun.serve");
 });
 
 test("a dev command that fails leaves its output on screen", async ({ page }) => {
