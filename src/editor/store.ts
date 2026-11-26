@@ -6,7 +6,7 @@ import type { FileChange, FileService } from "../files/service";
 import { createAutosave, loadAutosaveSetting, storeAutosaveSetting } from "./autosave";
 import { createBufferSet, freeName, isDetached, originalPath, type BufferSet } from "./buffers";
 import { loadTabs, saveTabs } from "./persist";
-import { discardRecovered, leaveForRecovery, recovered } from "./recovery";
+import { createDraftKeeper } from "./recovery";
 import { closeTab, moveTab, openTab, pinTab, renamedPath, renameTabs, type EditorTab } from "./tabs";
 
 export type { EditorTab } from "./tabs";
@@ -76,6 +76,11 @@ export interface EditorStore {
   setAutosave(enabled: boolean): void;
   /** Autosaves now rather than after the idle wait: the page was hidden or the editor lost focus. */
   flushAutosave(): Promise<void>;
+  /**
+   * The page was hidden or is going away: every unsaved text is left for recovery first (so the
+   * save below is never its only copy), then autosaved. The copy goes once the text is durable.
+   */
+  pageHidden(): Promise<void>;
   /** Keeps the edits of the file on screen over the disk version, and saves them. */
   keepMine(): Promise<void>;
   /** Replaces the edits of the file on screen with what the file holds now. */
@@ -143,7 +148,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     buffers: {
       paths: () => buffers.paths(),
       get: (path) => buffers.get(path),
-      save: (path) => buffers.save(path),
+      save: (path, options) => buffers.save(path, options),
     },
     enabled: autosaveOn,
     writable: workspace.files.writable,
@@ -151,12 +156,20 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     onError: (error) => console.error("Saving failed", error),
   });
 
+  const drafts = createDraftKeeper({
+    storage: localStorage,
+    workspace: workspace.id,
+    tab: crypto.randomUUID(),
+    locks: typeof navigator === "undefined" ? undefined : navigator.locks,
+    renamedPath,
+  });
+
   const buffers = createBufferSet(workspace.files, {
     onEdit: edited,
     onChange: () => autosave.edited(),
-    // A copy another tab left stays until this tab's text for the file is durable.
-    recover: (path) => recovered(localStorage, workspace.id, path),
-    onDurable: (path) => discardRecovered(localStorage, workspace.id, path),
+    // A copy a gone tab left stays until this tab's text for the file is durable.
+    recover: (path) => drafts.recover(path),
+    onDurable: (path) => drafts.settled(path),
   });
   const shownBuffer = () => {
     const path = displayed();
@@ -188,6 +201,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     const affected = tabs().some((tab) => follows(tab.path)) || buffers.paths().some(follows);
     if (!affected && (shown === undefined || !follows(shown))) return;
     let current = active();
+    drafts.renamed(from, to);
     for (const aside of buffers.rename(from, to)) current = retarget(aside.from, aside.to, current);
     const moved = displayed();
     commit(renameTabs(tabs(), from, to), current === undefined ? undefined : renamedPath(current, from, to));
@@ -267,15 +281,18 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
   // only arrive as changed paths, and the revision sync marks a vanished file deleted.
   onCleanup(workspace.files.subscribe(applyChange));
   // Once another tab owns the workspace this tab cannot save. Its unsaved text is left where
-  // that tab finds it when it opens the file.
+  // that tab finds it when it opens the file, and this tab no longer holds it.
   createEffect(() => {
-    if (!workspace.files.writable()) leaveForRecovery(localStorage, workspace.id, buffers.unsaved());
+    if (workspace.files.writable()) return;
+    drafts.leave(buffers.unsaved());
+    drafts.release();
   });
   // Showing another file autosaves the one that was on screen (and any other pending edit).
   createEffect(on(displayed, () => void autosave.flush(), { defer: true }));
   onCleanup(() => {
     autosave.dispose();
     buffers.dispose();
+    drafts.release();
   });
 
   async function saveAll(): Promise<void> {
@@ -310,6 +327,11 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
       if (enabled) void autosave.flush();
     },
     flushAutosave: () => autosave.flush(),
+    pageHidden() {
+      // The page may never run again: the text goes to storage first, then the save is tried.
+      drafts.leave(buffers.unsaved());
+      return autosave.flush();
+    },
     setSearchOpen(open) {
       setSearchOpen(open);
       if (open) setSearchFocus((value) => value + 1);
@@ -337,7 +359,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
       commit(next.tabs, next.active);
       buffers.release(path);
       // Closing confirmed dropping any unsaved text, a recovered copy included.
-      discardRecovered(localStorage, workspace.id, path);
+      drafts.settled(path);
     },
     move: (from, to) => commit(moveTab(tabs(), from, to), active()),
     pin,
@@ -352,7 +374,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
       const path = displayed();
       if (path === undefined) return;
       await buffers.takeTheirs(path);
-      discardRecovered(localStorage, workspace.id, path);
+      drafts.settled(path);
     },
     releaseClosed,
   };

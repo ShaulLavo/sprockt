@@ -1,11 +1,15 @@
 import type { Page } from "@playwright/test";
 import { editorText, expect, newWorkspace, openFile, test, writeFile } from "./helpers";
+import { TAB_POLICY } from "../src/runtime/tab-policy";
 
 // A phone has no Ctrl+S: edits are saved by themselves a moment after typing stops, and the ⋯ menu
 // and quick open offer Save. No test here presses a key combination.
 
 const fileText = (page: Page, path: string) =>
   page.evaluate((file) => globalThis.sprockt?.workspace?.files.read(file), path);
+
+const recoveryKeys = (page: Page) =>
+  page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("sprockt:recovery:")));
 
 const pane = (page: Page, name: string) =>
   page.getByTestId("pane-switcher").getByRole("button", { name, exact: true });
@@ -133,4 +137,47 @@ test("quick open runs Save all, and a matching command shows above the files", a
   await expect(page.getByTestId("editor-dirty")).toHaveCount(0);
   const typed = await editorText(page);
   await expect.poll(() => fileText(page, "a.txt")).toBe(typed);
+});
+
+test("a tab closed while its autosave waits for a file lock leaves the text for the next tab", async ({
+  page,
+}) => {
+  test.skip(TAB_POLICY !== "attach", "two tabs share a workspace only with the attach policy");
+  const id = await newWorkspace(page);
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+  await writeFile(page, "notes.txt", "kept\n");
+  // The second tab opens before the first opens the file, so it has the file closed until later.
+  const second = await page.context().newPage();
+  await second.goto(`/w/${id}`);
+  await expect(second.getByTestId("terminal-state")).toHaveText("ready");
+  await openFile(page, "notes.txt");
+
+  // The second tab holds the file's lock, as its own save of the file would.
+  await second.evaluate((name) => {
+    const held = Promise.withResolvers<void>();
+    (globalThis as { releaseHeld?: () => void }).releaseHeld = held.resolve;
+    return new Promise<void>((granted) => {
+      void navigator.locks.request(name, () => {
+        granted();
+        return held.promise;
+      });
+    });
+  }, `sprockt:${id}:path:/workspace/notes.txt`);
+
+  // The first tab's text goes nowhere but its own memory: autosave waits for the lock.
+  await page.getByTestId("editor").click();
+  await page.keyboard.insertText("draft");
+  await expect(page.getByTestId("editor-dirty")).toBeVisible();
+  await page.evaluate(() => dispatchEvent(new PageTransitionEvent("pagehide", { persisted: false })));
+  await page.close({ runBeforeUnload: false });
+  await second.evaluate(() => (globalThis as { releaseHeld?: () => void }).releaseHeld?.());
+
+  // The second tab gets the text as an unsaved edit and autosaves it; the stored copy then goes.
+  await openFile(second, "notes.txt");
+  const text = await editorText(second);
+  expect(text).toContain("draft");
+  await expect.poll(() => fileText(second, "notes.txt")).toBe(text);
+  await expect(second.getByTestId("editor-dirty")).toHaveCount(0);
+  await expect(second.getByTestId("save-state")).toHaveText("saved");
+  await expect.poll(() => recoveryKeys(second)).toEqual([]);
 });

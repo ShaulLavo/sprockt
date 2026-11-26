@@ -12,15 +12,19 @@ import { createBufferSet, isDetached } from "./buffers";
 function memoryFiles(initial: Record<string, string>) {
   const disk = new Map(Object.entries(initial));
   const writes: string[] = [];
+  /** While set, every write waits on it after it was counted, as a slow storage would. */
+  const hold: { gate: Promise<void> | undefined } = { gate: undefined };
   return {
     disk,
     writes,
+    hold,
     saved: () => Promise.resolve(),
     read: async (path: string) => disk.get(path),
     async writeIfUnchanged(path: string, content: string, expected: string | undefined) {
       const current = disk.get(path);
       if (current !== expected) return { written: false as const, current };
       writes.push(path);
+      if (hold.gate) await hold.gate;
       disk.set(path, content);
       return { written: true as const };
     },
@@ -65,7 +69,7 @@ function setUp(initial: Record<string, string>, settings: { enabled?: boolean; w
     buffers: {
       paths: () => buffers.paths(),
       get: (path) => buffers.get(path),
-      save: (path) => buffers.save(path),
+      save: (path, options) => buffers.save(path, options),
     },
     enabled: () => state.enabled,
     writable: () => state.writable,
@@ -236,6 +240,52 @@ test("edits made while autosave writes stay unsaved and are saved after the next
   clock.advance(1000);
   await settle();
   expect(files.disk.get("a.txt")).toBe("A12");
+  expect(buffers.get("a.txt")?.dirty()).toBe(false);
+});
+
+test("a file deleted while its autosave waited for a move lock is not written again", async () => {
+  const { files, autosave, buffers } = setUp({ "docs/a.txt": "A" });
+  await buffers.load("docs/a.txt");
+  type(buffers, "docs/a.txt", " edited");
+  // A folder operation holds the path; the autosave is asked for while it waits.
+  const lock = await buffers.lock(["docs"]);
+  const saving = autosave.flush();
+  // The operation deleted the folder.
+  files.disk.delete("docs/a.txt");
+  buffers.markRemoved(["docs"]);
+  lock.release();
+  await saving;
+  expect(files.writes).toEqual([]);
+  expect(files.disk.has("docs/a.txt")).toBe(false);
+  expect(buffers.get("docs/a.txt")?.session.materializeFullText()).toBe("A edited");
+});
+
+test("many autosave requests while one write is held open write the edit once", async () => {
+  const { files, autosave, buffers } = setUp({ "a.txt": "A" });
+  await buffers.load("a.txt");
+  type(buffers, "a.txt", "1");
+  const gate = Promise.withResolvers<void>();
+  files.hold.gate = gate.promise;
+  // The first write starts; the edit is then still "unsaved" to anyone asking before it lands.
+  const first = autosave.flush();
+  const more = Array.from({ length: 8 }, () => autosave.flush());
+  gate.resolve();
+  await Promise.all(more.concat([first]));
+  expect(files.writes).toEqual(["a.txt"]);
+  expect(files.disk.get("a.txt")).toBe("A1");
+
+  // An edit made during a held write is written once more after it, not once per request.
+  const second = Promise.withResolvers<void>();
+  files.hold.gate = second.promise;
+  type(buffers, "a.txt", "2");
+  const writing = autosave.flush();
+  type(buffers, "a.txt", "3");
+  const requests = Array.from({ length: 8 }, () => autosave.flush());
+  second.resolve();
+  files.hold.gate = undefined;
+  await Promise.all(requests.concat([writing]));
+  expect(files.writes).toEqual(["a.txt", "a.txt", "a.txt"]);
+  expect(files.disk.get("a.txt")).toBe("A123");
   expect(buffers.get("a.txt")?.dirty()).toBe(false);
 });
 

@@ -86,10 +86,10 @@ function useEditorShortcuts(store: EditorStore, pane: () => HTMLElement, editor:
     });
   });
 
-  // Closing or reloading the page with unsaved edits asks first, and autosave starts writing them.
+  // Closing or reloading the page with unsaved edits asks first; the text is kept and autosaved.
   const beforeUnload = (event: BeforeUnloadEvent) => {
     if (store.buffers.dirtyPaths().length === 0) return;
-    void store.flushAutosave();
+    void store.pageHidden();
     event.preventDefault();
   };
   window.addEventListener("beforeunload", beforeUnload);
@@ -99,11 +99,12 @@ function useEditorShortcuts(store: EditorStore, pane: () => HTMLElement, editor:
 const reportSaveError = (error: unknown) => console.error("Saving failed", error);
 
 /**
- * Autosave does not wait for the idle pause when the page may go away: a phone that switches apps
- * hides the page and may never show it again.
+ * A phone that switches apps hides the page and may never show it again. Unsaved text is left for
+ * recovery at once (a save may have to wait for a lock the page never gets back), and autosave
+ * does not wait for the idle pause.
  */
 function useAutosaveTriggers(store: EditorStore) {
-  const flush = () => void store.flushAutosave();
+  const flush = () => void store.pageHidden();
   const onVisibility = () => {
     if (document.visibilityState === "hidden") flush();
   };

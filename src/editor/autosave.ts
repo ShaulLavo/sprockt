@@ -21,7 +21,8 @@ export interface AutosaveBuffer {
 export interface AutosaveBuffers {
   paths(): readonly string[];
   get(path: string): AutosaveBuffer | undefined;
-  save(path: string): Promise<void>;
+  /** `when` is asked right before the write starts; false: nothing is written. */
+  save(path: string, options: { when(buffer: AutosaveBuffer): boolean }): Promise<void>;
 }
 
 export interface AutosaveTimers {
@@ -79,20 +80,63 @@ export function createAutosave(options: AutosaveOptions): Autosave {
     pending = undefined;
   }
 
-  function savable(): string[] {
-    return options.buffers.paths().filter((path) => {
+  const allowed = () => !disposed && options.enabled() && options.writable();
+
+  /**
+   * Asked again right before each write starts, after earlier saves of the file and any move lock:
+   * the file may have been deleted, or the text written, while the save waited.
+   */
+  const stillWanted = (buffer: AutosaveBuffer) => allowed() && autosavable(buffer, options.isDetached);
+
+  function savable(): AutosaveBuffer[] {
+    return options.buffers.paths().flatMap((path) => {
       const buffer = options.buffers.get(path);
-      return buffer !== undefined && autosavable(buffer, options.isDetached);
+      return buffer !== undefined && autosavable(buffer, options.isDetached) ? [buffer] : [];
     });
+  }
+
+  /** Per buffer: the autosave running now, and whether another was asked for meanwhile. */
+  interface Running {
+    again: boolean;
+    done: Promise<void>;
+  }
+  const running = new Map<AutosaveBuffer, Running>();
+
+  async function saveWhileWanted(buffer: AutosaveBuffer, state: Running): Promise<void> {
+    try {
+      do {
+        state.again = false;
+        // oxlint-disable-next-line no-await-in-loop -- one save of a buffer at a time, by design
+        await options.buffers
+          .save(buffer.path, { when: stillWanted })
+          .catch((error: unknown) => options.onError?.(error));
+      } while (state.again && allowed());
+    } finally {
+      // No await between the last check of `again` and this: a request is never dropped.
+      running.delete(buffer);
+    }
+  }
+
+  /**
+   * At most one autosave per buffer is queued: asking while one runs asks for one more after it,
+   * however often it is asked, and that one writes only if an unsaved edit is still there.
+   */
+  function autosave(buffer: AutosaveBuffer): Promise<void> {
+    const current = running.get(buffer);
+    if (current) {
+      current.again = true;
+      return current.done;
+    }
+    const state: Running = { again: false, done: Promise.resolve() };
+    running.set(buffer, state);
+    state.done = saveWhileWanted(buffer, state);
+    return state.done;
   }
 
   async function flush(): Promise<void> {
     cancel();
-    if (disposed || !options.enabled() || !options.writable()) return;
-    const saves = savable().map((path) =>
-      options.buffers.save(path).catch((error: unknown) => options.onError?.(error)),
-    );
-    await Promise.all(saves);
+    if (!allowed()) return;
+    await Promise.all(savable().map(autosave));
   }
 
   return {
