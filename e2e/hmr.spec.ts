@@ -22,6 +22,14 @@ async function writeFiles(page: Page, files: Record<string, string>): Promise<vo
 
 const frame = (page: Page) => page.frameLocator("[data-testid=preview-frame]");
 
+test.beforeEach(({ browserName }) => {
+  // Bun 1.4.5 runs servers in Playwright's WebKit, and both tests here pass there most of the
+  // time. But about one run in ten, with three or more workers, `bun install` finishes and Vite
+  // then never starts listening, and the test sits in its ten-minute hang cap (ARCHITECTURE.md
+  // "Known gaps", 11). The preview tests on a plain Bun.serve run in WebKit.
+  test.fixme(browserName === "webkit", "Vite sometimes never starts under Bun in Playwright's WebKit");
+});
+
 test("Vite hot reload: an edit shows in the preview and the page keeps its state", async ({ page }) => {
   // Installing React and Vite from the registry inside the browser takes a while: these are
   // hang caps for a download, not speed targets.

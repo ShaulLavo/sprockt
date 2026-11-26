@@ -639,6 +639,15 @@ where the bytes live.
     the same is unknown: no stock Firefox was at hand. The tests reopen a workspace in a new
     tab instead of reloading. If stock Firefox does it too, the fix belongs in bun-wasm's
     relay frame, and a public deploy waits for it ("Before public deploy", 4).
+11. **Vite sometimes never starts under Bun in Playwright's WebKit.** With the Bun 1.4.5 guest,
+    Bun's servers run in Playwright's WebKit, and the preview tests on a plain `Bun.serve` run
+    there. The Vite + React starter also works there most of the time (10 of 10 with two
+    workers), but in 2 of about 30 runs with three or six workers `bun install` finished
+    ("24 packages installed") and Vite then never listened; the pane stayed on "Starting" until
+    the test's hang cap. It happened on the mounted and on the isolated transport, before any
+    page was previewed, so it is not the preview. The two hot-reload tests (`e2e/hmr.spec.ts`)
+    are `fixme` in WebKit for that reason; Chromium and Firefox run them. The cause is in
+    bun-wasm or Waffle under WebKit and has not been looked into.
 
 ## Parallel work map
 
