@@ -29,7 +29,7 @@ function crossOriginIsolation(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(),crossOriginIsolation(), previewScripts()],
+  plugins: [react(), crossOriginIsolation(), previewScripts()],
   build: { target: "esnext", sourcemap: true },
   // Each worker is one file. A split worker chunk imports back from the worker's entry file, and
   // WebKit evaluates that entry a second time instead of reusing the running one: the second copy

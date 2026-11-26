@@ -112,16 +112,8 @@ class Node<T> extends Scope {
     for (const source of this.sources) source.observers.delete(this as Node<unknown>);
     this.sources = [];
     const previous = this.value;
-    const outerListener = listener;
-    const outerOwner = owner;
-    listener = this as Node<unknown>;
-    owner = this;
-    try {
-      this.value = this.fn(previous);
-    } finally {
-      listener = outerListener;
-      owner = outerOwner;
-    }
+    const fn = this.fn;
+    this.value = runAs(this as Node<unknown>, () => fn(previous));
     if (this.effect || this.equals(previous, this.value)) return;
     for (const observer of this.observers) observer.state = DIRTY;
   }
@@ -138,6 +130,20 @@ let listener: Node<unknown> | undefined;
 let owner: Scope | undefined;
 let batchDepth = 0;
 let pendingEffects: Node<unknown>[] = [];
+
+/** Runs `fn` with `node` as both the tracking listener and the owner of what it creates. */
+function runAs<T>(node: Node<unknown>, fn: () => T): T {
+  const outerListener = listener;
+  const outerOwner = owner;
+  listener = node;
+  owner = node;
+  try {
+    return fn();
+  } finally {
+    listener = outerListener;
+    owner = outerOwner;
+  }
+}
 
 function track(node: Node<unknown>, source: Node<unknown>): void {
   if (source.observers.has(node)) return;
@@ -178,9 +184,9 @@ export function createSignal<T>(value?: T, options?: SignalOptions<T | undefined
   const node = new Node<T | undefined>(value, undefined, false, undefined, options);
   const read = () => node.read();
   const write: Setter<T | undefined> = (next) => {
-    const value = typeof next === "function" ? (next as (previous: T | undefined) => T)(node.value) : next;
-    node.write(value);
-    return value;
+    const resolved = typeof next === "function" ? (next as (previous: T | undefined) => T)(node.value) : next;
+    node.write(resolved);
+    return resolved;
   };
   return [read, write];
 }
