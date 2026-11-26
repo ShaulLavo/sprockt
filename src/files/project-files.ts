@@ -193,6 +193,7 @@ export function createProjectFiles(
   }
   const decoder = new TextDecoder();
   const listeners = new Set<(change: FileChange) => void>();
+  const editListeners = new Set<(paths: readonly string[]) => void>();
   let revoked: Error | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending = emptyPending();
@@ -247,6 +248,8 @@ export function createProjectFiles(
       const result = await change(effects);
       persistence.touch();
       changedProject(effects);
+      // Told at once and apart from the watcher's news: this change was made through the service.
+      for (const listener of editListeners) listener(effects.paths);
       return result;
     } catch (error) {
       remember(error);
@@ -555,6 +558,10 @@ export function createProjectFiles(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    subscribeEdits(listener) {
+      editListeners.add(listener);
+      return () => editListeners.delete(listener);
+    },
     revoke(reason) {
       revoked = reason;
       setWritable(false);
@@ -563,6 +570,7 @@ export function createProjectFiles(
     dispose() {
       clearTimeout(timer);
       listeners.clear();
+      editListeners.clear();
       stopWatching();
       sizeOf?.dispose();
     },

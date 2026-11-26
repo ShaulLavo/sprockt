@@ -46,6 +46,9 @@ jobs:
       options: --user 1001 --ipc=host
     env:
       SPROCKT_GUEST_CACHE: ${{ github.workspace }}/.guest-cache
+      # The test build has same-origin previews, so the preview pane and hot reload are tested.
+      # A public build must not set this (ARCHITECTURE.md "Before public deploy").
+      VITE_SPROCKT_PREVIEWS: mounted
     steps:
       - uses: actions/checkout@v5
       # setup-bun needs unzip, which the image lacks; its Node installs Bun instead.

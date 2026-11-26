@@ -1,6 +1,43 @@
 import { expect, test as base, type Page } from "@playwright/test";
 
 /**
+ * Where the workbench stood when a test failed: a test that times out while waiting says
+ * nothing about why, and "still booting", "boot failed" and "open elsewhere" look the same.
+ */
+async function workbenchState(page: Page): Promise<string> {
+  const read = page.evaluate(() => {
+    const parts = [
+      `path=${location.pathname}`,
+      `stage=${document.querySelector("[data-testid=workbench]")?.getAttribute("data-stage")}`,
+      `workspace=${globalThis.sprockt?.workspace !== undefined}`,
+      `terminal=${document.querySelector("[data-testid=terminal-state]")?.textContent}`,
+      `boot-error=${document.querySelector("[data-testid=boot-error]")?.textContent}`,
+      `asks=${document.querySelector("[data-testid=workspace-busy]") !== null}`,
+    ];
+    // The preview as the page has it: its port, where its frame points and what the frame shows.
+    const frame = document.querySelector<HTMLIFrameElement>("[data-testid=preview-frame]");
+    const port = document.querySelector<HTMLSelectElement>("[data-testid=preview-port]");
+    const preview = [
+      `preview-port=${port?.value}`,
+      `frame-src=${frame?.getAttribute("src")}`,
+      `frame-at=${frame?.contentWindow?.location.href}`,
+      `frame-heading=${frame?.contentDocument?.querySelector("h1")?.textContent}`,
+    ];
+    return parts.concat(preview).join(" ");
+  });
+  const silent = new Promise<string>((resolve) => setTimeout(resolve, 5000, "the page did not answer"));
+  const state = await Promise.race([read, silent]).catch(
+    (error: Error) => `the page could not be read: ${error.message}`,
+  );
+  // The frames as the test runner has them, which is what a frame locator searches. Playwright's
+  // Firefox driver has lost a frame that sat on a blank document before it navigated: the page
+  // showed the preview and this list still said about:blank. The pane no longer makes such a
+  // frame; if this line shows the difference again, that driver problem is back.
+  const frames = page.frames().map((frame) => frame.url());
+  return `${state} runner-frames=${frames.join(",")}`;
+}
+
+/**
  * Every spec imports `test` from here. When a test fails, the page's errors are attached to the
  * report, because a boot failure in a worker is otherwise invisible.
  */
@@ -13,7 +50,9 @@ export const test = base.extend<{ pageErrors: string[] }>({
         if (message.type() === "error") errors.push(`console: ${message.text()}`);
       });
       await use(errors);
-      if (testInfo.status === testInfo.expectedStatus || errors.length === 0) return;
+      if (testInfo.status === testInfo.expectedStatus) return;
+      console.error(`[${testInfo.project.name}] ${testInfo.title}: ${await workbenchState(page)}`);
+      if (errors.length === 0) return;
       await testInfo.attach("page-errors", { body: errors.join("\n"), contentType: "text/plain" });
       console.error(`[${testInfo.project.name}] page errors:\n${errors.join("\n")}`);
     },

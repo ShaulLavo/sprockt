@@ -105,6 +105,13 @@ export interface FileService {
   exportZip(): Promise<Blob>;
   /** Like `revision`, but says what changed, so a view can refresh only that. Returns an unsubscribe. */
   subscribe(listener: (change: FileChange) => void): () => void;
+  /**
+   * Calls back with the paths of each change made through this service (the editor, the
+   * explorer, an upload), as soon as it is made. A change the shell, a program or another tab
+   * made never arrives here: `subscribe` cannot tell who wrote a file, and what reacts to a
+   * person's edit must not react to a program's output. Returns an unsubscribe.
+   */
+  subscribeEdits(listener: (paths: readonly string[]) => void): () => void;
   /** Changes whenever the project's files may have changed; read it to re-run a listing. */
   readonly revision: Accessor<number>;
   /**

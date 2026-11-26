@@ -4,6 +4,7 @@ import { installShellCommands } from "bash-web";
 import { installBunAdapters, installBunSharedObjects } from "bun-wasm";
 import { createRuntime, openIdleWorkspace, type GuestLauncher, type Runtime } from "waffle";
 import { installBase } from "waffle-base";
+import type { PreviewServer as PreviewBackend } from "waffle/browser/preview";
 import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import { runtimeAssets } from "./assets";
 import { TAB_POLICY } from "./tab-policy";
@@ -19,6 +20,8 @@ export interface BootOptions {
   readonly takeOver?: boolean;
   /** Aborts when the workspace is closed, also while it still waits for storage. */
   readonly signal?: AbortSignal;
+  /** Told about every port a Bun process listens on: the preview transport. */
+  readonly ports?: PortListener;
 }
 
 /**
@@ -79,13 +82,20 @@ function createWorkspaceRuntime(id: string, takeOver: boolean, onStage: (stage: 
   });
 }
 
-async function installPrograms(runtime: Runtime): Promise<string> {
+/** Told when a Bun process starts or stops listening on a port, with the way to reach it. */
+export interface PortListener {
+  listening(port: number, backend: PreviewBackend): void;
+  stopped(port: number, backend: PreviewBackend): void;
+}
+
+async function installPrograms(runtime: Runtime, ports: PortListener | undefined): Promise<string> {
   installBunSharedObjects(runtime);
   await installBunAdapters(runtime, {
     workerUrl: runtimeAssets.bunWorker,
     notificationWorkerUrl: runtimeAssets.bunNotificationWorker,
     engine: "browser",
     asset: runtimeAssets.bunGuest,
+    network: ports,
   });
   const base = await installBase(runtime, { launcher: programLauncher(runtimeAssets.programWorker) });
   await installShellCommands(runtime, {
@@ -134,7 +144,7 @@ export async function bootWorkspace(
     runtime.filesystem.onOwnershipLost = () => onStage("moved");
     await runtime.filesystem.mkdirp(PROJECT_ROOT);
     onStage("programs");
-    const path = await installPrograms(runtime);
+    const path = await installPrograms(runtime, options.ports);
     await runtime.filesystem.flush();
     onStage("ready");
     return {

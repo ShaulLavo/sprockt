@@ -132,7 +132,7 @@ describe("detectProject", () => {
       hasPackageJson: false,
       framework: "bun-serve",
       install: undefined,
-      dev: { command: "bun", args: ["--hot", "server.ts"] },
+      dev: { command: "bun", args: ["server.ts"] },
       port: 8000,
     });
   });
@@ -142,14 +142,14 @@ describe("detectProject", () => {
       detect({ "src/index.ts": "export default { fetch(req) { return new Response('x') } }" }),
     ).toMatchObject({
       framework: "bun-serve",
-      dev: { command: "bun", args: ["--hot", "src/index.ts"] },
+      dev: { command: "bun", args: ["src/index.ts"] },
       port: 3000,
     });
   });
 
   test("Hono without a dev script runs its entry file", () => {
     const result = detect({ "package.json": pkg({}, { hono: "4" }), "src/index.ts": "export default app" });
-    expect(result.dev).toEqual({ command: "bun", args: ["--hot", "src/index.ts"] });
+    expect(result.dev).toEqual({ command: "bun", args: ["src/index.ts"] });
     expect(result.port).toBe(3000);
   });
 
@@ -158,7 +158,7 @@ describe("detectProject", () => {
       "package.json": { module: "./app/main.ts" },
       "app/main.ts": "Bun.serve({ port: 9000, fetch: () => new Response() })",
     });
-    expect(result.dev).toEqual({ command: "bun", args: ["--hot", "app/main.ts"] });
+    expect(result.dev).toEqual({ command: "bun", args: ["app/main.ts"] });
     expect(result.port).toBe(9000);
   });
 
@@ -204,6 +204,6 @@ describe("detectProjectInFs", () => {
   test("finds a Bun.serve entry under src", async () => {
     const fs = new MemoryFs();
     await writeFiles(fs, [{ path: "src/server.ts", bytes: textEncoder.encode("Bun.serve({ fetch() {} })") }]);
-    expect((await detectProjectInFs(fs)).dev).toEqual({ command: "bun", args: ["--hot", "src/server.ts"] });
+    expect((await detectProjectInFs(fs)).dev).toEqual({ command: "bun", args: ["src/server.ts"] });
   });
 });

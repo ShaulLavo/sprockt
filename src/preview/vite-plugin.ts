@@ -1,0 +1,103 @@
+// Builds the two preview scripts that cannot be ordinary chunks. The service worker has to sit
+// at a fixed path above its scope, and both it and the client script must be classic scripts:
+// module service workers are not available in every browser we support, and the client script
+// has to run before the previewed page's own scripts.
+//
+// A build without previews publishes neither. In the worker's place it puts one that serves
+// nothing and removes itself (sw-off.ts), for browsers that still hold an earlier build's worker.
+import { resolve } from "node:path";
+import { build, type Plugin } from "vite";
+//
+// A build with previews also publishes `/preview-mode.json`, which says so. The service worker
+// asks for it to learn whether the deployed build still has previews (retirement.ts); a build
+// without them has no such file.
+import { previewKind } from "./kind";
+import { CLIENT_SCRIPT_PATH, PREVIEW_MODE_PATH, SERVICE_WORKER_PATH } from "./paths";
+import { MOUNTED_MODE } from "./retirement";
+
+type Entries = Readonly<Record<string, string>>;
+
+const ENTRIES: Entries = {
+  [SERVICE_WORKER_PATH]: "src/preview/sw.ts",
+  [CLIENT_SCRIPT_PATH]: "src/preview/inject/client.ts",
+};
+
+const ENTRIES_OFF: Entries = { [SERVICE_WORKER_PATH]: "src/preview/sw-off.ts" };
+
+const MODE_FILE = `${JSON.stringify(MOUNTED_MODE)}\n`;
+
+/** What a build publishes at the preview scripts' addresses, by whether it has previews. */
+export function publishedEntries(kind: "mounted" | "none"): Entries {
+  return kind === "mounted" ? ENTRIES : ENTRIES_OFF;
+}
+
+async function bundle(root: string, entry: string, minify: boolean): Promise<string> {
+  const result = await build({
+    configFile: false,
+    root,
+    logLevel: "warn",
+    build: {
+      write: false,
+      target: "esnext",
+      minify,
+      lib: { entry: resolve(root, entry), formats: ["iife"], name: "sprocktPreview" },
+    },
+  });
+  const [output] = Array.isArray(result) ? result : [result];
+  const files = output && "output" in output ? output.output : [];
+  // Each script is one file: a second chunk would be dropped here, and a split worker entry is
+  // evaluated twice by WebKit (see `worker` in vite.config.ts).
+  if (files.length !== 1) throw new Error(`Building ${entry} produced ${files.length} files, not one`);
+  return files[0].code;
+}
+
+export function previewScripts(): Plugin {
+  let root = process.cwd();
+  let kind: "mounted" | "none" = "none";
+  const cache = new Map<string, Promise<string>>();
+  return {
+    name: "sprockt:preview-scripts",
+    configResolved(config) {
+      root = config.root;
+      // The same rule, from the same settings, as the app's own `import.meta.env` check.
+      kind = previewKind({
+        DEV: config.env.DEV === true,
+        VITE_SPROCKT_PREVIEWS: config.env.VITE_SPROCKT_PREVIEWS,
+      });
+    },
+    async generateBundle() {
+      const published = publishedEntries(kind);
+      const paths = Object.keys(published);
+      const sources = await Promise.all(paths.map((path) => bundle(root, published[path] ?? "", true)));
+      for (const [index, path] of paths.entries()) {
+        this.emitFile({ type: "asset", fileName: path.slice(1), source: sources[index] ?? "" });
+      }
+      if (kind !== "mounted") return;
+      this.emitFile({ type: "asset", fileName: PREVIEW_MODE_PATH.slice(1), source: MODE_FILE });
+    },
+    configureServer(server) {
+      server.watcher.on("change", () => cache.clear());
+      server.middlewares.use((request, response, next) => {
+        const path = request.url?.split("?")[0] ?? "";
+        // The dev server always has previews.
+        if (path === PREVIEW_MODE_PATH) {
+          response.setHeader("content-type", "application/json");
+          response.setHeader("cache-control", "no-store");
+          return void response.end(MODE_FILE);
+        }
+        const entry = ENTRIES[path];
+        if (!entry) return next();
+        const built = cache.get(path) ?? bundle(root, entry, false);
+        cache.set(path, built);
+        const send = (code: string): void => {
+          response.setHeader("content-type", "text/javascript");
+          response.setHeader("cache-control", "no-store");
+          response.end(code);
+        };
+        // Connect reports errors through its `next` callback; there is no promise to return.
+        // oxlint-disable-next-line promise/no-callback-in-promise
+        built.then(send).catch(next);
+      });
+    },
+  };
+}
