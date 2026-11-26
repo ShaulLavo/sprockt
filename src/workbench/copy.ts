@@ -48,5 +48,11 @@ export const ui = {
     resizeExplorer: "Resize explorer",
     resizePreview: "Resize preview",
     resizeTerminal: "Resize terminal",
+    toggleExplorer: "Toggle explorer",
+    toggleTerminal: "Toggle terminal",
+    togglePreview: "Toggle preview",
+    focusExplorer: "Focus explorer",
+    focusEditor: "Focus editor",
+    focusTerminal: "Focus terminal",
   },
 } as const;

@@ -1,11 +1,12 @@
 // Joins one Ghostty terminal view to one bash-web shell on the workspace's runtime.
 import { BrowserSession, type SessionState } from "bash-web/session";
 import { Terminal, type TerminalAppearanceOptions } from "ghostty-webgpu";
-import terminalBridge from "ghostty-webgpu/bridge.wasm?url";
-import terminalWasm from "ghostty-webgpu/ghostty-vt.wasm?url";
+import { attachTerminalHotkeys } from "ghostty-webgpu/hotkeys";
 import type { Runtime } from "waffle";
 import type { ShellSettings } from "../runtime/boot";
-import { TERMINAL_FONT } from "./theme";
+import { createWorkspaceLinkProvider } from "./links";
+import { getSharedGhosttyRuntime } from "./runtime";
+import { terminalFont } from "./theme";
 
 export type { SessionState };
 
@@ -23,8 +24,19 @@ export interface TerminalHandle {
   focus(): void;
   /** Types a command line and presses Enter, replacing anything half typed. */
   submit(command: string): Promise<void>;
-  /** Sends raw input, as if typed: a soft key such as Escape or an arrow. */
+  /** Sends raw input, as if typed: a soft key such as Ctrl+C or a symbol. */
   input(data: string): void;
+  /**
+   * Dispatches a hardware KeyboardEvent to Ghostty's textarea so terminal modes like DECCKM
+   * (application cursor keys in vim/less/fzf) encode the key properly.
+   */
+  pressKey(key: string, code: string, fallbackData: string): void;
+  /** Clears the terminal viewport and scrollback. */
+  clear(): void;
+  /** Currently selected text in the terminal, if any. */
+  getSelection(): string | undefined;
+  /** Pastes text through Ghostty's bracketed-paste encoder. */
+  paste(text: string): void;
   /**
    * Turns the next typed letter into its Control chord (a phone keyboard has no Ctrl key).
    * `onUsed` runs when that letter arrives.
@@ -40,12 +52,14 @@ export interface TerminalStart {
   readonly runtime: Runtime;
   readonly shell: ShellSettings;
   readonly label: string;
-  /** Colors and color scheme; the font is the workbench's code face. */
+  /** Colors, color scheme, and responsive font; the font is the workbench's code face. */
   readonly appearance: TerminalAppearanceOptions;
   /** Aborted when the tab closes, so a shell still starting stops too. */
   readonly signal: AbortSignal;
   onState(state: SessionState, detail?: string): void;
   onTitle?(title: string): void;
+  fileExists?(path: string): Promise<boolean>;
+  openFile?(path: string, location?: { readonly line?: number; readonly column?: number }): void;
 }
 
 /** The Control chord of one typed letter or `@[\]^_`, such as Ctrl+C for "c"; else undefined. */
@@ -65,8 +79,9 @@ const PADDING = { top: 6, right: 6, bottom: 6, left: 14 };
  * loads later, but starting with the right metrics avoids one visible reflow.
  */
 function codeFontReady(): Promise<unknown> {
-  const family = TERMINAL_FONT.family ?? "monospace";
-  return document.fonts.load(`${TERMINAL_FONT.size ?? 13}px ${family}`).catch(() => []);
+  const font = terminalFont();
+  const family = font.family ?? "monospace";
+  return document.fonts.load(`${font.size ?? 13}px ${family}`).catch(() => []);
 }
 
 /** Ties a started shell to its view. Disposal runs once, and frees the view even if the shell fails to stop. */
@@ -75,6 +90,7 @@ function terminalHandle(
   session: BrowserSession,
   start: TerminalStart,
   started: TerminalSize,
+  extraDisposables: readonly { dispose(): void }[],
 ): TerminalHandle {
   // The size the shell believes its screen has. Every change of the screen's own size is
   // passed on, so programs lay their output out for the columns actually on screen.
@@ -97,11 +113,12 @@ function terminalHandle(
     session.input(chord);
     used?.();
   };
-  const subscriptions = [
+  const subscriptions: { dispose(): void }[] = [
     view.onData((event) => typed(event.bytes)),
     view.onResize(({ cols, rows }) => tell(cols, rows)),
     view.onFrame(() => session.markRendered()),
     view.on("title", (title) => start.onTitle?.(title)),
+    ...extraDisposables,
   ];
   // The screen may have been refitted while the shell was starting, before anything listened:
   // its pane came on screen (a phone starts with the terminal hidden), or the code face loaded.
@@ -122,6 +139,20 @@ function terminalHandle(
     focus: () => view.focus(),
     submit: (command) => session.submit(command),
     input: (data) => session.input(data),
+    pressKey(key, code, fallbackData) {
+      const target = view.textarea;
+      if (!target) return session.input(fallbackData);
+      const down = new KeyboardEvent("keydown", { key, code, bubbles: true, cancelable: true });
+      target.dispatchEvent(down);
+      target.dispatchEvent(new KeyboardEvent("keyup", { key, code, bubbles: true, cancelable: true }));
+    },
+    clear() {
+      view.clearSelection();
+      view.write("\x1b[3J\x1b[2J\x1b[H");
+      session.input("\x0c");
+    },
+    getSelection: () => view.getSelection(),
+    paste: (text) => void view.paste(text),
     armControl: (onUsed) => void (control = onUsed),
     disarmControl: () => void (control = undefined),
     setAppearance: (appearance) => void view.setAppearance(appearance),
@@ -143,24 +174,35 @@ function followPaneLayout(view: Terminal, signal: AbortSignal): void {
 
 /** Starts a terminal; aborting `start.signal` cancels a start still in progress. */
 export async function startTerminal(start: TerminalStart): Promise<TerminalHandle> {
-  await codeFontReady();
+  const [, sharedRuntime] = await Promise.all([codeFontReady(), getSharedGhosttyRuntime()]);
   start.signal.throwIfAborted();
   const view = await Terminal.create({
     accessibility: { label: start.label },
-    appearance: { ...start.appearance, font: TERMINAL_FONT },
+    appearance: { font: terminalFont(), ...start.appearance },
     padding: PADDING,
-    runtime: {
-      kind: "owned",
-      options: {
-        wasm: new URL(terminalWasm, location.href),
-        bridge: new URL(terminalBridge, location.href),
+    links: {
+      activateUri: (uri) => {
+        window.open(uri, "_blank", "noopener,noreferrer");
       },
     },
+    runtime: {
+      kind: "borrowed",
+      runtime: sharedRuntime,
+    },
   });
+  const extraDisposables: { dispose(): void }[] = [];
   try {
     await view.open(start.host);
     start.signal.throwIfAborted();
     followPaneLayout(view, start.signal);
+    extraDisposables.push(attachTerminalHotkeys(view, { mode: "standalone" }));
+    if (start.fileExists && start.openFile) {
+      extraDisposables.push(
+        view.registerLinkProvider(
+          createWorkspaceLinkProvider({ exists: start.fileExists, openFile: start.openFile }),
+        ),
+      );
+    }
     const geometry = view.geometry();
     const session = await BrowserSession.create({
       runtime: start.runtime,
@@ -174,8 +216,15 @@ export async function startTerminal(start: TerminalStart): Promise<TerminalHandl
       onOutput: (bytes) => view.write(bytes),
       onState: (state, detail) => start.onState(state, detail),
     });
-    return terminalHandle(view, session, start, { columns: geometry.columns, rows: geometry.rows });
+    return terminalHandle(
+      view,
+      session,
+      start,
+      { columns: geometry.columns, rows: geometry.rows },
+      extraDisposables,
+    );
   } catch (error) {
+    for (const disposable of extraDisposables) disposable.dispose();
     view.dispose();
     throw error;
   }

@@ -88,6 +88,14 @@
   position: absolute;
   inset: 0;
   height: auto;
+  --editor-cursor-line-row-background: var(--bg-line, light-dark(#f5f7fc, #111722));
+  --editor-cursor-line-gutter-background: var(--bg-line, light-dark(#f5f7fc, #111722));
+}
+
+.tree-dialog-button.is-primary {
+  border-color: transparent;
+  background: var(--primary-bg, #1a4be0);
+  color: var(--primary-fg, #ffffff);
 }
 
 /* Fold markers: small chevrons in the gutter. With a pointer they wait until the gutter is

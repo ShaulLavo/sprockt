@@ -90,11 +90,16 @@ export interface EditorStore {
   /** Set by the editor view when it shows a file; nothing else calls it. */
   setDisplayed(path: string | undefined): void;
   readonly quickOpen: Accessor<boolean>;
-  setQuickOpen(open: boolean): void;
+  readonly quickOpenSeed: Accessor<string>;
+  setQuickOpen(open: boolean, seed?: string): void;
   readonly searchOpen: Accessor<boolean>;
   setSearchOpen(open: boolean): void;
   /** Bumped to ask the search panel to focus its query field. */
   readonly searchFocus: Accessor<number>;
+  /** Tabs awaiting save/discard confirmation before closing. */
+  readonly pendingClose: Accessor<readonly string[] | undefined>;
+  requestClose(paths: readonly string[]): void;
+  resolvePendingClose(action: "save" | "discard" | "cancel"): Promise<void>;
 }
 
 export interface EditorWorkspace {
@@ -112,10 +117,17 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
   const [active, setActive] = createSignal<string | undefined>(saved.active);
   const [displayed, setDisplayed] = createSignal<string>();
   const [reveal, setReveal] = createSignal<RevealRequest>();
-  const [quickOpen, setQuickOpen] = createSignal(false);
+  const [quickOpen, setQuickOpenFlag] = createSignal(false);
+  const [quickOpenSeed, setQuickOpenSeed] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchFocus, setSearchFocus] = createSignal(0);
+  const [pendingClose, setPendingClose] = createSignal<readonly string[]>();
   let revealSeq = 0;
+
+  function setQuickOpen(open: boolean, seed = ""): void {
+    setQuickOpenSeed(open ? seed : "");
+    setQuickOpenFlag(open);
+  }
 
   function commit(nextTabs: readonly EditorTab[], nextActive: string | undefined): void {
     setTabs(nextTabs);
@@ -351,6 +363,42 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     if (failed) throw failed.reason;
   }
 
+  function closeOne(path: string): void {
+    const wasDirty = buffers.get(path)?.dirty() ?? false;
+    const next = closeTab(tabs(), path, active());
+    commit(next.tabs, next.active);
+    buffers.release(path);
+    // Closing a dirty tab confirmed dropping its unsaved edits. Closing a clean tab whose
+    // save has not flushed yet keeps any recovery copy until that flush finishes.
+    if (wasDirty || !buffers.unsaved().has(path)) drafts.settled(path);
+  }
+
+  function requestClose(paths: readonly string[]): void {
+    if (paths.length === 0) return;
+    const dirty: string[] = [];
+    for (const path of paths) {
+      if (buffers.dirtyPaths().includes(path)) dirty.push(path);
+      else closeOne(path);
+    }
+    if (dirty.length > 0) setPendingClose(dirty);
+  }
+
+  async function resolvePendingClose(action: "save" | "discard" | "cancel"): Promise<void> {
+    const paths = pendingClose();
+    setPendingClose(undefined);
+    if (!paths || paths.length === 0 || action === "cancel") return;
+    if (action === "save") {
+      for (const path of paths) {
+        // oxlint-disable-next-line no-await-in-loop -- save each confirmed tab before closing it
+        await save(path);
+        // Only close tabs whose save cleared the dirty flag (a conflict leaves it open).
+        if (!buffers.dirtyPaths().includes(path)) closeOne(path);
+      }
+      return;
+    }
+    for (const path of paths) closeOne(path);
+  }
+
   return {
     tabs,
     active,
@@ -362,9 +410,13 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     buffers,
     reveal,
     quickOpen,
+    quickOpenSeed,
     setQuickOpen,
     searchOpen,
     searchFocus,
+    pendingClose,
+    requestClose,
+    resolvePendingClose,
     save,
     saveAll,
     autosave: autosaveOn,
@@ -401,15 +453,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
       revealSeq += 1;
       setReveal({ path, line: options.line, column: options.column, seq: revealSeq });
     },
-    close(path) {
-      const wasDirty = buffers.get(path)?.dirty() ?? false;
-      const next = closeTab(tabs(), path, active());
-      commit(next.tabs, next.active);
-      buffers.release(path);
-      // Closing a dirty tab confirmed dropping its unsaved edits. Closing a clean tab whose
-      // save has not flushed yet keeps any recovery copy until that flush finishes.
-      if (wasDirty || !buffers.unsaved().has(path)) drafts.settled(path);
-    },
+    close: closeOne,
     move: (from, to) => commit(moveTab(tabs(), from, to), active()),
     pin,
     lockPaths,

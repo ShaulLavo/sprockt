@@ -6,8 +6,8 @@
 // The frame's state (layout, window size, phone or not, the shown pane, the boot stage) lives in
 // reactive signals, not React state: the panes' own reactive code (presence, quick open, the
 // editor's "show what opened" effect) reads it, and components read it with `useValue`.
-import { memo, useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { detectPlatform } from "@shaulavo/hotkeys";
+import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createMultiHotkeyHandler, detectPlatform } from "@shaulavo/hotkeys";
 import { debugHandle } from "../app/debug";
 import { navigate } from "../app/router";
 import { EditorPane } from "../editor/EditorPane";
@@ -22,12 +22,15 @@ import { TAB_POLICY } from "../runtime/tab-policy";
 import { ShareButton } from "../share/ShareButton";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 import { Icon } from "../ui/icons";
+import { useLongPressContextMenu } from "../ui/long-press";
 import { workspaceTurnstile } from "../workspace/lifecycle";
 import { openWorkspace, WorkspaceContext, type WorkspaceSession } from "../workspace/session";
 import { ActivityBar } from "./ActivityBar";
 import { currentStepLabel } from "./boot-steps";
 import { BootProgress } from "./BootProgress";
 import { ui } from "./copy";
+import { focusPane } from "./focus";
+import { useKeyboardInset } from "./keyboard-inset";
 import {
   fitLayout,
   isOpen,
@@ -165,17 +168,118 @@ function createPanes(session: WorkspaceSession, frame: FrameState): PaneScope {
       showCode();
     },
   };
+  const mac = detectPlatform() === "mac";
+  const showOrFocus = (pane: PhonePane) => {
+    if (frame.phone()) {
+      frame.setPane(pane);
+    } else if (pane === "files" && !frame.layout.layout().explorerOpen) {
+      frame.layout.set(setOpen(frame.layout.layout(), "explorer", true));
+    } else if (pane === "preview" && !frame.layout.layout().previewOpen) {
+      frame.layout.set(setOpen(frame.layout.layout(), "preview", true));
+    } else if (pane === "terminal" && !frame.layout.layout().terminalOpen) {
+      frame.layout.set(setOpen(frame.layout.layout(), "terminal", true));
+    }
+    queueMicrotask(() => {
+      if (pane === "terminal") {
+        const focusedTerm = session.terminals.tabs().focused;
+        if (focusedTerm) {
+          session.terminals.handle(focusedTerm)?.focus();
+          return;
+        }
+      }
+      focusPane(pane);
+    });
+  };
+  const togglePane = (splitter: SplitterName, slot: PhonePane) => {
+    if (frame.phone()) {
+      frame.setPane(frame.pane() === slot ? "code" : slot);
+      return;
+    }
+    const current = frame.layout.layout();
+    const nextOpen = !isOpen(current, splitter);
+    frame.layout.set(setOpen(current, splitter, nextOpen));
+    queueMicrotask(() => {
+      if (nextOpen && slot === "terminal") {
+        const focusedTerm = session.terminals.tabs().focused;
+        if (focusedTerm) {
+          session.terminals.handle(focusedTerm)?.focus();
+          return;
+        }
+      }
+      focusPane(nextOpen ? slot : "code");
+    });
+  };
   // The title bar's search field and the phone's search button open the editor's quick open.
   onCleanup(
     session.commands.register(COMMAND.quickOpen, {
       label: ui.search.quickOpen,
-      shortcut: detectPlatform() === "mac" ? "⌘P" : "Ctrl P",
+      shortcut: mac ? "⌘P" : "Ctrl P",
       run: () => {
         showCode();
         editor.setQuickOpen(true);
       },
     }),
   );
+  onCleanup(
+    session.commands.register(COMMAND.toggleExplorer, {
+      label: ui.workbench.toggleExplorer,
+      shortcut: mac ? "⌘B" : "Ctrl B",
+      icon: "sidebar-left",
+      run: () => togglePane("explorer", "files"),
+    }),
+  );
+  onCleanup(
+    session.commands.register(COMMAND.toggleTerminal, {
+      label: ui.workbench.toggleTerminal,
+      shortcut: mac ? "⌘J" : "Ctrl J",
+      icon: "panel-bottom",
+      run: () => togglePane("terminal", "terminal"),
+    }),
+  );
+  onCleanup(
+    session.commands.register(COMMAND.togglePreview, {
+      label: ui.workbench.togglePreview,
+      icon: "sidebar-right",
+      run: () => togglePane("preview", "preview"),
+    }),
+  );
+  onCleanup(
+    session.commands.register(COMMAND.focusExplorer, {
+      label: ui.workbench.focusExplorer,
+      shortcut: mac ? "⇧⌘E" : "Ctrl Shift E",
+      icon: "files",
+      run: () => showOrFocus("files"),
+    }),
+  );
+  onCleanup(
+    session.commands.register(COMMAND.focusEditor, {
+      label: ui.workbench.focusEditor,
+      shortcut: mac ? "⌘1" : "Ctrl 1",
+      icon: "code",
+      run: () => showOrFocus("code"),
+    }),
+  );
+  onCleanup(
+    session.commands.register(COMMAND.focusTerminal, {
+      label: ui.workbench.focusTerminal,
+      shortcut: mac ? "⌘3" : "Ctrl 3",
+      icon: "terminal",
+      run: () => showOrFocus("terminal"),
+    }),
+  );
+
+  // Workbench-wide pane shortcuts in capture phase so they work from every pane including the terminal.
+  const onWorkbenchKeyDown = createMultiHotkeyHandler({
+    "Mod+B": () => togglePane("explorer", "files"),
+    "Mod+J": () => togglePane("terminal", "terminal"),
+    "Control+`": () => togglePane("terminal", "terminal"),
+    "Mod+Shift+E": () => showOrFocus("files"),
+    "Mod+1": () => showOrFocus("code"),
+    "Mod+2": () => showOrFocus("preview"),
+    "Mod+3": () => showOrFocus("terminal"),
+  });
+  window.addEventListener("keydown", onWorkbenchKeyDown, true);
+  onCleanup(() => window.removeEventListener("keydown", onWorkbenchKeyDown, true));
   createEffect(
     on(
       editor.active,
@@ -286,6 +390,7 @@ function PanesBody(props: { session: WorkspaceSession; frame: FrameState; panes:
           collapsed={!terminalOpen && !phone}
           shown={!phone || pane === "terminal"}
           onToggleCollapsed={panes.toggleTerminal}
+          onOpenFile={(path, location) => panes.explorerStore.open(path, { ...location, focus: true })}
         />
       </div>
       <StatusBar tabs={panes.tabs} />
@@ -394,13 +499,18 @@ function Notice(props: {
  */
 function Frame(props: { frame: FrameState; children: ReactNode }) {
   const { frame } = props;
+  const rootRef = useRef<HTMLElement>(null);
   const stage = useValue(frame.stage);
   const pane = useValue(frame.pane);
+  const phone = useValue(frame.phone);
   const dragging = useValue(frame.dragging);
   const layout = useValue(frame.layout.layout);
   const fitted = useValue(frame.fitted);
+  useKeyboardInset(rootRef, phone);
+  useLongPressContextMenu(rootRef);
   return (
     <main
+      ref={rootRef}
       className={dragging ? "workbench is-dragging" : "workbench"}
       data-testid="workbench"
       data-stage={stage}

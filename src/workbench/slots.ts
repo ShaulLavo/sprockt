@@ -95,6 +95,12 @@ export const COMMAND = {
   save: "save",
   saveAll: "save-all",
   autosave: "autosave",
+  toggleExplorer: "toggle-explorer",
+  toggleTerminal: "toggle-terminal",
+  togglePreview: "toggle-preview",
+  focusExplorer: "focus-explorer",
+  focusEditor: "focus-editor",
+  focusTerminal: "focus-terminal",
 } as const;
 
 export interface Command {
@@ -112,6 +118,8 @@ export interface Commands {
   /** Registers a command; the returned function unregisters it. */
   register(id: string, command: Command): () => void;
   get(id: string): Command | undefined;
+  /** Every registered command with its id, for the command palette. */
+  all(): readonly (Command & { readonly id: string })[];
   run(id: string): void;
 }
 
@@ -125,6 +133,7 @@ export function createCommands(): Commands {
       };
     },
     get: (id) => map().get(id),
+    all: () => Array.from(map(), ([id, command]) => ({ ...command, id })),
     run: (id) => map().get(id)?.run(),
   };
 }

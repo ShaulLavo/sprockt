@@ -23,6 +23,8 @@ export interface QuickOpenProps {
   readonly onClose: () => void;
   /** Commands it finds too (commands.ts says when). */
   readonly commands?: Accessor<readonly PaletteCommand[]>;
+  /** Initial text placed in the field when opening (for example `>` for commands-only mode). */
+  readonly initialQuery?: string;
 }
 
 type Item =
@@ -123,7 +125,7 @@ function itemKey(item: Item): string {
 }
 
 function Dialog(props: QuickOpenProps) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(props.initialQuery ?? "");
   // A plain state, not a suspending resource: a listing that is loading must not suspend the workbench.
   const [paths, setPaths] = useState<readonly string[]>(NO_PATHS);
   // A listing that landed after Enter was pressed asks for the pick once the results include it.
@@ -133,6 +135,8 @@ function Dialog(props: QuickOpenProps) {
   const recent = useValue(props.recent);
   const commands = useValue(() => props.commands?.() ?? NO_COMMANDS);
   const input = useRef<HTMLInputElement>(null);
+  const origin = useRef<HTMLElement | null>(null);
+  const picked = useRef(false);
 
   const location = splitLocation(query);
   const results = useMemo(() => rankItems(query, paths, recent, commands), [query, paths, recent, commands]);
@@ -142,7 +146,17 @@ function Dialog(props: QuickOpenProps) {
   const select = (index: number) => setSelection({ results, index });
 
   useEffect(() => () => session.close(), [session]);
-  useEffect(() => input.current?.focus(), []);
+  useEffect(() => {
+    origin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const field = input.current;
+    if (field) {
+      field.focus();
+      field.setSelectionRange(field.value.length, field.value.length);
+    }
+    return () => {
+      if (!picked.current && origin.current?.isConnected) origin.current.focus();
+    };
+  }, []);
 
   useEffect(() => {
     const landed = (request: number, list: readonly string[]): void => {
@@ -166,6 +180,7 @@ function Dialog(props: QuickOpenProps) {
 
   function pick(item: Item | undefined): void {
     if (!item) return;
+    picked.current = true;
     props.onClose();
     if (item.kind === "command") return item.command.run();
     props.onOpen(item.match.path, { line: location.line, column: location.column });

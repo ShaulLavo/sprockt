@@ -18,6 +18,32 @@ export const EDITOR_COPY = {
   saveAll: "Save all",
   autosaveOff: "Turn off autosave",
   autosaveOn: "Turn on autosave",
+  saveAndClose: "Save",
+  dontSave: "Don't save",
+  cancel: "Cancel",
+  unsavedTitle: "Save changes to {name}?",
+  unsavedManyTitle: "Save changes to {count} files?",
+  unsavedBody: "Your changes will be lost if you close without saving.",
+  unsavedManyBody: "Your changes will be lost if you close these tabs without saving.",
+  tabMenu: {
+    label: "Tab actions",
+    close: "Close",
+    closeOthers: "Close others",
+    closeRight: "Close to the right",
+    closeSaved: "Close saved",
+    closeAll: "Close all",
+    copyPath: "Copy path",
+  },
+  editorMenu: {
+    label: "Editor actions",
+    cut: "Cut",
+    copy: "Copy",
+    paste: "Paste",
+    selectAll: "Select all",
+    find: "Find",
+    goToDefinition: "Go to definition",
+    format: "Format document",
+  },
 } as const;
 
 export { fill } from "../search/copy";

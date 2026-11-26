@@ -20,6 +20,7 @@ import { copy, fill } from "./copy";
 import {
   canMoveInto,
   entryRows,
+  filterRows,
   navigate,
   rangeBetween,
   targetDirectory,
@@ -109,9 +110,14 @@ export function createExplorerState(options: ExplorerOptions) {
   const [dropTarget, setDropTarget] = createSignal<string>();
   const [notice, setNotice] = createSignal<string>();
   const [busy, setBusy] = createSignal<"upload" | "zip">();
+  const [filterOpen, setFilterOpen] = createSignal(false);
+  const [filterQuery, setFilterQuery] = createSignal("");
+  const [filterPaths, setFilterPaths] = createSignal<readonly string[]>([]);
   /** The focus request the tree acts on: a path, and a counter so asking twice moves it twice. */
   const [focusRequest, setFocusRequest] = createSignal<{ path: string; id: number }>();
   const loadTokens = new Map<string, number>();
+  let preFilterScrollTop: number | undefined;
+  let filterRefreshToken = 0;
   // A workspace seen for the first time opens its folders by itself, within a budget, until the
   // person does anything to the tree: after that the tree is theirs and keeps what they left.
   let autoOpen = saved === undefined;
@@ -129,8 +135,25 @@ export function createExplorerState(options: ExplorerOptions) {
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
   let requests = 0;
 
-  const rows = createMemo(() => visibleRows(listings(), expanded(), draft()));
+  const rows = createMemo(() => {
+    const query = filterOpen() ? filterQuery().trim() : "";
+    if (query) return filterRows(filterPaths(), query, listings());
+    return visibleRows(listings(), expanded(), draft());
+  });
   const entries = createMemo(() => entryRows(rows()));
+  /** The ancestor directory whose indentation guide should be emphasized. */
+  const activeGuidePath = createMemo(() => {
+    const target = focused() ?? options.active();
+    if (!target) return undefined;
+    const list = entries();
+    const row = list.find(
+      (candidate) =>
+        candidate.path === target || (candidate.segments?.some((seg) => seg.path === target) ?? false),
+    );
+    if (!row) return undefined;
+    if (row.kind === "directory" && row.expanded) return row.path;
+    return row.ancestorPaths.at(-1);
+  });
   /**
    * The one row that can be reached with Tab: the focused row, or the first when the focused one
    * is not on screen (its folder was collapsed or removed). There is always exactly one.
@@ -138,7 +161,11 @@ export function createExplorerState(options: ExplorerOptions) {
   const tabStop = createMemo(() => {
     const current = focused();
     const list = entries();
-    return list.some((row) => row.path === current) ? current : list[0]?.path;
+    return list.some(
+      (row) => row.path === current || (row.segments?.some((seg) => seg.path === current) ?? false),
+    )
+      ? current
+      : list[0]?.path;
   });
 
   /** Directories that hold a file with unsaved edits, as far as their listings are known. */
@@ -226,7 +253,20 @@ export function createExplorerState(options: ExplorerOptions) {
     return Promise.all(Array.from(new Set(known), (directory) => load(directory)));
   }
 
+  function refreshFilterPaths(): void {
+    const token = (filterRefreshToken += 1);
+    void (async () => {
+      try {
+        const list = await files.list();
+        if (filterRefreshToken === token) setFilterPaths(list);
+      } catch {
+        // Ignore transient listing failures while filtering.
+      }
+    })();
+  }
+
   function refresh(change: FileChange): void {
+    if (filterOpen()) refreshFilterPaths();
     if (change.reset) {
       void Promise.all([""].concat(Array.from(expanded())).map((directory) => load(directory, true)));
       return;
@@ -324,6 +364,28 @@ export function createExplorerState(options: ExplorerOptions) {
     }
     setSelected(new Set([path]));
     anchor = path;
+  }
+
+  function selectAll(): void {
+    const all = entries().map((row) => row.path);
+    if (all.length === 0) return;
+    setSelected(new Set(all));
+    anchor = all[0];
+  }
+
+  function openFilter(seed = "", scrollTop?: number): void {
+    if (!filterOpen()) preFilterScrollTop = scrollTop;
+    setFilterOpen(true);
+    if (seed) setFilterQuery(seed);
+    refreshFilterPaths();
+  }
+
+  function closeFilter(): number | undefined {
+    const savedScroll = preFilterScrollTop;
+    preFilterScrollTop = undefined;
+    setFilterOpen(false);
+    setFilterQuery("");
+    return savedScroll;
   }
 
   /** Nothing selected: the next new file or upload goes to the project root. */
@@ -541,7 +603,13 @@ export function createExplorerState(options: ExplorerOptions) {
     busy,
     dirtyDirectories,
     tabStop,
+    activeGuidePath,
     listings,
+    filterOpen,
+    filterQuery,
+    setFilterQuery,
+    openFilter,
+    closeFilter,
     setDropTarget,
     setMenu,
     setProblem,
@@ -550,6 +618,7 @@ export function createExplorerState(options: ExplorerOptions) {
     writable: files.writable,
     focusPath,
     select,
+    selectAll,
     clearSelection,
     toggle,
     expand,
