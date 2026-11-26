@@ -1,49 +1,41 @@
 // What the workbench shows while a workspace boots: its steps, done, running or waiting.
-import { For, Match, Show, Switch } from "solid-js";
 import type { BootStage } from "../runtime/boot";
 import { fill } from "../ui/format";
 import { Icon } from "../ui/icons";
 import { workspaceName } from "../workspace/hint";
-import { bootSteps } from "./boot-steps";
+import { bootSteps, type StepState } from "./boot-steps";
 import { ui } from "./copy";
+
+function StepIcon(props: { state: StepState }) {
+  if (props.state === "done") return <Icon name="check" />;
+  if (props.state === "active") return <span className="wb-spinner" />;
+  if (props.state === "failed") return <Icon name="alert" />;
+  return <span className="wb-boot-dot" />;
+}
 
 export function BootProgress(props: { workspaceId: string; stage: BootStage; error?: string }) {
   return (
-    <div class="wb-boot" data-testid="boot-progress">
-      <div class="wb-boot-card" role="status" aria-live="polite">
-        <span class="wb-boot-mark" aria-hidden="true">
+    <div className="wb-boot" data-testid="boot-progress">
+      <div className="wb-boot-card" role="status" aria-live="polite">
+        <span className="wb-boot-mark" aria-hidden="true">
           <Icon name="logo" />
         </span>
-        <p class="wb-boot-title">{workspaceName(props.workspaceId)}</p>
-        <ol class="wb-boot-steps">
-          <For each={bootSteps(props.stage, Boolean(props.error))}>
-            {(step) => (
-              <li data-state={step.state}>
-                <span class="wb-boot-icon" aria-hidden="true">
-                  <Switch fallback={<span class="wb-boot-dot" />}>
-                    <Match when={step.state === "done"}>
-                      <Icon name="check" />
-                    </Match>
-                    <Match when={step.state === "active"}>
-                      <span class="wb-spinner" />
-                    </Match>
-                    <Match when={step.state === "failed"}>
-                      <Icon name="alert" />
-                    </Match>
-                  </Switch>
-                </span>
-                <span>{step.label}</span>
-              </li>
-            )}
-          </For>
+        <p className="wb-boot-title">{workspaceName(props.workspaceId)}</p>
+        <ol className="wb-boot-steps">
+          {bootSteps(props.stage, Boolean(props.error)).map((step) => (
+            <li key={step.stage} data-state={step.state}>
+              <span className="wb-boot-icon" aria-hidden="true">
+                <StepIcon state={step.state} />
+              </span>
+              <span>{step.label}</span>
+            </li>
+          ))}
         </ol>
-        <Show when={props.error}>
-          {(message) => (
-            <p class="pane-error wb-boot-error" data-testid="boot-error">
-              {fill(ui.errors.bootFailed, { message: message() })}
-            </p>
-          )}
-        </Show>
+        {props.error ? (
+          <p className="pane-error wb-boot-error" data-testid="boot-error">
+            {fill(ui.errors.bootFailed, { message: props.error })}
+          </p>
+        ) : null}
       </div>
     </div>
   );

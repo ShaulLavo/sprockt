@@ -1,7 +1,8 @@
-import { lazy, Match, Suspense, Switch } from "solid-js";
+import { lazy, Suspense } from "react";
 import { Landing } from "../landing/Landing";
+import { useValue } from "../lib/react";
 import { currentRoute, navigate } from "./router";
-import type { Route } from "./routes";
+import { routePath, type Route } from "./routes";
 
 // The workbench pulls in the editor, the terminal and the runtime; the landing page needs none.
 const Workbench = lazy(async () => ({ default: (await import("../workbench/Workbench")).Workbench }));
@@ -9,53 +10,39 @@ const Workbench = lazy(async () => ({ default: (await import("../workbench/Workb
 const ImportPage = lazy(async () => ({ default: (await import("../importer/ImportPage")).ImportPage }));
 const SharePage = lazy(async () => ({ default: (await import("../share/SharePage")).SharePage }));
 
-type WorkspaceRoute = Extract<Route, { kind: "workspace" }>;
-type GitHubRoute = Extract<Route, { kind: "github" }>;
-
-function workspaceRoute(): WorkspaceRoute | undefined {
-  const route = currentRoute();
-  return route.kind === "workspace" ? route : undefined;
+function NotFound() {
+  return (
+    <main className="landing">
+      <h1>Page not found</h1>
+      <button type="button" className="primary" onClick={() => navigate({ kind: "landing" })}>
+        Back to Sprockt
+      </button>
+    </main>
+  );
 }
 
-function githubRoute(): GitHubRoute | undefined {
-  const route = currentRoute();
-  return route.kind === "github" ? route : undefined;
+/**
+ * The page for a route. A workspace is keyed by its id and an import by its path, so moving to
+ * another one unmounts the page (closing its workspace) and mounts a fresh one.
+ */
+function page(route: Route) {
+  switch (route.kind) {
+    case "landing":
+      return <Landing />;
+    case "workspace":
+      return <Workbench key={route.id} id={route.id} />;
+    case "github":
+      return <ImportPage key={routePath(route)} route={route} />;
+    case "share":
+      return <SharePage />;
+    default:
+      return <NotFound />;
+  }
 }
 
 export function App() {
-  return (
-    <Switch
-      fallback={
-        <main class="landing">
-          <h1>Page not found</h1>
-          <button type="button" class="primary" onClick={() => navigate({ kind: "landing" })}>
-            Back to Sprockt
-          </button>
-        </main>
-      }
-    >
-      <Match when={currentRoute().kind === "landing"}>
-        <Landing />
-      </Match>
-      <Match when={workspaceRoute()} keyed>
-        {(route) => (
-          <Suspense>
-            <Workbench id={route.id} />
-          </Suspense>
-        )}
-      </Match>
-      <Match when={githubRoute()} keyed>
-        {(route) => (
-          <Suspense>
-            <ImportPage route={route} />
-          </Suspense>
-        )}
-      </Match>
-      <Match when={currentRoute().kind === "share"}>
-        <Suspense>
-          <SharePage />
-        </Suspense>
-      </Match>
-    </Switch>
-  );
+  const route = useValue(currentRoute);
+  // Only the lazily loaded pages wait for their code.
+  if (route.kind === "landing" || route.kind === "not-found") return page(route);
+  return <Suspense>{page(route)}</Suspense>;
 }
