@@ -14,7 +14,7 @@ export class MoveIntoItselfError extends Error {
     readonly from: string,
     readonly to: string,
   ) {
-    super(`"${from}" cannot be moved to "${to}", which is inside it`);
+    super(`Cannot move "${from}" into "${to}".`);
     this.name = "MoveIntoItselfError";
   }
 }
@@ -22,7 +22,7 @@ export class MoveIntoItselfError extends Error {
 /** The folder an entry was to be written in was moved or deleted meanwhile; it is not recreated. */
 export class FolderGoneError extends Error {
   constructor(readonly path: string) {
-    super(`The folder of "${path}" was moved or deleted`);
+    super(`The folder for "${path}" was moved or deleted.`);
     this.name = "FolderGoneError";
   }
 }

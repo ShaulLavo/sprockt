@@ -311,7 +311,7 @@ export function createProjectFiles(
       return { value: await change() };
     });
     if (outcome) return outcome.value;
-    if (first) throw new Error("A link on the way changed while the file was being changed; try again");
+    if (first) throw new Error("A symbolic link changed during this file operation. Try again.");
     return locked(targets, change, origin);
   }
 

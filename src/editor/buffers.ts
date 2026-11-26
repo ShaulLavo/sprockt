@@ -17,6 +17,7 @@ import {
 import type { EditorScrollPosition } from "@singapore-editor/core/editor";
 import { createSignal, type Accessor } from "solid-js";
 import type { FileService } from "../files/service";
+import { EDITOR_COPY, fill } from "./copy";
 import { replacementBetween } from "./diff";
 import type { Draft } from "./recovery";
 import { renamedPath } from "./tabs";
@@ -62,7 +63,7 @@ export interface Displacement {
   readonly to: string;
 }
 
-/** `dir/a.txt` becomes `dir/a (unsaved).txt`, then `dir/a (unsaved 2).txt`, until one is free. */
+/** `dir/a.txt` becomes `dir/a (draft).txt`, then `dir/a (draft 2).txt`, until one is free. */
 export function freeName(path: string, taken: (path: string) => boolean): string {
   const slash = path.lastIndexOf("/");
   const dot = path.lastIndexOf(".");
@@ -70,7 +71,10 @@ export function freeName(path: string, taken: (path: string) => boolean): string
   const stem = path.slice(0, split);
   const extension = path.slice(split);
   for (let count = 1; ; count += 1) {
-    const candidate = `${stem} (unsaved${count === 1 ? "" : ` ${count}`})${extension}`;
+    const candidate =
+      count === 1
+        ? fill(EDITOR_COPY.savedDraftName, { stem, extension })
+        : fill(EDITOR_COPY.savedDraftNameNumbered, { stem, count, extension });
     if (!taken(candidate)) return candidate;
   }
 }

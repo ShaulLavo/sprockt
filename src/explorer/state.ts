@@ -2,7 +2,7 @@
 // edited, and what happens when the user creates, renames, deletes, moves or uploads. The
 // components only draw it and forward events.
 import { createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
-import { DestinationExistsError } from "../files/errors";
+import { DestinationExistsError, FolderGoneError } from "../files/errors";
 import { createAutoOpener } from "./auto-open";
 import type { DirEntry, FileChange, FileService, UploadItem } from "../files/service";
 import {
@@ -169,6 +169,10 @@ export function createExplorerState(options: ExplorerOptions) {
     console.error("A file operation failed", error);
     if (error instanceof DestinationExistsError) {
       say(fill(copy.notices.moveExists, { name: baseName(error.path) }));
+      return;
+    }
+    if (error instanceof FolderGoneError) {
+      say(fill(copy.notices.folderGone, { path: error.path }));
       return;
     }
     say(fill(copy.notices.failed, { message: error instanceof Error ? error.message : String(error) }));
@@ -467,7 +471,12 @@ export function createExplorerState(options: ExplorerOptions) {
     setBusy("upload");
     try {
       const result = await files.upload(items, directory);
-      if (result.skipped > 0) say(fill(copy.notices.skipped, { count: result.skipped }));
+      if (result.skipped > 0)
+        say(
+          result.skipped === 1
+            ? copy.notices.skippedOne
+            : fill(copy.notices.skipped, { count: result.skipped }),
+        );
       await expand(directory);
       await load(directory);
     } catch (error) {

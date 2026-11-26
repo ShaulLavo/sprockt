@@ -509,7 +509,7 @@ export function Landing() {
                       {LANDING_COPY.whyTabsTab2}
                     </span>
                   </div>
-                  {/* What the second tab shows: the question, then who holds the workspace. */}
+                  {/* Two tabs on one workspace: the first hosts the files, the second attaches live. */}
                   <div class="lp-specimen-plate">
                     <div class="lp-handoff-ask">
                       <span>{LANDING_COPY.whyTabsPrompt}</span>

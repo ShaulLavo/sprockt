@@ -302,10 +302,10 @@ test("a folder moved onto a deleted folder with an unsaved file keeps that draft
   expect(store.buffers.get(aside as string)?.session.materializeFullText()).toBe("draft old");
   expect(store.buffers.get("target/a.txt")?.session.materializeFullText()).toBe("new");
   // A file that happens to be named like a free name is still just that file.
-  disk.set("target/a (unsaved).txt", "someone else's");
+  disk.set("target/a (draft).txt", "someone else's");
   // Saving the detached draft picks a free name at that moment.
   await store.save(aside);
-  expect(disk.get("target/a (unsaved 2).txt")).toBe("draft old");
-  expect(disk.get("target/a (unsaved).txt")).toBe("someone else's");
-  expect(store.tabs().map((tab) => tab.path)).toContain("target/a (unsaved 2).txt");
+  expect(disk.get("target/a (draft 2).txt")).toBe("draft old");
+  expect(disk.get("target/a (draft).txt")).toBe("someone else's");
+  expect(store.tabs().map((tab) => tab.path)).toContain("target/a (draft 2).txt");
 });
