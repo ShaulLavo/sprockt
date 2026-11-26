@@ -16,6 +16,7 @@ import { CloseIcon, FileIcon } from "../search/icons";
 import { fileTabTone } from "../ui/tab-colors";
 import { originalPath } from "./buffers";
 import { EDITOR_COPY, fill } from "./copy";
+import { shouldAutoFocusEditor } from "./focus-policy";
 import { revealTabInStrip } from "./scroll-position";
 import type { EditorStore } from "./store";
 import { tabsToClose, type EditorTab, type TabCloseScope } from "./tabs";
@@ -31,6 +32,12 @@ const dirname = (path: string) => {
 /** Joins a base class with the flags that are on. */
 function classes(base: string, flags: Readonly<Record<string, boolean>>): string {
   return [base].concat(Object.keys(flags).filter((name) => flags[name])).join(" ");
+}
+
+/** Blurs an active editor input so touch tab switches do not keep the soft keyboard open. */
+function blurEditorIfFocused(): void {
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && active.closest(".editor-host")) active.blur();
 }
 
 /** Asks before closing a tab with unsaved edits using the Sheet & Biro dialog. */
@@ -226,6 +233,7 @@ function Tab(props: {
 export function TabBar(props: { store: EditorStore }) {
   const { store } = props;
   const strip = useRef<HTMLDivElement>(null);
+  const lastPointerType = useRef<string | undefined>(undefined);
   const tabs = useValue(store.tabs);
   const [dragging, setDragging] = useState<number>();
   const [menu, setMenu] = useState<{ x: number; y: number; path: string }>();
@@ -238,8 +246,12 @@ export function TabBar(props: { store: EditorStore }) {
   for (const tab of tabs) shared.set(basename(tab.path), (shared.get(basename(tab.path)) ?? 0) + 1);
 
   function activate(tab: EditorTab): void {
+    const pointerType = lastPointerType.current;
+    lastPointerType.current = undefined;
     if (drag.takeSuppressedClick()) return;
-    store.open(tab.path, { preview: tab.preview, focus: true });
+    const focus = shouldAutoFocusEditor(pointerType);
+    if (!focus) blurEditorIfFocused();
+    store.open(tab.path, { preview: tab.preview, focus });
   }
 
   function closeScope(scope: TabCloseScope, path: string): void {
@@ -318,7 +330,10 @@ export function TabBar(props: { store: EditorStore }) {
             label={basename(tab.path)}
             hint={(shared.get(basename(tab.path)) ?? 0) > 1 ? dirname(tab.path) || "/" : undefined}
             dragging={dragging === index}
-            onPointerDown={(event) => drag.start(event, index)}
+            onPointerDown={(event) => {
+              lastPointerType.current = event.pointerType;
+              drag.start(event, index);
+            }}
             onActivate={() => activate(tab)}
             onContextMenu={(event) => {
               event.preventDefault();

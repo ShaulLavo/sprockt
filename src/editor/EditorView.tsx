@@ -34,6 +34,7 @@ import { PROJECT_ROOT, projectRelative } from "../workspace/paths";
 import { useWorkspace } from "../workspace/session";
 import { isDetached, type Buffer } from "./buffers";
 import { EDITOR_COPY, fill } from "./copy";
+import { shouldAutoFocusEditor } from "./focus-policy";
 import { languageName, languageOf } from "./languages";
 import { mountEditorPlugins } from "./plugins";
 import { clampRestoredScroll } from "./scroll-position";
@@ -225,7 +226,7 @@ class SessionBinding {
       const offset = revealOffset(current.buffer, { ...request, line: request.line });
       instance.jumpTo(offset, undefined, "go-to-line");
     }
-    instance.focus();
+    if (shouldAutoFocusEditor()) instance.focus();
   }
 }
 

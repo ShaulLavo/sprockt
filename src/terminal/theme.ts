@@ -104,14 +104,18 @@ export function terminalTheme(colors: TerminalColors): TerminalTheme {
 const BLACK: TerminalColor = { r: 0, g: 0, b: 0 };
 
 /**
- * Resolves the terminal tokens on `element` for the theme in effect there. Each token goes
- * through a probe's `color`, because a custom property holding `light-dark()` computes to its
- * unresolved text, while `color` computes to a plain sRGB value.
+ * Resolves the terminal tokens for `scheme` (or the theme currently in effect on the document).
+ * Mounts a hidden (non-`display: none`) probe on `<body>`/`<html>` rather than inside `element`
+ * because a hidden terminal pane (`display: none`, e.g. on phones) skips style recalculation in
+ * WebKit/Safari and would otherwise return stale `light-dark()` colors after a theme toggle.
  */
-export function readTerminalColors(element: HTMLElement): TerminalColors {
-  const probe = element.ownerDocument.createElement("span");
-  probe.style.display = "none";
-  element.append(probe);
+export function readTerminalColors(element: HTMLElement, scheme?: TerminalColorScheme): TerminalColors {
+  const doc = element.ownerDocument;
+  const probe = doc.createElement("span");
+  probe.style.cssText =
+    "position:fixed;visibility:hidden;pointer-events:none;width:0;height:0;overflow:hidden;";
+  if (scheme) probe.style.colorScheme = scheme;
+  (doc.body ?? doc.documentElement).append(probe);
   const style = getComputedStyle(probe);
   const read = (token: string) => {
     probe.style.color = `var(${token})`;
@@ -132,7 +136,7 @@ export function terminalAppearance(
 ) {
   return {
     colorScheme: scheme,
-    theme: terminalTheme(readTerminalColors(element)),
+    theme: terminalTheme(readTerminalColors(element, scheme)),
     font: terminalFont(phone),
   };
 }

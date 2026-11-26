@@ -291,19 +291,23 @@ export function TerminalPanel(props: TerminalPanelProps) {
         data-split={tabs.split ? "" : undefined}
         onClick={() => focusTerminal(terminals.tabs().focused)}
       >
-        {tabs.tabs.map((tab) => (
-          <TerminalView
-            key={tab.id}
-            id={tab.id}
-            position={positionOf(tab.id)}
-            scheme={props.scheme}
-            label={tab.title}
-            onAttached={onAttached}
-            onOpenFile={props.onOpenFile}
-            onSplit={toggleSplit}
-            onClose={() => terminals.close(tab.id)}
-          />
-        ))}
+        {tabs.tabs.map((tab) => {
+          const position = positionOf(tab.id);
+          return (
+            <TerminalView
+              key={tab.id}
+              id={tab.id}
+              position={position}
+              visible={props.shown && !props.collapsed && position !== "hidden"}
+              scheme={props.scheme}
+              label={tab.title}
+              onAttached={onAttached}
+              onOpenFile={props.onOpenFile}
+              onSplit={toggleSplit}
+              onClose={() => terminals.close(tab.id)}
+            />
+          );
+        })}
         {tabs.tabs.length === 0 ? (
           <div className="term-empty">
             <p>{ui.noTerminal}</p>

@@ -150,3 +150,71 @@ test("terminal capture-phase context menu opens with Clear and Split actions", a
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("tree-menu")).toHaveCount(0);
 });
+
+const terminalCanvasBackground = (page: Page) =>
+  page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>(".term-canvas canvas");
+    return canvas?.parentElement ? getComputedStyle(canvas.parentElement).backgroundColor : "";
+  });
+
+const editorHasFocus = (page: Page) =>
+  page.evaluate(() => {
+    const active = document.activeElement;
+    return active instanceof HTMLElement && active.closest('[data-testid="editor"]') !== null;
+  });
+
+test("terminal updates its theme live across light and dark toggles, even when hidden on mobile", async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await newWorkspace(page);
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+
+  // Stay on the Files/Code pane so the Terminal pane is display: none while toggling to dark.
+  await page.getByTestId("phone-menu").click();
+  await page.getByRole("button", { name: "Use dark theme" }).click();
+  await page.locator(".wb-scrim").click();
+
+  await page.getByTestId("pane-switcher").getByRole("button", { name: "Terminal" }).click();
+  await expect.poll(() => terminalCanvasBackground(page)).toBe("rgb(10, 13, 20)");
+
+  // Toggle live while the terminal is on screen: dark -> light -> dark.
+  await page.getByTestId("phone-menu").click();
+  await page.getByRole("button", { name: "Use light theme" }).click();
+  await expect.poll(() => terminalCanvasBackground(page)).toBe("rgb(255, 255, 255)");
+  await page.getByRole("button", { name: "Use dark theme" }).click();
+  await expect.poll(() => terminalCanvasBackground(page)).toBe("rgb(10, 13, 20)");
+});
+
+test("switching file tabs on mobile never focuses the editor until the editor surface is tapped", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await newWorkspace(page);
+  await writeFile(page, "alpha.ts", "export const alpha = 1;\n");
+  await writeFile(page, "beta.ts", "export const beta = 2;\n");
+
+  await page.getByTestId("file-tree").getByRole("button", { name: "alpha.ts", exact: true }).click();
+  await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
+  await expect.poll(() => editorHasFocus(page)).toBe(false);
+
+  await page.getByTestId("pane-switcher").getByRole("button", { name: "Files" }).click();
+  await page.getByTestId("file-tree").getByRole("button", { name: "beta.ts", exact: true }).click();
+  await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
+  await expect.poll(() => editorHasFocus(page)).toBe(false);
+
+  // Switching tabs must not focus the editor or trigger the soft keyboard.
+  await page.locator('[data-testid="editor-tab"][data-path="alpha.ts"]').click();
+  await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
+  expect(await editorHasFocus(page)).toBe(false);
+
+  // An explicit tap directly on the editor text surface focuses the editor for real editing.
+  await page.getByTestId("editor").click();
+  await expect.poll(() => editorHasFocus(page)).toBe(true);
+
+  // Tapping another file tab afterwards leaves the editor unfocused again.
+  await page.locator('[data-testid="editor-tab"][data-path="beta.ts"]').click();
+  await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
+  await expect.poll(() => editorHasFocus(page)).toBe(false);
+});
