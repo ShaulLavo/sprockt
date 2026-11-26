@@ -36,10 +36,10 @@ export const LANDING_COPY = {
   openError: "Enter owner/repo or a github.com URL.",
   openTry: "Try",
   altBlank: "New blank workspace",
-  templatesTitle: "Seven starters, or any public GitHub repo",
+  templatesTitle: "Seven starters, or a public GitHub repo",
   templatesTitleMuted: "open straight into the workbench",
   templatesNote:
-    "Imports never run commands automatically; starting a dev server installs dependencies on demand.",
+    "Imports never run commands automatically. When Sprockt detects a dev command, starting it runs bun install if package.json is present and node_modules is missing.",
   templatesError: "Could not create workspace: {message}",
   templateAction: "Create",
   templateCreating: "Creating...",

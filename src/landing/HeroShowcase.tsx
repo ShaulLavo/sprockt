@@ -79,7 +79,7 @@ const HERO_LINES: readonly Line[] = [
     [
       ["", "      <"],
       [T, "h1"],
-      ["", ">Hello from Sprockt</"],
+      ["", ">Sprockt</"],
       [T, "h1"],
       ["", ">"],
     ],

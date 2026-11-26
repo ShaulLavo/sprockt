@@ -220,7 +220,7 @@
 .lp-ws-icon-btn {
   display: grid;
   place-items: center;
-  width: 36px;
+  width: 44px;
   height: 44px;
   border-radius: var(--radius-sm);
   color: var(--fg-subtle);

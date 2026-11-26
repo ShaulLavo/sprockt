@@ -33,7 +33,6 @@
   --g-ink: light-dark(#25303a, #dbe4ee);
   --g-hi: light-dark(#dde5ed, #24344a);
   --g-deep: light-dark(#98afc5, #23405d);
-  --g-calm: light-dark(rgb(255 255 255 / 0.26), rgb(10 13 20 / 0.24));
 
   /* the one dark band (#4 ground-inverse); on the dark page a step darker, with hairlines */
   --inv-bg: light-dark(#111318, #06080e);
@@ -227,7 +226,7 @@ body:has(.landing-page) {
 @media (hover: hover) and (pointer: fine) {
   .lp-btn:hover:not(:disabled) {
     transform: translateY(-1px);
-    transition-duration: var(--lp-dur), var(--lp-dur), 90ms;
+    transition-duration: 90ms;
   }
 
   .lp-btn-primary:hover:not(:disabled) {
@@ -405,19 +404,6 @@ body:has(.landing-page) {
       transparent 70%
     );
   color: var(--g-ink);
-}
-
-/* subtle SVG grain overlay for sky grounds that do not run a WebGL shader */
-.lp-ground-grain::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='table' tableValues='1 1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  mix-blend-mode: soft-light;
-  opacity: 0.22;
 }
 
 /* the crisp 1px inset edge over every ground and any fragment it crops */
@@ -1686,7 +1672,7 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   position: relative;
   isolation: isolate;
   overflow: clip;
-  height: 580px;
+  height: 616px;
   border-radius: var(--lp-r);
   background-color: #0e131d;
   background-image:
@@ -1701,7 +1687,7 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
 .lp-device {
   position: absolute;
   z-index: 1;
-  top: var(--space-10);
+  top: 28px;
   left: 50%;
   width: 280px;
   height: 560px;
@@ -1878,7 +1864,7 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
 
 @keyframes lp-marquee {
   to {
-    transform: translateX(calc(-50% - var(--space-8)));
+    transform: translateX(calc(-50% - var(--space-5)));
   }
 }
 
@@ -2560,7 +2546,17 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   }
 
   .lp-brand {
+    min-height: 44px;
     font-size: 20px;
+  }
+
+  .lp-pill {
+    min-height: 44px;
+  }
+
+  .lp-loop-pause {
+    width: 44px;
+    height: 44px;
   }
 
   .lp-hero {
