@@ -278,6 +278,21 @@
   background: color-mix(in oklab, var(--danger) 10%, var(--term-bg));
 }
 
+.term-notice {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 6;
+  margin: 0;
+  padding: var(--space-1_5) var(--space-2_5);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+  color: var(--fg);
+  font-size: var(--text-xs);
+}
+
 .term-empty {
   display: grid;
   grid-column: 1 / -1;

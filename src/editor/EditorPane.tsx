@@ -1,6 +1,11 @@
 // The editor slot of the workbench: tabs, the path of the open file, a conflict bar when the file
 // changed under unsaved edits, the editor itself, project search beside it, and quick open.
-import { detectPlatform, getHotkeyRegistry } from "@shaulavo/hotkeys";
+import {
+  createMultiHotkeyHandler,
+  detectPlatform,
+  getHotkeyRegistry,
+  type MultiHotkeyHandler,
+} from "@shaulavo/hotkeys";
 import type { Editor } from "@singapore-editor/core/editor";
 import { Fragment, useCallback, useEffect, useRef, type RefObject } from "react";
 import { useScope, useValue } from "../lib/react";
@@ -16,7 +21,9 @@ import "./editor.css";
 import { originalPath } from "./buffers";
 import { EditorView } from "./EditorView";
 import type { EditorStore } from "./store";
+import { adjacentTab } from "./tabs";
 import { TabBar } from "./TabBar";
+import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 
 /** The path of the file on screen. */
 function Crumbs(props: { path: string | undefined }) {
@@ -74,23 +81,48 @@ function useEditorShortcuts(
 ) {
   useEffect(() => {
     const save = () => void store.save().catch(reportSaveError);
-    const registry = getHotkeyRegistry();
-    const options = { preventDefault: true, stopPropagation: true, conflictBehavior: "replace" as const };
-    const handles = [registry.register("Mod+S", save, options)].concat(
-      // Ctrl+S saves on a Mac too, as it always has here: macOS binds nothing to it in text fields.
-      detectPlatform() === "mac" ? [registry.register("Control+S", save, options)] : [],
-      [
-        registry.register("Mod+P", () => store.setQuickOpen(true), options),
-        registry.register("Mod+Shift+F", () => store.setSearchOpen(true), options),
-        // Inside the editor Singapore's find takes Mod+F itself; this covers the tab bar and crumbs.
-        registry.register("Mod+F", () => void editor.current?.openFind(), {
-          ...options,
-          target: pane.current ?? undefined,
-        }),
-      ],
-    );
+    const mac = detectPlatform() === "mac";
+    const cycleTab = (delta: 1 | -1) => {
+      const next = adjacentTab(store.tabs(), store.active(), delta);
+      if (next) store.open(next.path, { preview: next.preview, focus: true });
+    };
+    const closeActiveTab = () => {
+      if (store.pendingClose() !== undefined) return;
+      const active = store.active();
+      if (active) store.requestClose([active]);
+    };
+    const bindings: MultiHotkeyHandler = {
+      "Mod+S": save,
+      "Mod+P": () => store.setQuickOpen(true),
+      "Mod+Shift+P": () => store.setQuickOpen(true, ">"),
+      F1: () => store.setQuickOpen(true, ">"),
+      "Mod+Shift+F": () => store.setSearchOpen(true),
+      "Alt+W": closeActiveTab,
+      ...(mac
+        ? {
+            // Ctrl+S saves on a Mac too, as it always has here: macOS binds nothing to it in text fields.
+            "Control+S": save,
+            "Mod+Alt+ArrowLeft": () => cycleTab(-1),
+            "Mod+Alt+ArrowRight": () => cycleTab(1),
+          }
+        : {
+            "Control+PageUp": () => cycleTab(-1),
+            "Control+PageDown": () => cycleTab(1),
+          }),
+    };
+    // Capture phase ensures workbench shortcuts work even when focus sits inside the Ghostty terminal.
+    const onKeyDown = createMultiHotkeyHandler(bindings);
+    window.addEventListener("keydown", onKeyDown, true);
+    // Inside the editor Singapore's find takes Mod+F itself; this covers the tab bar and crumbs.
+    const findHandle = getHotkeyRegistry().register("Mod+F", () => void editor.current?.openFind(), {
+      preventDefault: true,
+      stopPropagation: true,
+      conflictBehavior: "replace",
+      target: pane.current ?? undefined,
+    });
     return () => {
-      for (const handle of handles) handle.unregister();
+      window.removeEventListener("keydown", onKeyDown, true);
+      findHandle.unregister();
     };
   }, [store, pane, editor]);
 
@@ -170,11 +202,32 @@ export function EditorPane(props: { store: EditorStore }) {
   const editor = useRef<Editor>(undefined);
   useEditorShortcuts(store, pane, editor);
   useAutosaveTriggers(store);
-  const scope = useScope(() => ({
-    commands: createSaveCommands(store, workspace.commands),
-    // Open tabs, as one list that changes only when the tabs do.
-    recent: createMemo(() => store.tabs().map((tab) => tab.path)),
-  }));
+  const scope = useScope(() => {
+    const saveCommands = createSaveCommands(store, workspace.commands);
+    const paletteCommands = createMemo((): readonly PaletteCommand[] => {
+      const registered = workspace.commands
+        .all()
+        .filter(
+          (cmd) =>
+            cmd.id !== COMMAND.quickOpen &&
+            cmd.id !== COMMAND.save &&
+            cmd.id !== COMMAND.saveAll &&
+            cmd.id !== COMMAND.autosave,
+        )
+        .map((cmd): PaletteCommand => ({
+          id: cmd.id,
+          label: cmd.label,
+          shortcut: cmd.shortcut,
+          run: cmd.run,
+        }));
+      return saveCommands().concat(registered);
+    });
+    return {
+      commands: paletteCommands,
+      // Open tabs, as one list that changes only when the tabs do.
+      recent: createMemo(() => store.tabs().map((tab) => tab.path)),
+    };
+  });
   const commands = scope?.commands ?? EMPTY_COMMANDS;
   const recent = scope?.recent ?? EMPTY_RECENT;
   // A detached draft shows the path it came from.
@@ -184,6 +237,8 @@ export function EditorPane(props: { store: EditorStore }) {
   });
   const searchOpen = useValue(store.searchOpen);
   const empty = useValue(() => store.active() === undefined);
+  const pendingClose = useValue(store.pendingClose);
+  const quickOpenSeed = useValue(store.quickOpenSeed);
   const onEditor = useCallback((instance: Editor) => {
     editor.current = instance;
   }, []);
@@ -224,10 +279,21 @@ export function EditorPane(props: { store: EditorStore }) {
         open={store.quickOpen}
         files={workspace.files}
         recent={recent}
+        initialQuery={quickOpenSeed}
         onOpen={open}
         onClose={() => store.setQuickOpen(false)}
         commands={commands}
       />
+      {pendingClose && pendingClose.paths.length > 0 ? (
+        <UnsavedChangesDialog
+          paths={pendingClose.paths}
+          saving={pendingClose.saving}
+          error={pendingClose.error}
+          onSave={() => void store.resolvePendingClose("save").catch(reportSaveError)}
+          onDiscard={() => void store.resolvePendingClose("discard")}
+          onCancel={() => void store.resolvePendingClose("cancel")}
+        />
+      ) : null}
     </section>
   );
 }

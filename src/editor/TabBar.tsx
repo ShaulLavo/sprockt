@@ -6,16 +6,19 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
+import { ContextMenu, type MenuItem } from "../explorer/ContextMenu";
 import { useValue } from "../lib/react";
 import { CloseIcon, FileIcon } from "../search/icons";
 import { fileTabTone } from "../ui/tab-colors";
 import { originalPath } from "./buffers";
 import { EDITOR_COPY, fill } from "./copy";
+import { revealTabInStrip } from "./scroll-position";
 import type { EditorStore } from "./store";
-import type { EditorTab } from "./tabs";
+import { tabsToClose, type EditorTab, type TabCloseScope } from "./tabs";
 
 const DRAG_THRESHOLD_PX = 5;
 
@@ -30,10 +33,9 @@ function classes(base: string, flags: Readonly<Record<string, boolean>>): string
   return [base].concat(Object.keys(flags).filter((name) => flags[name])).join(" ");
 }
 
-/** Asks before closing a tab with unsaved edits. */
+/** Asks before closing a tab with unsaved edits using the Sheet & Biro dialog. */
 export function requestClose(store: EditorStore, path: string): void {
-  if (store.hasUnsaved(path) && !confirm(fill(EDITOR_COPY.discardChanges, { name: basename(path) }))) return;
-  store.close(path);
+  store.requestClose([path]);
 }
 
 interface DragState {
@@ -132,13 +134,15 @@ function Tab(props: {
   tab: EditorTab;
   index: number;
   store: EditorStore;
+  strip: RefObject<HTMLDivElement | null>;
   label: string;
   hint: string | undefined;
   dragging: boolean;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onActivate: () => void;
+  onContextMenu: (event: ReactMouseEvent<HTMLDivElement>) => void;
 }) {
-  const { tab, store } = props;
+  const { tab, store, strip } = props;
   const active = useValue(() => store.active() === tab.path);
   const dirty = useValue(() => store.hasUnsaved(tab.path));
   const missing = useValue(() => store.buffers.get(tab.path)?.missing() ?? false);
@@ -146,8 +150,8 @@ function Tab(props: {
   const element = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (active) element.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [active]);
+    if (active && element.current && strip.current) revealTabInStrip(strip.current, element.current);
+  }, [active, strip]);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key === "Enter" || event.key === " ") {
@@ -180,6 +184,7 @@ function Tab(props: {
       onPointerDown={(event) => props.onPointerDown(event)}
       onClick={() => props.onActivate()}
       onDoubleClick={() => store.pin(tab.path)}
+      onContextMenu={props.onContextMenu}
       onMouseDown={(event) => event.button === 1 && event.preventDefault()}
       onAuxClick={(event) => {
         if (event.button !== 1) return;
@@ -223,6 +228,7 @@ export function TabBar(props: { store: EditorStore }) {
   const strip = useRef<HTMLDivElement>(null);
   const tabs = useValue(store.tabs);
   const [dragging, setDragging] = useState<number>();
+  const [menu, setMenu] = useState<{ x: number; y: number; path: string }>();
   const [drag] = useState(() => createTabDrag(strip, store, setDragging));
   useEffect(() => drag.dispose, [drag]);
   const overflow = useOverflow(strip, tabs);
@@ -234,6 +240,57 @@ export function TabBar(props: { store: EditorStore }) {
   function activate(tab: EditorTab): void {
     if (drag.takeSuppressedClick()) return;
     store.open(tab.path, { preview: tab.preview, focus: true });
+  }
+
+  function closeScope(scope: TabCloseScope, path: string): void {
+    const targets = tabsToClose(store.tabs(), scope, path, (candidate) => store.hasUnsaved(candidate));
+    store.requestClose(targets);
+  }
+
+  function menuItems(path: string): MenuItem[] {
+    const list = store.tabs();
+    const index = list.findIndex((candidate) => candidate.path === path);
+    const items: MenuItem[] = [
+      {
+        label: EDITOR_COPY.tabMenu.close,
+        testId: "tab-menu-close",
+        run: () => closeScope("self", path),
+      },
+    ];
+    if (list.length > 1) {
+      items.push({
+        label: EDITOR_COPY.tabMenu.closeOthers,
+        testId: "tab-menu-close-others",
+        run: () => closeScope("others", path),
+      });
+    }
+    if (index >= 0 && index < list.length - 1) {
+      items.push({
+        label: EDITOR_COPY.tabMenu.closeRight,
+        testId: "tab-menu-close-right",
+        run: () => closeScope("right", path),
+      });
+    }
+    if (list.some((candidate) => !store.hasUnsaved(candidate.path))) {
+      items.push({
+        label: EDITOR_COPY.tabMenu.closeSaved,
+        testId: "tab-menu-close-saved",
+        run: () => closeScope("saved", path),
+      });
+    }
+    items.push(
+      {
+        label: EDITOR_COPY.tabMenu.closeAll,
+        testId: "tab-menu-close-all",
+        run: () => closeScope("all", path),
+      },
+      {
+        label: EDITOR_COPY.tabMenu.copyPath,
+        testId: "tab-menu-copy-path",
+        run: () => void navigator.clipboard?.writeText(originalPath(path)).catch(() => {}),
+      },
+    );
+    return items;
   }
 
   return (
@@ -257,14 +314,36 @@ export function TabBar(props: { store: EditorStore }) {
             tab={tab}
             index={index}
             store={store}
+            strip={strip}
             label={basename(tab.path)}
             hint={(shared.get(basename(tab.path)) ?? 0) > 1 ? dirname(tab.path) || "/" : undefined}
             dragging={dragging === index}
             onPointerDown={(event) => drag.start(event, index)}
             onActivate={() => activate(tab)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setMenu({ x: event.clientX, y: event.clientY, path: tab.path });
+            }}
           />
         ))}
       </div>
+      {menu ? (
+        <ContextMenu
+          key={`${menu.x}:${menu.y}:${menu.path}`}
+          x={menu.x}
+          y={menu.y}
+          label={EDITOR_COPY.tabMenu.label}
+          items={menuItems(menu.path)}
+          onClose={(escaped) => {
+            const path = menu.path;
+            setMenu(undefined);
+            if (escaped) {
+              strip.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(path)}"]`)?.focus();
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

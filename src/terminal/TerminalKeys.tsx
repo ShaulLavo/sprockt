@@ -13,21 +13,24 @@ interface SoftKey {
   readonly label: string;
   readonly name: string;
   readonly data: string;
+  /** When set, dispatches a hardware KeyboardEvent so Ghostty encodes DECCKM/TUI modes cleanly. */
+  readonly key?: string;
+  readonly code?: string;
 }
 
 /** Shown before the Ctrl key. */
 const LEADING: readonly SoftKey[] = [
-  { label: "esc", name: "Escape", data: "\x1b" },
-  { label: "tab", name: "Tab", data: "\t" },
+  { label: "esc", name: "Escape", data: "\x1b", key: "Escape", code: "Escape" },
+  { label: "tab", name: "Tab", data: "\t", key: "Tab", code: "Tab" },
 ];
 
 /** Shown after the Ctrl key. Ctrl+C comes first: stopping a dev server takes one tap. */
 const TRAILING: readonly SoftKey[] = [
   { label: "^C", name: "Control+C", data: "\x03" },
-  { label: "↑", name: "Up", data: "\x1b[A" },
-  { label: "↓", name: "Down", data: "\x1b[B" },
-  { label: "←", name: "Left", data: "\x1b[D" },
-  { label: "→", name: "Right", data: "\x1b[C" },
+  { label: "↑", name: "Up", data: "\x1b[A", key: "ArrowUp", code: "ArrowUp" },
+  { label: "↓", name: "Down", data: "\x1b[B", key: "ArrowDown", code: "ArrowDown" },
+  { label: "←", name: "Left", data: "\x1b[D", key: "ArrowLeft", code: "ArrowLeft" },
+  { label: "→", name: "Right", data: "\x1b[C", key: "ArrowRight", code: "ArrowRight" },
   { label: "|", name: "|", data: "|" },
   { label: "~", name: "~", data: "~" },
   { label: "/", name: "/", data: "/" },
@@ -88,11 +91,12 @@ export function TerminalKeys(props: {
     handle.focus();
   }
 
-  function send(data: string): void {
+  function send(softKey: SoftKey): void {
     const handle = props.handle();
     if (!handle) return;
     disarm();
-    handle.input(data);
+    if (softKey.key && softKey.code) handle.pressKey(softKey.key, softKey.code, softKey.data);
+    else handle.input(softKey.data);
     handle.focus();
   }
 
@@ -104,7 +108,7 @@ export function TerminalKeys(props: {
       aria-label={key.name}
       onPointerDown={keepFocus}
       onMouseDown={keepFocus}
-      onClick={() => send(key.data)}
+      onClick={() => send(key)}
     >
       {key.label}
     </button>

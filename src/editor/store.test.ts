@@ -927,3 +927,106 @@ test("saving a set-aside draft recovered from this tab keeps the incoming file's
   expect(buffer?.session.materializeFullText()).toBe("edited incoming");
   reloaded.dispose();
 });
+
+test("requestClose stages clean tabs until confirmation so cancel leaves the tab set unchanged", async () => {
+  const { store, dispose } = setUpStore({ "clean.ts": "a", "dirty.ts": "b" });
+  store.setAutosave(false);
+  store.open("clean.ts");
+  store.open("dirty.ts");
+  await store.buffers.load("clean.ts");
+  await store.buffers.load("dirty.ts");
+  type(store, "dirty.ts", "edit ");
+
+  store.requestClose(["clean.ts", "dirty.ts"]);
+  expect(store.pendingClose()?.paths).toEqual(["dirty.ts"]);
+  expect(store.tabs().map((tab) => tab.path)).toEqual(["clean.ts", "dirty.ts"]);
+
+  await store.resolvePendingClose("cancel");
+  expect(store.pendingClose()).toBeUndefined();
+  expect(store.tabs().map((tab) => tab.path)).toEqual(["clean.ts", "dirty.ts"]);
+
+  store.requestClose(["clean.ts", "dirty.ts"]);
+  await store.resolvePendingClose("discard");
+  expect(store.pendingClose()).toBeUndefined();
+  expect(store.tabs()).toEqual([]);
+  dispose();
+});
+
+test("save-and-close tracks detached drafts across rename and keeps failed tabs open with an error", async () => {
+  const { store, disk, emit, dispose } = setUpStore({ "target/a.txt": "old", "src/a.txt": "new" });
+  store.setAutosave(false);
+  store.open("target/a.txt");
+  await store.buffers.load("target/a.txt");
+  type(store, "target/a.txt", "draft ");
+  disk.delete("target/a.txt");
+  emit({ removed: ["target", "target/a.txt"] });
+  disk.set("target/a.txt", "new");
+  disk.delete("src/a.txt");
+  emit({ moves: [{ from: "src/a.txt", to: "target/a.txt", operation: 1 }] });
+  await tick();
+  const aside = store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+
+  // Saving and closing a detached draft closes the newly attached tab rather than leaving it open.
+  store.requestClose([aside as string]);
+  await store.resolvePendingClose("save");
+  expect(store.pendingClose()).toBeUndefined();
+  expect(store.tabs()).toEqual([]);
+  expect(disk.get("target/a (draft).txt")).toBe("draft old");
+
+  // When one file conflicts on save, clean/succeeding tabs still close and the conflicted tab stays open with an error.
+  disk.set("ok.txt", "one");
+  disk.set("conflict.txt", "base");
+  store.open("ok.txt");
+  store.open("conflict.txt");
+  await store.buffers.load("ok.txt");
+  await store.buffers.load("conflict.txt");
+  type(store, "ok.txt", "saved ");
+  type(store, "conflict.txt", "mine ");
+  disk.set("conflict.txt", "theirs");
+
+  store.requestClose(["conflict.txt", "ok.txt"]);
+  await store.resolvePendingClose("save");
+  expect(disk.get("ok.txt")).toBe("saved one");
+  expect(store.tabs().map((tab) => tab.path)).toEqual(["conflict.txt"]);
+  expect(store.pendingClose()?.paths).toEqual(["conflict.txt"]);
+  expect(store.pendingClose()?.error).toBeDefined();
+  dispose();
+});
+
+test("staged close tracks unloaded tabs by identity and ignores concurrent close requests", async () => {
+  const { store, disk, emit, dispose } = setUpStore({
+    "a.ts": "old a",
+    "b.ts": "clean b",
+    "dirty.ts": "d",
+    "extra.ts": "e",
+  });
+  store.setAutosave(false);
+  // Leave a.ts unloaded; load dirty.ts and edit it; keep b.ts outside the close batch.
+  store.open("a.ts");
+  store.open("b.ts");
+  store.open("dirty.ts");
+  store.open("extra.ts");
+  await store.buffers.load("dirty.ts");
+  type(store, "dirty.ts", "edit ");
+
+  store.requestClose(["a.ts", "dirty.ts"]);
+  expect(store.pendingClose()?.paths).toEqual(["dirty.ts"]);
+
+  // A new close request while confirmation is open must not close extra.ts or replace the batch.
+  store.requestClose(["extra.ts"]);
+  expect(store.tabs().map((tab) => tab.path)).toEqual(["a.ts", "b.ts", "dirty.ts", "extra.ts"]);
+  expect(store.pendingClose()?.paths).toEqual(["dirty.ts"]);
+
+  // Moving b.ts (outside the batch) onto a.ts replaces the unloaded tab at a.ts; discarding the
+  // staged batch must close dirty.ts without closing the replacement tab at a.ts.
+  disk.set("a.ts", "clean b");
+  disk.delete("b.ts");
+  emit({ moves: [{ from: "b.ts", to: "a.ts", operation: 1 }] });
+  await tick();
+
+  await store.resolvePendingClose("discard");
+  expect(store.pendingClose()).toBeUndefined();
+  expect(store.tabs().map((tab) => tab.path)).toEqual(["a.ts", "extra.ts"]);
+  dispose();
+});

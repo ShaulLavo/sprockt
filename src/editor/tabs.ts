@@ -68,3 +68,33 @@ export function renameTabs(tabs: readonly EditorTab[], from: string, to: string)
     return [path === tab.path ? tab : { path, preview: tab.preview }];
   });
 }
+
+export type TabCloseScope = "self" | "others" | "right" | "saved" | "all";
+
+/** Returns the tab paths targeted by a tab context-menu close action. */
+export function tabsToClose(
+  tabs: readonly EditorTab[],
+  scope: TabCloseScope,
+  anchorPath: string,
+  isDirty: (path: string) => boolean,
+): string[] {
+  if (scope === "self") return tabs.some((tab) => tab.path === anchorPath) ? [anchorPath] : [];
+  if (scope === "all") return tabs.map((tab) => tab.path);
+  if (scope === "saved") return tabs.filter((tab) => !isDirty(tab.path)).map((tab) => tab.path);
+  if (scope === "others") return tabs.filter((tab) => tab.path !== anchorPath).map((tab) => tab.path);
+  const index = tabs.findIndex((tab) => tab.path === anchorPath);
+  if (index < 0) return [];
+  return tabs.slice(index + 1).map((tab) => tab.path);
+}
+
+/** Cycles to the next (+1) or previous (-1) tab, wrapping around. */
+export function adjacentTab(
+  tabs: readonly EditorTab[],
+  active: string | undefined,
+  delta: 1 | -1,
+): EditorTab | undefined {
+  if (tabs.length <= 1) return undefined;
+  const index = active === undefined ? -1 : tabs.findIndex((tab) => tab.path === active);
+  const start = index < 0 ? 0 : index;
+  return tabs[(start + delta + tabs.length) % tabs.length];
+}

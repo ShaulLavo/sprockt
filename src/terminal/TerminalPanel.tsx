@@ -25,6 +25,7 @@ export interface TerminalPanelProps {
   /** False while another pane fills a phone screen. */
   readonly shown: boolean;
   onToggleCollapsed(): void;
+  onOpenFile?(path: string, location?: { readonly line?: number; readonly column?: number }): void;
 }
 
 function TabIndicator(props: { state: SessionState }) {
@@ -36,10 +37,16 @@ function TabIndicator(props: { state: SessionState }) {
 
 function RenameField(props: { tab: TerminalTab; onDone(title: string | undefined): void }) {
   const input = useRef<HTMLInputElement>(null);
+  const settled = useRef(false);
   useEffect(() => {
     input.current?.focus();
     input.current?.select();
   }, []);
+  function finish(title: string | undefined): void {
+    if (settled.current) return;
+    settled.current = true;
+    props.onDone(title);
+  }
   return (
     <input
       ref={input}
@@ -51,10 +58,17 @@ function RenameField(props: { tab: TerminalTab; onDone(title: string | undefined
       enterKeyHint="done"
       onKeyDown={(event) => {
         event.stopPropagation();
-        if (event.key === "Enter") props.onDone(event.currentTarget.value);
-        if (event.key === "Escape") props.onDone(undefined);
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.key === "Enter") {
+          event.preventDefault();
+          finish(event.currentTarget.value);
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          finish(undefined);
+        }
       }}
-      onBlur={(event) => props.onDone(event.currentTarget.value)}
+      onBlur={(event) => finish(event.currentTarget.value)}
     />
   );
 }
@@ -285,6 +299,9 @@ export function TerminalPanel(props: TerminalPanelProps) {
             scheme={props.scheme}
             label={tab.title}
             onAttached={onAttached}
+            onOpenFile={props.onOpenFile}
+            onSplit={toggleSplit}
+            onClose={() => terminals.close(tab.id)}
           />
         ))}
         {tabs.tabs.length === 0 ? (

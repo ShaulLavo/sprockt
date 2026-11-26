@@ -4,6 +4,9 @@ import type { NameProblem } from "../files/paths";
 export const copy = {
   title: "Explorer",
   empty: "No files yet.",
+  filterPlaceholder: "Filter files…",
+  filterEmpty: "No matching files.",
+  clearFilter: "Clear filter",
   confirmFile: {
     title: "Delete {name}?",
     body: "This removes the file from your browser workspace and cannot be undone.",

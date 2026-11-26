@@ -62,12 +62,18 @@ async function create(page: Page, kind: "file" | "folder", name: string): Promis
 /**
  * Opens a folder row. A new workspace opens its small folders by itself, so a folder may already
  * be open or about to be: click only when it is shut, and look again if that click closed it.
+ * Also handles compacted single-child folder chains (`area / inner`), where intermediate segments
+ * are already expanded as part of their leaf row.
  */
 async function expandRow(page: Page, path: string): Promise<void> {
   const folder = row(page, path);
-  await expect(folder).toBeVisible();
+  const segment = page.locator(`[data-segment-path="${path}"]`);
+  await expect(folder.or(segment).first()).toBeVisible();
+  if ((await folder.count()) === 0) return;
   await expect(async () => {
+    if ((await folder.count()) === 0 && (await segment.count()) > 0) return;
     if ((await folder.getAttribute("aria-expanded")) !== "true") await folder.click();
+    if ((await folder.count()) === 0 && (await segment.count()) > 0) return;
     await expect(folder).toHaveAttribute("aria-expanded", "true", { timeout: 1000 });
   }).toPass();
 }
@@ -461,10 +467,17 @@ test("renaming a folder takes an unsaved file under node_modules along", async (
   await typeInEditor(page, "unsaved");
   await expect(page.getByTestId("editor-dirty")).toBeVisible();
 
-  await row(page, "node_modules").press("F2");
+  // `node_modules` compacts with its single child `pkg`; clicking its segment selects it for F2 rename.
+  const nodeModulesSegment = page.locator('[data-segment-path="node_modules"]');
+  if ((await nodeModulesSegment.count()) > 0) {
+    await nodeModulesSegment.click();
+    await page.keyboard.press("F2");
+  } else {
+    await row(page, "node_modules").press("F2");
+  }
   await page.getByTestId("tree-input").fill("modules");
   await page.getByTestId("tree-input").press("Enter");
-  await expect(row(page, "modules")).toBeVisible();
+  await expect(row(page, "modules").or(page.locator('[data-segment-path="modules"]')).first()).toBeVisible();
   await expect(page.getByTestId("editor-file")).toHaveAttribute("aria-label", "modules/pkg/index.js");
   await expect(page.getByTestId("editor-dirty")).toBeVisible();
   expect(await editorText(page)).toBe("x\nunsaved");

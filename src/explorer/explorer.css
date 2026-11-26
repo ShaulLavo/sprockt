@@ -95,13 +95,87 @@
   outline-offset: -2px;
 }
 
+/* Pointer clicks keep the tree crisp without flashing focus rings; keyboard presses restore them. */
+.explorer-pane[data-focus-mode="pointer"] .row:focus-visible {
+  outline: none;
+}
+
+/* ───────────── Inline filter bar ───────────── */
+
+.tree-filter {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1_5, 6px);
+  height: 30px;
+  padding: 0 var(--space-2, 8px);
+  border-bottom: 1px solid var(--e-line);
+  background: var(--bg-input, var(--e-bg));
+}
+
+.tree-filter-ico {
+  width: 13px;
+  height: 13px;
+  color: var(--e-subtle);
+}
+
+.tree-filter-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--e-fg);
+  font-size: var(--text-xs, 12px);
+}
+
+.tree-filter-clear {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-xs, 4px);
+  color: var(--e-subtle);
+}
+
+.tree-filter-clear .ico {
+  width: 12px;
+  height: 12px;
+}
+
+@media (hover: hover) {
+  .tree-filter-clear:hover {
+    background: var(--e-hover);
+    color: var(--e-fg);
+  }
+}
+
 /* ───────────── Tree ───────────── */
 
 .tree-scroll {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
   padding-bottom: var(--space-2, 8px);
+}
+
+/* Sticky ancestor folder overlay: stays pinned above scrolled content without layout jump. */
+.tree-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--e-bg);
+  border-bottom: 1px solid var(--e-line);
+  box-shadow: 0 2px 6px -2px light-dark(rgb(17 24 40 / 0.08), rgb(0 0 0 / 0.4));
+}
+
+.tree-scroll[data-scroll-at-top="true"] .tree-sticky {
+  display: none;
+}
+
+.explorer-pane .tree-sticky-row {
+  background: var(--e-bg);
 }
 
 .tree-scroll.is-drop-root {
@@ -138,6 +212,7 @@
 }
 
 .explorer-pane .row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-1_5, 6px);
@@ -150,14 +225,62 @@
   cursor: default;
 }
 
+/* Hairline vertical indentation guides aligned to each ancestor's chevron lane center. */
+.explorer-pane .row-guides {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.explorer-pane .row-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--space-2, 8px) + 7px + var(--guide-level, 0) * var(--e-indent));
+  width: 1px;
+  background: var(--e-line);
+  opacity: 0.55;
+  transition:
+    opacity var(--dur-fast, 110ms) var(--ease-out, ease-out),
+    background-color var(--dur-fast, 110ms) var(--ease-out, ease-out);
+}
+
+.explorer-pane .tree:hover .row-guide {
+  opacity: 0.9;
+}
+
+.explorer-pane .row-guide.is-active {
+  background: var(--e-accent);
+  opacity: 0.45;
+}
+
+.explorer-pane .tree:hover .row-guide.is-active {
+  opacity: 0.72;
+}
+
 @media (hover: hover) {
-  .explorer-pane .row:not(.editing):hover {
+  .tree-scroll:not([data-is-scrolling]) .row:not(.editing):hover {
     background: var(--e-hover);
   }
 }
 
 .explorer-pane .row.is-selected {
   background: var(--e-hover);
+}
+
+/* Contiguous multi-select block rounding: collapse inner corners between adjacent selected items. */
+.tree-item[data-selected="true"] .row {
+  border-radius: var(--radius-xs, 4px);
+}
+
+.tree-item[data-selected="true"]:has(+ .tree-item[data-selected="true"]) .row {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.tree-item[data-selected="true"] + .tree-item[data-selected="true"] .row {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 /* The open file: an accent bar on its left edge. */
@@ -219,11 +342,62 @@
   color: var(--ok, #4cd08c);
 }
 
+.explorer-pane .row .ft.ft-test {
+  color: var(--ok, #15803d);
+}
+
 .explorer-pane .row .name {
+  display: inline-flex;
+  align-items: baseline;
   flex: 1;
   min-width: 0;
   overflow: hidden;
+}
+
+.explorer-pane .row .name-stem {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.explorer-pane .row .name-ext {
+  flex: none;
+}
+
+.explorer-pane .row .name.is-segments {
+  gap: 2px;
+  overflow: hidden;
+}
+
+.explorer-pane .row .folder-sep {
+  flex: none;
+  color: var(--e-subtle);
+  padding: 0 1px;
+}
+
+.explorer-pane .row .folder-segment {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: var(--radius-xs, 3px);
+  padding: 0 2px;
+  margin: 0 -2px;
+}
+
+@media (hover: hover) {
+  .tree-scroll:not([data-is-scrolling]) .folder-segment:hover {
+    background: color-mix(in oklab, var(--e-accent) 12%, transparent);
+    color: var(--e-fg);
+  }
+}
+
+.explorer-pane .row .folder-segment.is-focused-seg {
+  background: color-mix(in oklab, var(--e-accent) 14%, transparent);
+}
+
+.explorer-pane .row .folder-segment.is-drop-seg {
+  background: var(--e-accent-soft);
+  outline: 1px dashed var(--e-accent);
 }
 
 /* A file with unsaved changes reads in the modified colour, except the open one: there the name
@@ -304,7 +478,7 @@
 }
 
 @media (hover: hover) {
-  .tree-item:hover .row-more,
+  .tree-scroll:not([data-is-scrolling]) .tree-item:hover .row-more,
   .tree-item:focus-within .row-more {
     display: inline-grid;
   }

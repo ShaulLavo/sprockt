@@ -2,9 +2,12 @@ import { expect, test } from "bun:test";
 import {
   canMoveInto,
   entryRows,
+  filterRows,
   navigate,
   rangeBetween,
   renameSelection,
+  splitFilename,
+  stickyAncestors,
   targetDirectory,
   topLevelPaths,
   visibleRows,
@@ -116,4 +119,79 @@ test("a rename starts with the name before the last dot selected", () => {
   expect(renameSelection("main.test.ts")).toEqual([0, 9]);
   expect(renameSelection(".gitignore")).toEqual([0, 10]);
   expect(renameSelection("Makefile")).toEqual([0, 8]);
+});
+
+test("single-child expanded directory chains compact onto one row unless a draft targets them", () => {
+  const chain: Listings = new Map([
+    ["", [{ name: "src", kind: "directory" }]],
+    ["src", [{ name: "app", kind: "directory" }]],
+    ["src/app", [{ name: "ui", kind: "directory" }]],
+    ["src/app/ui", [{ name: "Button.tsx", kind: "file" }]],
+  ]);
+  const open = new Set(["src", "src/app", "src/app/ui"]);
+  const compacted = entryRows(visibleRows(chain, open));
+  expect(compacted.map((row) => `${row.depth}:${row.path}`)).toEqual([
+    "0:src/app/ui",
+    "1:src/app/ui/Button.tsx",
+  ]);
+  expect(compacted[0]?.segments).toEqual([
+    { name: "src", path: "src" },
+    { name: "app", path: "src/app" },
+    { name: "ui", path: "src/app/ui" },
+  ]);
+  expect(navigate(compacted, "src/app/ui", "ArrowLeft")).toEqual({ collapse: "src" });
+  expect(navigate(compacted, "src/app/ui/Button.tsx", "ArrowLeft")).toEqual({ focus: "src/app/ui" });
+
+  // Creating inside an intermediate folder stops compaction at that folder.
+  const withDraft = visibleRows(chain, open, { mode: "create", kind: "file", parent: "src/app" });
+  expect(names(withDraft)).toEqual(["0:src/app", "1:+file", "1:src/app/ui", "2:src/app/ui/Button.tsx"]);
+});
+
+test("splitFilename preserves simple and compound extensions for middle truncation", () => {
+  expect(splitFilename("WorkspaceSettingsPanel.test.tsx")).toEqual({
+    stem: "WorkspaceSettingsPanel",
+    ext: ".test.tsx",
+  });
+  expect(splitFilename("env.d.ts")).toEqual({ stem: "env", ext: ".d.ts" });
+  expect(splitFilename("App.tsx")).toEqual({ stem: "App", ext: ".tsx" });
+  expect(splitFilename(".gitignore")).toEqual({ stem: ".gitignore", ext: "" });
+  expect(splitFilename("Makefile")).toEqual({ stem: "Makefile", ext: "" });
+});
+
+test("filterRows keeps matching files and marks context-only ancestor folders", () => {
+  const filtered = filterRows(["src/app/Button.tsx", "src/main.ts", "README.md"], "button", listings);
+  expect(filtered.map((row) => `${row.depth}:${row.path}:${row.contextOnly ? "ctx" : "match"}`)).toEqual([
+    "0:src:ctx",
+    "1:src/app:ctx",
+    "2:src/app/Button.tsx:match",
+  ]);
+  const folderMatch = filterRows(["src/app/Button.tsx"], "app", listings);
+  expect(folderMatch.map((row) => `${row.path}:${row.contextOnly ? "ctx" : "match"}`)).toEqual([
+    "src:ctx",
+    "src/app:match",
+    "src/app/Button.tsx:match",
+  ]);
+});
+
+test("stickyAncestors returns scrolled-past open parent folders in order", () => {
+  const deep: Listings = new Map([
+    ["", [{ name: "a", kind: "directory" }]],
+    [
+      "a",
+      [
+        { name: "b", kind: "directory" },
+        { name: "a.ts", kind: "file" },
+      ],
+    ],
+    [
+      "a/b",
+      [
+        { name: "one.ts", kind: "file" },
+        { name: "two.ts", kind: "file" },
+      ],
+    ],
+  ]);
+  const all = entryRows(visibleRows(deep, new Set(["a", "a/b"])));
+  expect(stickyAncestors(all, 3).map((row) => row.path)).toEqual(["a", "a/b"]);
+  expect(stickyAncestors(all, 0)).toEqual([]);
 });

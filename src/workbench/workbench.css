@@ -842,6 +842,13 @@
     grid-template-columns: 100%;
     grid-template-rows: calc(var(--titlebar-h-phone) + env(safe-area-inset-top, 0px)) minmax(0, 1fr) auto;
     grid-template-areas: "title" "main" "switch";
+    padding-bottom: var(--keyboard-inset, 0px);
+  }
+
+  /* When the iOS soft keyboard is open, hide the bottom pane switcher so the terminal keys bar
+     and editor sit flush right above the keyboard without wasting 56px. */
+  .workbench[data-keyboard-open="true"] .wb-switcher {
+    display: none;
   }
 
   /* The pane on screen names its surface for the switcher's tooth below it. */

@@ -37,16 +37,26 @@ export type TerminalColors = Readonly<Record<SurfaceKey, TerminalColor>> & {
 };
 
 /** Matches the phone layout in workbench.css. A phone gets a size that fits about 50 columns. */
-const onPhone = typeof matchMedia === "function" && matchMedia("(max-width: 768px)").matches;
+export function isPhoneViewport(): boolean {
+  return typeof matchMedia === "function" && matchMedia("(max-width: 768px)").matches;
+}
+
+const FONT_FAMILY =
+  '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+
+/** Returns the terminal font settings for the current (or given) phone/desktop breakpoint. */
+export function terminalFont(phone = isPhoneViewport()): Partial<TerminalFontSettings> {
+  return {
+    family: FONT_FAMILY,
+    size: phone ? 12 : 13,
+    lineHeight: 1.15,
+    weight: 400,
+    boldWeight: 600,
+  };
+}
 
 /** The terminal font: the workbench's code face, with the platform monospace as a fallback. */
-export const TERMINAL_FONT: Partial<TerminalFontSettings> = {
-  family: '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  size: onPhone ? 12 : 13,
-  lineHeight: 1.15,
-  weight: 400,
-  boldWeight: 600,
-};
+export const TERMINAL_FONT: Partial<TerminalFontSettings> = terminalFont();
 
 const channel = (text: string) => Math.round(Math.min(Math.max(Number(text), 0), 255));
 
@@ -115,6 +125,14 @@ export function readTerminalColors(element: HTMLElement): TerminalColors {
   return { ...surface, ansi };
 }
 
-export function terminalAppearance(element: HTMLElement, scheme: TerminalColorScheme) {
-  return { colorScheme: scheme, theme: terminalTheme(readTerminalColors(element)) };
+export function terminalAppearance(
+  element: HTMLElement,
+  scheme: TerminalColorScheme,
+  phone = isPhoneViewport(),
+) {
+  return {
+    colorScheme: scheme,
+    theme: terminalTheme(readTerminalColors(element)),
+    font: terminalFont(phone),
+  };
 }

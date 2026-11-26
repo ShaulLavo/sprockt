@@ -1,14 +1,31 @@
 // One Singapore editor for the whole pane. Tabs do not get editors of their own: switching tabs
 // attaches that file's buffer session, which carries its text, undo history and carets.
+import {
+  createBracketMatchPlugin,
+  createDocumentLinkPlugin,
+  createOccurrenceHighlightPlugin,
+} from "@singapore-editor/core";
 import type { Editor } from "@singapore-editor/core/editor";
+import { createPlugin } from "@singapore-editor/core/extensions";
 import "@singapore-editor/core/style.css";
 import { createEditorFindPlugin } from "@singapore-editor/find";
 import "@singapore-editor/find/style.css";
 import { createFoldGutterPlugin, createLineGutterPlugin } from "@singapore-editor/gutters";
 import { createHighlightingPlugin } from "@singapore-editor/highlighting";
+import { createTouchSelectionPlugin } from "@singapore-editor/plugin-ui/touch-selection-plugin";
 import { useEditor } from "@singapore-editor/react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FocusEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { debugHandle } from "../app/debug";
+import { ContextMenu, type MenuItem } from "../explorer/ContextMenu";
 import { useScope, useValue } from "../lib/react";
 import { untrack } from "../lib/reactive";
 import { STATUS_SLOT, type StatusItems } from "../workbench/slots";
@@ -19,6 +36,7 @@ import { isDetached, type Buffer } from "./buffers";
 import { EDITOR_COPY, fill } from "./copy";
 import { languageName, languageOf } from "./languages";
 import { mountEditorPlugins } from "./plugins";
+import { clampRestoredScroll } from "./scroll-position";
 import type { EditorStore, RevealRequest } from "./store";
 import { createColorScheme, editorTheme } from "./theme";
 
@@ -29,7 +47,14 @@ declare module "../app/debug" {
   }
 }
 
-const MONO = '"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+const MONO =
+  '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+
+const CURSOR_LINE_HIGHLIGHT = {
+  gutterNumber: true,
+  gutterBackground: ["fold-gutter"],
+  rowBackground: true,
+} as const;
 
 /** Fold markers are chevrons like the explorer's, down for an open region and right for a folded one. */
 const FOLD_OPEN = {
@@ -55,7 +80,19 @@ function useNarrow(): boolean {
   return narrow;
 }
 
-function createPlugins(narrow: boolean) {
+type InputCommandRunner = (command: "copy" | "cut" | "paste") => void | Promise<void>;
+
+function createClipboardBridgePlugin(onReady: (runner: InputCommandRunner | undefined) => void) {
+  return createPlugin({
+    name: "sprockt-clipboard",
+    view(scope) {
+      onReady((command) => scope.view.runInputCommand(command));
+      scope.onDispose(() => onReady(undefined));
+    },
+  });
+}
+
+function createPlugins(narrow: boolean, onClipboardReady: (runner: InputCommandRunner | undefined) => void) {
   return [
     createLineGutterPlugin(),
     // A phone has no room for a fold column; its markers are hidden there too (editor.css).
@@ -66,6 +103,11 @@ function createPlugins(narrow: boolean) {
     }),
     createHighlightingPlugin(),
     createEditorFindPlugin(),
+    createBracketMatchPlugin(),
+    createOccurrenceHighlightPlugin(),
+    createDocumentLinkPlugin(),
+    createTouchSelectionPlugin(),
+    createClipboardBridgePlugin(onClipboardReady),
   ];
 }
 
@@ -136,16 +178,22 @@ class SessionBinding {
     this.onShown(next);
   }
 
-  attach(instance: Editor, buffer: Buffer): void {
+  attach(instance: Editor, buffer: Buffer, hostHeight: number): void {
     const current = this.shown;
     if (current?.buffer === buffer && current.path === buffer.path) return;
     if (current) current.buffer.scroll = instance.getScrollPosition();
+    const savedScroll = buffer.scroll;
     instance.attachSession(buffer.session, {
       // A detached draft has no file, so no document id: language servers leave it alone.
       documentId: isDetached(buffer.path) ? null : `${PROJECT_ROOT}/${buffer.path}`,
       languageId: languageOf(buffer.path),
-      scrollPosition: buffer.scroll,
+      scrollPosition: savedScroll,
     });
+    // Clamp once against the attached document's real wrapped height so long wrapped lines keep their offset.
+    if (savedScroll?.top !== undefined) {
+      const clamped = clampRestoredScroll(savedScroll, instance.getContentHeight(), hostHeight);
+      if (clamped && clamped.top !== instance.getScrollPosition().top) instance.setScrollPosition(clamped);
+    }
     this.setShown({ buffer, path: buffer.path });
     this.refresh(instance);
     this.store.setDisplayed(buffer.path);
@@ -161,11 +209,11 @@ class SessionBinding {
     this.store.setDisplayed(undefined);
   }
 
-  async show(instance: Editor, path: string): Promise<void> {
+  async show(instance: Editor, path: string, hostHeight: number): Promise<void> {
     const buffer = await this.store.buffers.load(path);
     // The user may have moved on, or closed the tab, while the file was being read.
     if (this.store.active() !== path) return this.store.releaseClosed();
-    if (buffer) this.attach(instance, buffer);
+    if (buffer) this.attach(instance, buffer, hostHeight);
     else this.store.close(path);
   }
 
@@ -191,9 +239,16 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
   const active = useValue(store.active);
   const reveal = useValue(store.reveal);
   const theme = useMemo(() => editorTheme(scheme), [scheme]);
+  const runInputCommand = useRef<InputCommandRunner>(undefined);
   // Created once: a new array would make the editor replace its plugins.
-  const [plugins] = useState(() => createPlugins(narrow));
+  const [plugins] = useState(() =>
+    createPlugins(narrow, (runner) => {
+      runInputCommand.current = runner;
+    }),
+  );
   const [shown, setShown] = useState<Shown>();
+  const [menu, setMenu] = useState<{ x: number; y: number }>();
+  const hostEl = useRef<HTMLDivElement | null>(null);
   const [binding] = useState(() => new SessionBinding(store, workspace.status, setShown));
   const unmountPlugins = useRef<() => void>(undefined);
 
@@ -204,6 +259,8 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
     fontSize: 13,
     lineHeight: 20,
     gutterLeadingInset: 8,
+    scrollPastEnd: true,
+    cursorLineHighlight: CURSOR_LINE_HIGHLIGHT,
     wordWrap: narrow,
     wordWrapBreak: "word",
     // Once another tab owns the workspace, this tab can read but no longer write.
@@ -214,6 +271,19 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
   });
   const { ref } = controller;
   const editor = controller.useEditorInstance();
+
+  // Remeasure once JetBrains Mono Variable finishes loading so glyph widths match the rendered face.
+  useEffect(() => {
+    if (!editor || typeof document.fonts?.ready?.then !== "function") return;
+    let disposed = false;
+    void (async () => {
+      await document.fonts.ready;
+      if (!disposed) editor.setFontFamily(MONO);
+    })();
+    return () => {
+      disposed = true;
+    };
+  }, [editor]);
 
   // A layout effect, so its cleanup runs before the controller disposes the editor.
   useLayoutEffect(() => {
@@ -246,7 +316,7 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
   useEffect(() => {
     if (!editor) return;
     if (active === undefined) binding.detach(editor);
-    else void binding.show(editor, active);
+    else void binding.show(editor, active, hostEl.current?.clientHeight ?? 0);
   }, [binding, editor, active]);
 
   useEffect(() => {
@@ -272,5 +342,109 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
     void store.flushAutosave();
   };
 
-  return <div className="editor-host" data-testid="editor" ref={ref} onBlur={onFocusOut} />;
+  function openMenuAt(x: number, y: number): void {
+    if (!editor || !shown) return;
+    setMenu({ x, y });
+  }
+
+  function onContextMenu(event: ReactMouseEvent<HTMLDivElement>): void {
+    if (!editor || !shown) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openMenuAt(event.clientX, event.clientY);
+  }
+
+  function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+    if (!editor || !shown) return;
+    event.preventDefault();
+    const anchor = editor.getInputElement().getBoundingClientRect();
+    openMenuAt(anchor.left + 12, anchor.bottom + 4);
+  }
+
+  function editorMenuItems(): MenuItem[] {
+    if (!editor) return [];
+    const instance = editor;
+    const runClipboard = (command: "cut" | "copy" | "paste") => {
+      const runner = runInputCommand.current;
+      if (runner) void Promise.resolve(runner(command)).catch(() => {});
+      else instance.dispatchCommand(command);
+      instance.focus();
+    };
+    const items: MenuItem[] = [];
+    if (writable) {
+      items.push({
+        label: EDITOR_COPY.editorMenu.cut,
+        testId: "editor-menu-cut",
+        run: () => runClipboard("cut"),
+      });
+    }
+    items.push({
+      label: EDITOR_COPY.editorMenu.copy,
+      testId: "editor-menu-copy",
+      run: () => runClipboard("copy"),
+    });
+    if (writable) {
+      items.push({
+        label: EDITOR_COPY.editorMenu.paste,
+        testId: "editor-menu-paste",
+        run: () => runClipboard("paste"),
+      });
+    }
+    items.push(
+      {
+        label: EDITOR_COPY.editorMenu.selectAll,
+        testId: "editor-menu-select-all",
+        run: () => {
+          instance.dispatchCommand("selectAll");
+          instance.focus();
+        },
+      },
+      {
+        label: EDITOR_COPY.editorMenu.find,
+        testId: "editor-menu-find",
+        run: () => void instance.openFind(),
+      },
+      {
+        label: EDITOR_COPY.editorMenu.goToDefinition,
+        testId: "editor-menu-definition",
+        run: () => {
+          instance.dispatchCommand("editor.action.goToDefinition");
+          instance.focus();
+        },
+      },
+    );
+    return items;
+  }
+
+  const hostRef = (element: HTMLDivElement | null) => {
+    hostEl.current = element;
+    return ref(element);
+  };
+
+  return (
+    <>
+      <div
+        className="editor-host"
+        data-testid="editor"
+        ref={hostRef}
+        onBlur={onFocusOut}
+        onContextMenu={onContextMenu}
+        onKeyDown={onKeyDown}
+      />
+      {menu ? (
+        <ContextMenu
+          key={`${menu.x}:${menu.y}`}
+          x={menu.x}
+          y={menu.y}
+          label={EDITOR_COPY.editorMenu.label}
+          items={editorMenuItems()}
+          onClose={(escaped) => {
+            setMenu(undefined);
+            if (escaped) editor?.focus();
+          }}
+        />
+      ) : null}
+    </>
+  );
 }

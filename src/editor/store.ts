@@ -4,7 +4,8 @@
 import { createEffect, createSignal, on, onCleanup, type Accessor } from "../lib/reactive";
 import type { FileChange, FileService } from "../files/service";
 import { createAutosave, loadAutosaveSetting, storeAutosaveSetting } from "./autosave";
-import { createBufferSet, freeName, isDetached, originalPath, type BufferSet } from "./buffers";
+import { createBufferSet, freeName, isDetached, originalPath, type Buffer, type BufferSet } from "./buffers";
+import { EDITOR_COPY } from "./copy";
 import { loadTabs, saveTabs } from "./persist";
 import { createDraftKeeper } from "./recovery";
 import { closeTab, moveTab, openTab, pinTab, renamedPath, renameTabs, type EditorTab } from "./tabs";
@@ -35,6 +36,13 @@ export interface Conflict {
   readonly path: string;
   /** What the file holds now; undefined when it was deleted. */
   readonly diskText: string | undefined;
+}
+
+/** Confirmation dialog state for a staged batch of tabs awaiting close. */
+export interface PendingClose {
+  readonly paths: readonly string[];
+  readonly saving: boolean;
+  readonly error: string | undefined;
 }
 
 export interface MoveLock {
@@ -90,11 +98,16 @@ export interface EditorStore {
   /** Set by the editor view when it shows a file; nothing else calls it. */
   setDisplayed(path: string | undefined): void;
   readonly quickOpen: Accessor<boolean>;
-  setQuickOpen(open: boolean): void;
+  readonly quickOpenSeed: Accessor<string>;
+  setQuickOpen(open: boolean, seed?: string): void;
   readonly searchOpen: Accessor<boolean>;
   setSearchOpen(open: boolean): void;
   /** Bumped to ask the search panel to focus its query field. */
   readonly searchFocus: Accessor<number>;
+  /** Tabs awaiting save/discard confirmation before closing. */
+  readonly pendingClose: Accessor<PendingClose | undefined>;
+  requestClose(paths: readonly string[]): void;
+  resolvePendingClose(action: "save" | "discard" | "cancel"): Promise<void>;
 }
 
 export interface EditorWorkspace {
@@ -112,12 +125,65 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
   const [active, setActive] = createSignal<string | undefined>(saved.active);
   const [displayed, setDisplayed] = createSignal<string>();
   const [reveal, setReveal] = createSignal<RevealRequest>();
-  const [quickOpen, setQuickOpen] = createSignal(false);
+  const [quickOpen, setQuickOpenFlag] = createSignal(false);
+  const [quickOpenSeed, setQuickOpenSeed] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchFocus, setSearchFocus] = createSignal(0);
+  interface CloseTarget {
+    readonly tabToken: number;
+    readonly buffer: Buffer | undefined;
+    readonly dirty: boolean;
+  }
+  interface StagedClose {
+    readonly targets: readonly CloseTarget[];
+    readonly saving: boolean;
+    readonly error: string | undefined;
+  }
+  const [stagedClose, setStagedClose] = createSignal<StagedClose>();
+  let tabTokenSeq = 0;
+  const nextTabToken = () => (tabTokenSeq += 1);
+  const tabTokens = new Map<string, number>();
+  for (const tab of saved.tabs) tabTokens.set(tab.path, nextTabToken());
   let revealSeq = 0;
 
+  function syncTabTokens(nextTabs: readonly EditorTab[]): void {
+    const keep = new Set(nextTabs.map((tab) => tab.path));
+    for (const path of tabTokens.keys()) {
+      if (!keep.has(path)) tabTokens.delete(path);
+    }
+    for (const tab of nextTabs) {
+      if (!tabTokens.has(tab.path)) tabTokens.set(tab.path, nextTabToken());
+    }
+  }
+
+  function renameTabTokens(previous: readonly EditorTab[], from: string, to: string): void {
+    const incoming = new Map<string, number>();
+    for (const tab of previous) {
+      const moved = renamedPath(tab.path, from, to);
+      if (moved === tab.path) continue;
+      incoming.set(moved, tabTokens.get(tab.path) ?? nextTabToken());
+    }
+    const next = new Map<string, number>();
+    for (const tab of previous) {
+      const moved = renamedPath(tab.path, from, to);
+      if (next.has(moved)) continue;
+      const replaced = moved === tab.path && (moved === to || moved.startsWith(`${to}/`));
+      const token = replaced
+        ? (incoming.get(moved) ?? nextTabToken())
+        : (tabTokens.get(tab.path) ?? nextTabToken());
+      next.set(moved, token);
+    }
+    tabTokens.clear();
+    for (const [path, token] of next) tabTokens.set(path, token);
+  }
+
+  function setQuickOpen(open: boolean, seed = ""): void {
+    setQuickOpenSeed(open ? seed : "");
+    setQuickOpenFlag(open);
+  }
+
   function commit(nextTabs: readonly EditorTab[], nextActive: string | undefined): void {
+    syncTabTokens(nextTabs);
     setTabs(nextTabs);
     setActive(nextActive);
     saveTabs(workspace.id, { tabs: nextTabs, active: nextActive });
@@ -190,6 +256,11 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
   /** Moves a single tab, the file on screen and the selection from one exact path to another. */
   function retarget(from: string, to: string, current: string | undefined): string | undefined {
     const list = tabs();
+    const token = tabTokens.get(from);
+    if (token !== undefined) {
+      tabTokens.delete(from);
+      tabTokens.set(to, token);
+    }
     const nextTabs = list.some((tab) => tab.path === from)
       ? list.map((tab) => (tab.path === from ? { path: to, preview: false } : tab))
       : list.concat([{ path: to, preview: false }]);
@@ -224,7 +295,12 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     }
     drafts.renamed(from, to);
     const moved = displayed();
-    commit(renameTabs(tabs(), from, to), current === undefined ? undefined : renamedPath(current, from, to));
+    const previousTabs = tabs();
+    renameTabTokens(previousTabs, from, to);
+    commit(
+      renameTabs(previousTabs, from, to),
+      current === undefined ? undefined : renamedPath(current, from, to),
+    );
     if (moved !== undefined) setDisplayed(renamedPath(moved, from, to));
     // One path can split into two detached drafts (a pending write and newer edits), and this
     // tab's single recovery copy at that path belongs to only one of them. A fresh snapshot gives
@@ -351,6 +427,121 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     if (failed) throw failed.reason;
   }
 
+  function closeOne(path: string): void {
+    const wasDirty = buffers.get(path)?.dirty() ?? false;
+    const next = closeTab(tabs(), path, active());
+    commit(next.tabs, next.active);
+    buffers.release(path);
+    // Closing a dirty tab confirmed dropping its unsaved edits. Closing a clean tab whose
+    // save has not flushed yet keeps any recovery copy until that flush finishes.
+    if (wasDirty || !buffers.unsaved().has(path)) drafts.settled(path);
+  }
+
+  function pathForToken(token: number): string | undefined {
+    for (const [path, candidate] of tabTokens) {
+      if (candidate === token) return path;
+    }
+    return undefined;
+  }
+
+  function currentPathOf(target: CloseTarget): string | undefined {
+    const buffer = target.buffer;
+    if (buffer) return buffers.get(buffer.path) === buffer ? buffer.path : undefined;
+    const path = pathForToken(target.tabToken);
+    if (path === undefined) return undefined;
+    return buffers.get(path)?.dirty() ? undefined : path;
+  }
+
+  function requestClose(paths: readonly string[]): void {
+    if (paths.length === 0 || stagedClose() !== undefined) return;
+    const openSet = new Set(tabs().map((tab) => tab.path));
+    const targets: CloseTarget[] = [];
+    for (const path of new Set(paths)) {
+      if (!openSet.has(path)) continue;
+      const tabToken = tabTokens.get(path) ?? nextTabToken();
+      tabTokens.set(path, tabToken);
+      const buffer = buffers.get(path);
+      targets.push({ tabToken, buffer, dirty: buffer?.dirty() ?? false });
+    }
+    if (targets.length === 0) return;
+    if (!targets.some((target) => target.dirty)) {
+      for (const target of targets) {
+        const path = pathForToken(target.tabToken);
+        if (path !== undefined) closeOne(path);
+      }
+      return;
+    }
+    // Stage the full batch (clean + dirty) so Cancel leaves the entire tab set untouched.
+    setStagedClose({ targets, saving: false, error: undefined });
+  }
+
+  async function saveAndCloseTarget(target: CloseTarget): Promise<string | undefined> {
+    const buffer = target.buffer;
+    if (!buffer) {
+      const path = currentPathOf(target);
+      if (path !== undefined) closeOne(path);
+      return undefined;
+    }
+    if (buffers.get(buffer.path) !== buffer) return undefined;
+    if (buffer.dirty()) {
+      try {
+        await save(buffer.path);
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    }
+    // Re-check buffer identity after async save (saving a detached draft renames buffer.path in place).
+    if (buffers.get(buffer.path) !== buffer) return undefined;
+    if (buffer.dirty()) return EDITOR_COPY.externalChangeConflict;
+    closeOne(buffer.path);
+    return undefined;
+  }
+
+  async function resolvePendingClose(action: "save" | "discard" | "cancel"): Promise<void> {
+    const staged = stagedClose();
+    if (!staged || staged.saving) return;
+    if (action === "cancel") {
+      setStagedClose(undefined);
+      return;
+    }
+    if (action === "discard") {
+      setStagedClose(undefined);
+      for (const target of staged.targets) {
+        const path = currentPathOf(target);
+        if (path !== undefined) closeOne(path);
+      }
+      return;
+    }
+    setStagedClose({ ...staged, saving: true, error: undefined });
+    const remaining: CloseTarget[] = [];
+    let firstError: string | undefined;
+    for (const target of staged.targets) {
+      // oxlint-disable-next-line no-await-in-loop -- save and close each confirmed target in order
+      const error = await saveAndCloseTarget(target);
+      if (error === undefined) continue;
+      remaining.push(target);
+      firstError ??= error;
+    }
+    setStagedClose(
+      remaining.length > 0 ? { targets: remaining, saving: false, error: firstError } : undefined,
+    );
+  }
+
+  function pendingClose(): PendingClose | undefined {
+    const staged = stagedClose();
+    if (!staged) return undefined;
+    const dirtyPaths = staged.targets.flatMap((target) => {
+      if (!target.dirty || !target.buffer) return [];
+      return buffers.get(target.buffer.path) === target.buffer ? [target.buffer.path] : [];
+    });
+    const fallbackPaths = staged.targets.flatMap((target) => {
+      const path = target.buffer?.path ?? pathForToken(target.tabToken);
+      return path === undefined ? [] : [path];
+    });
+    const paths = dirtyPaths.length > 0 ? dirtyPaths : fallbackPaths;
+    return { paths, saving: staged.saving, error: staged.error };
+  }
+
   return {
     tabs,
     active,
@@ -362,9 +553,13 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     buffers,
     reveal,
     quickOpen,
+    quickOpenSeed,
     setQuickOpen,
     searchOpen,
     searchFocus,
+    pendingClose,
+    requestClose,
+    resolvePendingClose,
     save,
     saveAll,
     autosave: autosaveOn,
@@ -401,15 +596,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
       revealSeq += 1;
       setReveal({ path, line: options.line, column: options.column, seq: revealSeq });
     },
-    close(path) {
-      const wasDirty = buffers.get(path)?.dirty() ?? false;
-      const next = closeTab(tabs(), path, active());
-      commit(next.tabs, next.active);
-      buffers.release(path);
-      // Closing a dirty tab confirmed dropping its unsaved edits. Closing a clean tab whose
-      // save has not flushed yet keeps any recovery copy until that flush finishes.
-      if (wasDirty || !buffers.unsaved().has(path)) drafts.settled(path);
-    },
+    close: closeOne,
     move: (from, to) => commit(moveTab(tabs(), from, to), active()),
     pin,
     lockPaths,

@@ -2,13 +2,15 @@
 import { useValue } from "../lib/react";
 import { Icon, type IconName } from "../ui/icons";
 import { ui } from "./copy";
+import { focusPane } from "./focus";
 import { isOpen, setOpen, type Splitter } from "./layout";
 import type { LayoutStore } from "./layout-store";
+import type { PhonePane } from "./PaneSwitcher";
 
-const ITEMS: readonly { pane: Splitter; label: string; icon: IconName }[] = [
-  { pane: "explorer", label: ui.panels.explorer, icon: "files" },
-  { pane: "preview", label: ui.panels.preview, icon: "globe" },
-  { pane: "terminal", label: ui.panels.terminal, icon: "terminal" },
+const ITEMS: readonly { pane: Splitter; slot: PhonePane; label: string; icon: IconName }[] = [
+  { pane: "explorer", slot: "files", label: ui.panels.explorer, icon: "files" },
+  { pane: "preview", slot: "preview", label: ui.panels.preview, icon: "globe" },
+  { pane: "terminal", slot: "terminal", label: ui.panels.terminal, icon: "terminal" },
 ];
 
 export function ActivityBar(props: { layout: LayoutStore }) {
@@ -27,7 +29,11 @@ export function ActivityBar(props: { layout: LayoutStore }) {
             aria-pressed={open}
             data-pane={item.pane}
             data-testid={`toggle-${item.pane}`}
-            onClick={() => props.layout.set(setOpen(props.layout.layout(), item.pane, !open))}
+            onClick={() => {
+              const nextOpen = !open;
+              props.layout.set(setOpen(props.layout.layout(), item.pane, nextOpen));
+              queueMicrotask(() => focusPane(nextOpen ? item.slot : "code"));
+            }}
           >
             <Icon name={item.icon} />
           </button>

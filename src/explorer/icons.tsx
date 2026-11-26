@@ -29,8 +29,22 @@ const GLYPHS = {
   upload: { paths: ["M12 15V4.5M7.5 9 12 4.5 16.5 9", TRAY] },
   download: { paths: ["M12 4.5V15M7.5 10.5 12 15l4.5-4.5", TRAY] },
   more: { paths: ["M5.5 12h.01M12 12h.01M18.5 12h.01"] },
+  search: { paths: ["M11 4.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z", "m20 20-4.2-4.2"] },
+  close: { paths: ["M6.5 6.5l11 11M17.5 6.5l-11 11"] },
   // File kinds.
   file: { paths: [FILE, "M13.5 3.5v5h5"] },
+  test: {
+    paths: [
+      "M9.5 4.5h5M10.5 4.5v4.5l-4.8 8.2A1.5 1.5 0 0 0 7 19.5h10a1.5 1.5 0 0 0 1.3-2.3L13.5 9V4.5",
+      "M8.2 15h7.6",
+    ],
+  },
+  shell: {
+    paths: [
+      "M4.5 6A1.5 1.5 0 0 1 6 4.5h12A1.5 1.5 0 0 1 19.5 6v12a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 18z",
+      "m8 9.5 3 2.5-3 2.5M12.5 15H16",
+    ],
+  },
   typescript: {
     paths: [
       "M4.5 6A1.5 1.5 0 0 1 6 4.5h12A1.5 1.5 0 0 1 19.5 6v12a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 18z",
@@ -118,11 +132,13 @@ export const FILE_ICONS: Readonly<Record<FileIcon, IconName>> = {
   typescript: "typescript",
   javascript: "javascript",
   react: "react",
+  test: "test",
   braces: "braces",
   hash: "hash",
   markup: "markup",
   markdown: "markdown",
   lock: "lock",
   settings: "settings",
+  shell: "shell",
   image: "image",
 };

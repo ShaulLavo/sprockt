@@ -43,6 +43,9 @@ const OPEN_KEY: Readonly<Record<Splitter, "explorerOpen" | "previewOpen" | "term
   terminal: "terminalOpen",
 };
 
+export const GLOBAL_LAYOUT_KEY = "sprockt:layout:v1";
+
+/** Legacy per-workspace key, kept only for one-way migration into GLOBAL_LAYOUT_KEY. */
 export const layoutStorageKey = (workspaceId: string) => `sprockt:layout:${workspaceId}`;
 
 export function isOpen(layout: PaneLayout, splitter: Splitter): boolean {

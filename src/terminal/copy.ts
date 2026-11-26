@@ -13,4 +13,13 @@ export const ui = {
   expandPanel: "Expand terminal",
   terminalKeys: "Terminal keys",
   shellStopped: "Shell stopped unexpectedly.",
+  menu: {
+    label: "Terminal actions",
+    copy: "Copy",
+    paste: "Paste",
+    clear: "Clear",
+    split: "Split terminal",
+    close: "Close terminal",
+    pasteFallback: "Clipboard read blocked — press Ctrl+V or ⌘V to paste.",
+  },
 } as const;
