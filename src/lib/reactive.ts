@@ -74,8 +74,10 @@ class Node<T> extends Scope {
 
   read(): T {
     if (this.disposed && this.fn) return this.value;
-    if (listener && listener !== (this as Node<unknown>)) track(listener, this as Node<unknown>);
+    // Brought up to date before the reader subscribes, so its recomputation does not mark the
+    // reader, which is still running, dirty.
     if (this.fn) this.updateIfNecessary();
+    if (listener && listener !== (this as Node<unknown>)) track(listener, this as Node<unknown>);
     return this.value;
   }
 
@@ -323,6 +325,7 @@ export function createReaction(invalidate: () => void): {
       );
       current = node;
       node.update();
+      node.state = CLEAN;
       return result;
     },
     dispose: drop,
