@@ -13,8 +13,9 @@ import {
 import { Portal } from "solid-js/web";
 import type { FileService } from "../files/service";
 import { SEARCH_COPY } from "./copy";
+import { commandsOnly, matchCommands, type PaletteCommand } from "./commands";
 import { rankPaths, splitLocation, type FuzzyMatch } from "./fuzzy";
-import { FileIcon, Highlighted, SearchIcon } from "./icons";
+import { CommandIcon, FileIcon, Highlighted, SearchIcon } from "./icons";
 import "./search.css";
 
 const LIMIT = 50;
@@ -25,6 +26,43 @@ export interface QuickOpenProps {
   readonly recent: Accessor<readonly string[]>;
   readonly onOpen: (path: string, location: { line?: number; column?: number }) => void;
   readonly onClose: () => void;
+  /** Commands it finds too (commands.ts says when). */
+  readonly commands?: Accessor<readonly PaletteCommand[]>;
+}
+
+type Item =
+  | { readonly kind: "command"; readonly command: PaletteCommand }
+  | { readonly kind: "file"; readonly match: FuzzyMatch };
+
+function CommandRow(props: {
+  command: PaletteCommand;
+  selected: boolean;
+  onPick: () => void;
+  onHover: () => void;
+}) {
+  let element!: HTMLLIElement;
+  createEffect(() => {
+    if (props.selected) element.scrollIntoView({ block: "nearest" });
+  });
+  return (
+    <li
+      ref={(node) => (element = node)}
+      role="option"
+      class="quick-open-row"
+      classList={{ "is-selected": props.selected }}
+      aria-selected={props.selected}
+      data-testid="quick-open-command"
+      data-command={props.command.id}
+      onPointerMove={() => props.onHover()}
+      onClick={() => props.onPick()}
+    >
+      <CommandIcon />
+      <span class="quick-open-name">{props.command.label}</span>
+      <Show when={props.command.shortcut}>
+        <span class="quick-open-dir">{props.command.shortcut}</span>
+      </Show>
+    </li>
+  );
 }
 
 function emptyQueryResults(paths: readonly string[], recent: readonly string[]): FuzzyMatch[] {
@@ -98,9 +136,18 @@ function Dialog(props: QuickOpenProps) {
     }),
   );
   const location = createMemo(() => splitLocation(query()));
-  const results = createMemo(() => {
+  const files = createMemo(() => {
+    if (commandsOnly(query())) return [];
     const text = location().text;
     return text ? rankPaths(text, paths(), LIMIT) : emptyQueryResults(paths(), props.recent());
+  });
+  // Commands it finds come first: a phone reaches Save by typing "sav".
+  const results = createMemo(() => {
+    const commands: Item[] = matchCommands(query(), props.commands?.() ?? []).map((command) => ({
+      kind: "command",
+      command,
+    }));
+    return commands.concat(files().map((match): Item => ({ kind: "file", match })));
   });
   let input!: HTMLInputElement;
 
@@ -110,16 +157,17 @@ function Dialog(props: QuickOpenProps) {
   });
   onMount(() => input.focus());
 
-  function pick(match: FuzzyMatch | undefined): void {
-    if (!match) return;
+  function pick(item: Item | undefined): void {
+    if (!item) return;
     props.onClose();
-    props.onOpen(match.path, { line: location().line, column: location().column });
+    if (item.kind === "command") return item.command.run();
+    props.onOpen(item.match.path, { line: location().line, column: location().column });
   }
 
   function onKeyDown(event: KeyboardEvent): void {
     const count = results().length;
     if (event.key === "Escape") props.onClose();
-    else if (event.key === "Enter" && !listed) enterWaiting = true;
+    else if (event.key === "Enter" && !listed && !commandsOnly(query())) enterWaiting = true;
     else if (event.key === "Enter") pick(results()[selected()]);
     else if (event.key === "ArrowDown" && count > 0) setSelected((selected() + 1) % count);
     else if (event.key === "ArrowUp" && count > 0) setSelected((selected() - 1 + count) % count);
@@ -162,14 +210,23 @@ function Dialog(props: QuickOpenProps) {
           onPointerDown={(event) => event.preventDefault()}
         >
           <For each={results()} fallback={<li class="quick-open-empty">{SEARCH_COPY.noFileResults}</li>}>
-            {(match, index) => (
-              <Row
-                match={match}
-                selected={selected() === index()}
-                onPick={() => pick(match)}
-                onHover={() => setSelected(index())}
-              />
-            )}
+            {(item, index) =>
+              item.kind === "command" ? (
+                <CommandRow
+                  command={item.command}
+                  selected={selected() === index()}
+                  onPick={() => pick(item)}
+                  onHover={() => setSelected(index())}
+                />
+              ) : (
+                <Row
+                  match={item.match}
+                  selected={selected() === index()}
+                  onPick={() => pick(item)}
+                  onHover={() => setSelected(index())}
+                />
+              )
+            }
           </For>
         </ul>
       </div>

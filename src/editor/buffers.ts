@@ -160,6 +160,8 @@ type Files = Pick<FileService, "read" | "writeIfUnchanged" | "saved">;
 export interface BufferSetOptions {
   /** Hears about the first unsaved edit after each clean state: the editor pins previews. */
   readonly onEdit?: (path: string) => void;
+  /** Hears about every edit the person makes (not reloads from disk): autosave waits for a pause. */
+  readonly onChange?: (path: string) => void;
   /** Unsaved text another tab left behind for a file, applied when the file is opened. */
   readonly recover?: (path: string) => Draft | undefined;
   /** A file's saved text has reached storage: a copy left for recovery is no longer needed. */
@@ -227,7 +229,10 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       setMissing,
       unsubscribe: () => {},
     };
-    entry.unsubscribe = session.buffer.subscribe(() => refreshDirty(entry));
+    entry.unsubscribe = session.buffer.subscribe(() => {
+      refreshDirty(entry);
+      if (!entry.applying) options.onChange?.(entry.buffer.path);
+    });
     return entry;
   }
 

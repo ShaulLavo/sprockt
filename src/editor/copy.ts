@@ -13,6 +13,11 @@ export const EDITOR_COPY = {
   cursorPosition: "Ln {line}, Col {column}",
   savedDraftName: "{stem} (draft){extension}",
   savedDraftNameNumbered: "{stem} (draft {count}){extension}",
+  // Placeholders for the copywriter (not in copy/ui.json yet).
+  save: "Save",
+  saveAll: "Save all",
+  autosaveOff: "Turn off autosave",
+  autosaveOn: "Turn on autosave",
 } as const;
 
 export { fill } from "../search/copy";

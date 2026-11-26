@@ -3,6 +3,7 @@
 // drive the editor only through this store.
 import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-js";
 import type { FileChange, FileService } from "../files/service";
+import { createAutosave, loadAutosaveSetting, storeAutosaveSetting } from "./autosave";
 import { createBufferSet, freeName, isDetached, originalPath, type BufferSet } from "./buffers";
 import { loadTabs, saveTabs } from "./persist";
 import { discardRecovered, leaveForRecovery, recovered } from "./recovery";
@@ -68,6 +69,13 @@ export interface EditorStore {
   lockPaths(roots: readonly string[]): Promise<MoveLock>;
   /** Saves the file on screen, or `path` when given. Never the file merely selected. */
   save(path?: string): Promise<void>;
+  /** Saves every file with unsaved edits. A conflict stays a conflict. */
+  saveAll(): Promise<void>;
+  /** Whether autosave is on (the person's setting, kept in this browser). */
+  readonly autosave: Accessor<boolean>;
+  setAutosave(enabled: boolean): void;
+  /** Autosaves now rather than after the idle wait: the page was hidden or the editor lost focus. */
+  flushAutosave(): Promise<void>;
   /** Keeps the edits of the file on screen over the disk version, and saves them. */
   keepMine(): Promise<void>;
   /** Replaces the edits of the file on screen with what the file holds now. */
@@ -130,8 +138,22 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     commit(tabs().concat([{ path, preview: false }]), active());
   }
 
+  const [autosaveOn, setAutosaveOn] = createSignal(loadAutosaveSetting(localStorage));
+  const autosave = createAutosave({
+    buffers: {
+      paths: () => buffers.paths(),
+      get: (path) => buffers.get(path),
+      save: (path) => buffers.save(path),
+    },
+    enabled: autosaveOn,
+    writable: workspace.files.writable,
+    isDetached,
+    onError: (error) => console.error("Saving failed", error),
+  });
+
   const buffers = createBufferSet(workspace.files, {
     onEdit: edited,
+    onChange: () => autosave.edited(),
     // A copy another tab left stays until this tab's text for the file is durable.
     recover: (path) => recovered(localStorage, workspace.id, path),
     onDurable: (path) => discardRecovered(localStorage, workspace.id, path),
@@ -249,7 +271,21 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
   createEffect(() => {
     if (!workspace.files.writable()) leaveForRecovery(localStorage, workspace.id, buffers.unsaved());
   });
-  onCleanup(() => buffers.dispose());
+  // Showing another file autosaves the one that was on screen (and any other pending edit).
+  createEffect(on(displayed, () => void autosave.flush(), { defer: true }));
+  onCleanup(() => {
+    autosave.dispose();
+    buffers.dispose();
+  });
+
+  async function saveAll(): Promise<void> {
+    const saves = buffers.dirtyPaths().map((path) => save(path));
+    const outcomes = await Promise.allSettled(saves);
+    const failed = outcomes.find(
+      (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
+    );
+    if (failed) throw failed.reason;
+  }
 
   return {
     tabs,
@@ -266,6 +302,14 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     searchOpen,
     searchFocus,
     save,
+    saveAll,
+    autosave: autosaveOn,
+    setAutosave(enabled) {
+      setAutosaveOn(enabled);
+      storeAutosaveSetting(localStorage, enabled);
+      if (enabled) void autosave.flush();
+    },
+    flushAutosave: () => autosave.flush(),
     setSearchOpen(open) {
       setSearchOpen(open);
       if (open) setSearchFocus((value) => value + 1);

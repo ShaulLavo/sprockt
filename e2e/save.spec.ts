@@ -7,8 +7,12 @@ import {
   terminalText,
   test,
   typeInEditor,
+  withoutAutosave,
   writeFile,
 } from "./helpers";
+
+// These tests are about unsaved text and saving it by hand; autosave.spec.ts covers autosave.
+test.beforeEach(({ page }) => withoutAutosave(page));
 
 test("opening a file is not an edit; typing is, and saving writes it", async ({ page }) => {
   await newWorkspace(page);
