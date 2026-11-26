@@ -61,7 +61,7 @@ export interface Retirement {
 }
 
 /** What the deploy says: previews on, previews off, or no answer (offline, a server error). */
-export async function deployAllows(fetchMode: () => Promise<Response>): Promise<boolean | undefined> {
+async function deployAllows(fetchMode: () => Promise<Response>): Promise<boolean | undefined> {
   const response = await fetchMode().catch(() => undefined);
   if (!response || response.status >= 500) return undefined;
   if (!response.ok) return false;
@@ -70,6 +70,14 @@ export async function deployAllows(fetchMode: () => Promise<Response>): Promise<
   return (
     typeof body === "object" && body !== null && "previews" in body && body.previews === MOUNTED_MODE.previews
   );
+}
+
+/**
+ * Whether the deploy says yes, asked anew for every caller (fresh.ts). No answer is a no. For
+ * the tab that runs a server, which keeps live sockets under the deploy's word (tunnels.ts).
+ */
+export function freshDeployYes(fetchMode: () => Promise<Response>): () => Promise<boolean> {
+  return freshly(async () => (await deployAllows(fetchMode)) === true);
 }
 
 export function createRetirement(options: RetirementOptions): Retirement {

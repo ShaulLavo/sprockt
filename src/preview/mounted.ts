@@ -12,7 +12,6 @@ import { PreviewRouter } from "waffle/browser/preview";
 import type { PreviewMessage, PreviewReply } from "waffle/browser/preview-protocol";
 import { activated } from "waffle/browser/service-worker";
 import { isFrameMessage } from "./bridge";
-import { freshly } from "./fresh";
 import { askedWorkspace, hostAnnouncement, isHostQuery, isPreviewsOff } from "./host-protocol";
 import {
   mountedPath,
@@ -22,7 +21,7 @@ import {
   SERVICE_WORKER_PATH,
   workspaceMount,
 } from "./paths";
-import { deployAllows, retiredFlag } from "./retirement";
+import { freshDeployYes, retiredFlag } from "./retirement";
 import type { PreviewBackend, PreviewServer, PreviewTransport } from "./transport";
 import { createTunnels } from "./tunnels";
 
@@ -32,10 +31,6 @@ interface Registered {
   readonly guarded: PreviewBackend;
 }
 
-/** Whether the deploy says, now, that mounted previews may be served. No answer is a no. */
-const deploySaysYes = async (): Promise<boolean> =>
-  (await deployAllows(() => fetch(PREVIEW_MODE_PATH, { cache: "no-store" }))) === true;
-
 export function createMountedPreviewTransport(workspace: string): PreviewTransport {
   const origin = location.origin;
   const router = new PreviewRouter({ baseURL: origin, prefix: workspaceMount(workspace) });
@@ -43,8 +38,8 @@ export function createMountedPreviewTransport(workspace: string): PreviewTranspo
   const listeners = new Set<(servers: readonly PreviewServer[]) => void>();
   const container: ServiceWorkerContainer | undefined = navigator.serviceWorker;
   // Sockets outlive the worker's check at their start, so this tab keeps asking for them
-  // (tunnels.ts): nothing is passed on without a yes asked after it arrived.
-  const tunnels = createTunnels(freshly(deploySaysYes));
+  // (tunnels.ts): nothing is passed on without a yes from the deploy asked after it arrived.
+  const tunnels = createTunnels(freshDeployYes(() => fetch(PREVIEW_MODE_PATH, { cache: "no-store" })));
   let registration: ServiceWorkerRegistration | undefined;
   let ready: Promise<void> | undefined;
 
