@@ -710,3 +710,82 @@ test("a move whose source is not open still detaches a displaced open buffer wit
   expect(buffer?.session.materializeFullText()).toBe("unflushed old");
   recovered.dispose();
 });
+
+test("a clean open file replaced by a move from an unopened file keeps its buffer and saves edits", async () => {
+  const { store, disk, emit } = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  store.setAutosave(false);
+  store.open("target/a.txt");
+  const before = await store.buffers.load("target/a.txt");
+
+  // Delete target/a.txt through FileService, then move the unopened src/a.txt onto it.
+  disk.delete("target/a.txt");
+  emit({ removed: ["target/a.txt"] });
+  disk.set("target/a.txt", "replacement");
+  disk.delete("src/a.txt");
+  emit({ moves: [{ from: "src/a.txt", to: "target/a.txt", operation: 1 }] });
+  await tick();
+  await store.buffers.sync();
+
+  // The editor still shows the same session: it stays registered and follows the new file.
+  const after = store.buffers.get("target/a.txt");
+  expect(after).toBe(before);
+  expect(after?.session.materializeFullText()).toBe("replacement");
+  expect(after?.dirty()).toBe(false);
+  expect(store.tabs().filter((tab) => isDetached(tab.path))).toHaveLength(0);
+
+  // Typing into the mounted session is saved and recorded on page hide.
+  type(store, "target/a.txt", "typed ");
+  await store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+  await store.save("target/a.txt");
+  expect(disk.get("target/a.txt")).toBe("typed replacement");
+});
+
+test("a reopened replacement never takes over an older pending write at its path", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+
+  // Save with the flush held, close the tab, replace the file through the shell and reopen it.
+  type(first.store, "target/a.txt", "unflushed ");
+  await first.store.save("target/a.txt");
+  first.store.close("target/a.txt");
+  first.disk.set("target/a.txt", "shell");
+  first.store.open("target/a.txt");
+  const replacement = await first.store.buffers.load("target/a.txt");
+  expect(replacement?.session.materializeFullText()).toBe("shell");
+
+  // Delete the replacement through the shell and let sync run; the old flush fails.
+  first.disk.delete("target/a.txt");
+  await first.store.buffers.sync();
+  expect(replacement?.dirty()).toBe(false);
+  first.flushes.shift()?.reject(new Error("flush failed"));
+  await tick();
+
+  // Move an unopened file into the vacated path.
+  first.disk.set("target/a.txt", "replacement");
+  first.disk.delete("src/a.txt");
+  first.emit({ moves: [{ from: "src/a.txt", to: "target/a.txt", operation: 1 }] });
+  await tick();
+  await first.store.buffers.sync();
+
+  // The original edit is set aside on its own tab; the open tab follows the new file.
+  const aside = first.store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+  expect(first.store.buffers.get(aside as string)?.session.materializeFullText()).toBe("unflushed old");
+  expect(first.store.buffers.get("target/a.txt")).toBe(replacement);
+  expect(replacement?.session.materializeFullText()).toBe("replacement");
+  expect(replacement?.dirty()).toBe(false);
+
+  await first.store.pageHidden();
+  first.dispose();
+  const recovered = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  const buffer = await recovered.store.buffers.load(aside as string);
+  expect(buffer?.session.materializeFullText()).toBe("unflushed old");
+  expect(first.disk.get("target/a.txt")).toBe("replacement");
+  recovered.dispose();
+});

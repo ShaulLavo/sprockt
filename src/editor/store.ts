@@ -217,7 +217,8 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     let current = active();
     for (const aside of displaced) {
       drafts.renamed(aside.from, aside.to);
-      current = retarget(aside.from, aside.to, current);
+      if (aside.buffer) current = retarget(aside.from, aside.to, current);
+      else commit(tabs().concat([{ path: aside.to, preview: false }]), current);
     }
     drafts.renamed(from, to);
     const moved = displayed();

@@ -61,6 +61,11 @@ export interface PathLock {
 export interface Displacement {
   readonly from: string;
   readonly to: string;
+  /**
+   * True when the buffer open at `from` moved aside (its tab follows it); false when only a pending
+   * write that no open buffer holds was set aside (it gets a tab of its own).
+   */
+  readonly buffer: boolean;
 }
 
 /** `dir/a.txt` becomes `dir/a (draft).txt`, then `dir/a (draft 2).txt`, until one is free. */
@@ -297,8 +302,10 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       return entry.setConflict(undefined);
     }
     // Storage moved away from a save it never confirmed: the save may be lost, so the buffer's
-    // text stays, unsaved, instead of being replaced by what storage came back with.
-    if (undurable.has(path)) setUnconfirmed(entry, true);
+    // text stays, unsaved, instead of being replaced by what storage came back with. Only a buffer
+    // in step with that save holds it; a buffer opened on later text at the path does not.
+    const pending = undurable.get(path);
+    if (pending && holds(entry, pending)) setUnconfirmed(entry, true);
     if (text === undefined) return markGone(entry);
     entry.setMissing(false);
     const current = entry.buffer.session.materializeFullText();
@@ -306,7 +313,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     entry.setConflict({ diskText: text });
   }
 
-  function detachBuffer(entry: Entry, target: string): Displacement {
+  function detachBuffer(entry: Entry, target: string, buffer: boolean): Displacement {
     let aside = detachedKey(target);
     while (entries.has(aside)) aside = detachedKey(target);
     entry.buffer.path = aside;
@@ -314,42 +321,52 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     markGone(entry);
     entry.setDirty(true);
     entries.set(aside, entry);
-    return { from: target, to: aside };
+    return { from: target, to: aside, buffer };
   }
 
-  function displaceTarget(target: string): Displacement | undefined {
+  /**
+   * The buffer holds the pending write: it wrote it, or was opened on it, so its text is that write
+   * or edits made on top of it. A buffer marked unconfirmed already took the write over (its file
+   * may since be gone). A buffer opened on text that replaced the write does not hold it.
+   */
+  const holds = (entry: Entry, pending: UndurableRecord) =>
+    entry.unconfirmed || entry.disk === pending.draft.text;
+
+  /**
+   * What gives way at one replaced path. A pending write no open buffer holds is set aside on its
+   * own. An unsaved buffer, or one holding the pending write, moves aside with its tab. A clean
+   * buffer is let go only when a moving buffer takes the path; otherwise it stays open there (the
+   * editor may be showing it) and the sync after the move loads the new file into it.
+   */
+  function displaceTarget(target: string, arriving: boolean): Displacement[] {
     const occupant = entries.get(target);
     const pending = undurable.get(target);
     undurable.delete(target);
-    if (!occupant) {
-      if (!pending) return undefined;
-      return detachBuffer(create(target, pending.draft.text), target);
+    const held = occupant !== undefined && pending !== undefined && holds(occupant, pending);
+    const displaced: Displacement[] = [];
+    if (pending && !held) displaced.push(detachBuffer(create(target, pending.draft.text), target, false));
+    if (!occupant) return displaced;
+    if (occupant.buffer.dirty() || held) {
+      entries.delete(target);
+      displaced.push(detachBuffer(occupant, target, true));
+      return displaced;
     }
+    if (!arriving) return displaced;
     entries.delete(target);
-    if (!occupant.buffer.dirty() && !pending) {
-      occupant.unsubscribe();
-      return undefined;
-    }
-    if (!occupant.buffer.dirty() && pending) replaceText(occupant, pending.draft.text);
-    return detachBuffer(occupant, target);
+    occupant.unsubscribe();
+    return displaced;
   }
 
   /**
    * Before buffers move onto paths, any buffer or pending undurable write already at a destination
-   * gives way: a clean, durable buffer is let go (its file was replaced), while an unsaved buffer
-   * or an unflushed write is detached to a key no file can open at so no draft is dropped.
+   * gives way (see `displaceTarget`), so no draft and no unflushed write is dropped.
    */
-  function makeRoom(from: string, to: string): Displacement[] {
+  function makeRoom(from: string, to: string, arriving: ReadonlySet<string>): Displacement[] {
     const replaced = (path: string) => isSameOrInside(path, to) && !isSameOrInside(path, from);
     const targets = new Set<string>();
     for (const path of entries.keys()) if (replaced(path)) targets.add(path);
     for (const path of undurable.keys()) if (replaced(path)) targets.add(path);
-    const displaced: Displacement[] = [];
-    for (const target of targets) {
-      const aside = displaceTarget(target);
-      if (aside) displaced.push(aside);
-    }
-    return displaced;
+    return Array.from(targets).flatMap((target) => displaceTarget(target, arriving.has(target)));
   }
 
   /** A deleted file stays open, marked, with any unsaved text; saving writes it again. */
@@ -633,7 +650,8 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       const moved = Array.from(entries.values()).filter(
         (entry) => renamedPath(entry.buffer.path, from, to) !== entry.buffer.path,
       );
-      const displaced = makeRoom(from, to);
+      const arriving = new Set(moved.map((entry) => renamedPath(entry.buffer.path, from, to)));
+      const displaced = makeRoom(from, to, arriving);
       renameUndurable(from, to);
       for (const entry of moved) entries.delete(entry.buffer.path);
       for (const entry of moved) {
