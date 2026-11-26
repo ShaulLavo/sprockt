@@ -877,3 +877,50 @@ test("a recovered draft set aside with its pending write never comes back over a
   expect(reopened?.dirty()).toBe(false);
   tab.dispose();
 });
+
+test("saving a set-aside draft recovered from this tab keeps the incoming file's recovery copy", async () => {
+  const first = setUpStore({ "target/a.txt": "base", "src/a.txt": "incoming" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+
+  // Save with the flush held, leave a copy on page hide, close the clean file.
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+  type(first.store, "target/a.txt", "first ");
+  await first.store.save("target/a.txt");
+  await first.store.pageHidden();
+  first.store.close("target/a.txt");
+
+  // The file returns to its base text; reopening recovers this tab's own copy; save and close.
+  first.disk.set("target/a.txt", "base");
+  first.store.open("target/a.txt");
+  const again = await first.store.buffers.load("target/a.txt");
+  expect(again?.session.materializeFullText()).toBe("first base");
+  await first.store.save("target/a.txt");
+  first.store.close("target/a.txt");
+
+  // Another file with unsaved edits moves onto the path.
+  first.store.open("src/a.txt");
+  await first.store.buffers.load("src/a.txt");
+  type(first.store, "src/a.txt", "edited ");
+  first.disk.set("target/a.txt", "incoming");
+  first.disk.delete("src/a.txt");
+  first.emit({ moves: [{ from: "src/a.txt", to: "target/a.txt", operation: 1 }] });
+  await tick();
+  const aside = first.store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+
+  // Saving the set-aside draft durably must not delete the incoming edit's copy.
+  first.releaseFlushes();
+  await first.store.save(aside as string);
+  await tick();
+  await tick();
+  first.dispose();
+
+  const reloaded = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  const buffer = await reloaded.store.buffers.load("target/a.txt");
+  expect(buffer?.session.materializeFullText()).toBe("edited incoming");
+  reloaded.dispose();
+});

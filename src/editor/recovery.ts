@@ -233,7 +233,12 @@ export function createDraftKeeper(options: DraftKeeperOptions): DraftKeeper {
       const live = await liveTabs(options.locks);
       const picked = pickRecovered(left, (owner) => owner !== tab && live.has(owner));
       if (!picked) return undefined;
-      taken.set(path, { keys: picked.keys, version });
+      // This tab's own key is managed by `ownVersions` (and rewritten by every `leave`); only
+      // other tabs' keys are taken, so settling a taken draft never deletes this tab's newer copy.
+      const own = draftKey(workspace, path, tab);
+      const others = picked.keys.filter((key) => key !== own);
+      if (others.length < picked.keys.length && !ownVersions.has(path)) ownVersions.set(path, version);
+      if (others.length > 0) taken.set(path, { keys: others, version });
       return picked.draft;
     },
     async recoverablePaths(match) {
