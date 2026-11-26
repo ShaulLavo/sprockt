@@ -344,21 +344,27 @@ where the bytes live.
    in bun-wasm's `web/src` and `sandbox/src`. Slice 5 builds on Waffle's public
    `waffle/browser/preview` and ports the rest; an export from bun-wasm would replace the
    path imports.
-5. **Waffle has no conditional or confined file operation.** Two FileService rules are a check
-   followed by an operation, with a gap between them: `writeIfUnchanged` (read, compare,
-   write) and the project boundary (resolve, then read or write). Both need Waffle to do it
-   in one step: a write that fails unless the file still holds the expected bytes, and
-   operations that refuse to leave a given root. The fix belongs in Waffle. The explorer's
-   operations have the same gap, with the same root cause:
-   - Rename and drag-move look at the destination just before `move`, but Waffle's rename
-     replaces what is there, so a name taken in the instants between the two is overwritten. It
-     needs a rename that refuses to replace. (`create` is exclusive and has no such gap.)
+5. **Waffle has no conditional or confined file operation.** Several FileService rules are a
+   check followed by an operation: `writeIfUnchanged` (read, compare, write), create, move and
+   rename (destination free, then write or rename), and the project boundary (resolve, then
+   read or write). Across tabs, FileService makes each check-and-act one step with a Web Lock
+   per path (`files/path-locks.ts`, `sprockt:<id>:path:<absolute path>`; a move takes both
+   names, in sorted order), so two editors' saves or two tabs' moves to one name cannot both
+   succeed. Programs in a terminal do not take these locks, and a link swapped in between the
+   boundary check and the operation is still not caught. Closing both needs Waffle to do it in
+   one step: a write that fails unless the file still holds the expected bytes, a rename that
+   refuses to replace, and operations that refuse to leave a given root.
    - Upload, listing and move resolve the path again inside the operation after the boundary
-     check, so a link changed in between can lead somewhere else. It needs operations bound to a
-     root.
+     check, so a link changed in between can lead somewhere else.
    - Waffle returns a failed change to its caller and keeps the same error to throw at the next
      flush. FileService retries a flush that throws an error its own operation already reported,
      and lets any other error fail the save state; Waffle should report a failure once.
+6. **A save is unsaved until storage holds it.** Waffle acknowledges a write from memory. If its
+   flush fails, or the files come back from storage (a hosting tab closed) without it, the
+   editor keeps the buffer's text as unsaved and shows a conflict against what storage holds,
+   instead of reloading the older text. A flush that the new hosting tab answers before the
+   editor sees the files change can still hide a lost save; Waffle would have to report that
+   its storage changed hands.
 
 ## Parallel work map
 

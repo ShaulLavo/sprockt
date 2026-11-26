@@ -4,6 +4,7 @@
 import type { Accessor } from "solid-js";
 import type { Runtime } from "waffle";
 import type { SaveState } from "./persistence";
+import { pathLocksFor } from "./path-locks";
 import { createProjectFiles, type ProjectFiles } from "./project-files";
 import type { DirEntry } from "./tree";
 import { createSizeLookup } from "./size";
@@ -69,8 +70,9 @@ export interface FileService {
   write(path: string, content: string | Uint8Array): Promise<void>;
   /**
    * Writes only when the file still holds `expected` (undefined: still does not exist), so an
-   * edit made meanwhile by the shell or another tab is not overwritten unseen. The check and
-   * the write are two steps, not one atomic step: Waffle has no conditional write yet.
+   * edit made meanwhile by the shell or another tab is not overwritten unseen. Waffle has no
+   * conditional write yet, so the check and the write hold the file's lock (`path-locks.ts`):
+   * no FileService write from any tab lands between them. A terminal program still can.
    */
   writeIfUnchanged(path: string, content: string, expected: string | undefined): Promise<WriteOutcome>;
   /** Writes a whole file set, such as a template or an imported repository. */
@@ -88,7 +90,8 @@ export interface FileService {
    * Moves or renames a file or directory. Throws `DestinationExistsError` when the destination
    * exists, and `MoveIntoItselfError` for a destination inside the source, before anything is
    * changed. Waffle has no rename that refuses to replace, so the destination is checked just
-   * before the rename; a name taken in the instants between the two can still be replaced.
+   * before the rename while both names are locked against every other tab's FileService; only a
+   * program in a terminal taking the name in between can still be replaced.
    */
   move(from: string, to: string): Promise<void>;
   /**
@@ -115,10 +118,11 @@ export interface FileService {
   dispose(): void;
 }
 
-export function createFileService(runtime: Runtime): ProjectFiles {
+export function createFileService(runtime: Runtime, workspaceId: string): ProjectFiles {
   return createProjectFiles(
     runtime.filesystem,
     (onChange) => watchFilesystem(runtime, onChange),
     createSizeLookup(runtime),
+    pathLocksFor(workspaceId),
   );
 }

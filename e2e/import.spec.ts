@@ -322,8 +322,16 @@ test("imports a small real public repository through the proxy code", async ({ p
   const proxy = createGitHubProxy();
   const probe = await proxy(new Request("https://sprockt.dev/api/github/repo/octocat/Hello-World"));
   test.skip(probe.status === 429, "GitHub's unauthenticated API limit is used up on this machine");
+  // GitHub's unauthenticated limit is shared by every job on a CI runner's address, and it can
+  // run out partway through the import. That, or GitHub failing, is not a Sprockt failure.
+  const trouble: string[] = [];
   await page.route("**/api/github/**", async (route) => {
-    const response = await proxy(new Request(route.request().url()));
+    const response = await proxy(new Request(route.request().url())).catch((error: unknown) => {
+      trouble.push(`network error: ${String(error)}`);
+      return undefined;
+    });
+    if (!response) return route.abort();
+    if (response.status === 429 || response.status >= 500) trouble.push(`HTTP ${response.status}`);
     await route.fulfill({
       status: response.status,
       headers: Object.fromEntries(response.headers),
@@ -331,6 +339,10 @@ test("imports a small real public repository through the proxy code", async ({ p
     });
   });
   await page.goto("/github/octocat/Hello-World");
+  await expect
+    .poll(() => trouble.length > 0 || /\/w\/[a-z0-9]+$/.test(new URL(page.url()).pathname))
+    .toBe(true);
+  test.skip(trouble.length > 0, `GitHub did not serve the import: ${trouble.join(", ")}`);
   await expectWorkspace(page);
   await expect(page.getByTestId("file-tree")).toContainText("README");
   expect(await workspaceMeta(page)).toMatchObject({ source: { owner: "octocat", repo: "Hello-World" } });

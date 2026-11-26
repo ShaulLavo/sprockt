@@ -38,7 +38,7 @@ export async function openWorkspace(
     options,
   );
   const preview = createInactivePreviewTransport();
-  const files = createFileService(booted.runtime);
+  const files = createFileService(booted.runtime, booted.id);
   const terminals = createTerminalStore();
   // Revoking saves first leaves the editor's unsaved text for the new owner; then this tab's
   // shells stop and its runtime goes, so nothing here keeps running against storage it lost.

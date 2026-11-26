@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { ProjectPathError } from "../workspace/paths";
+import { localPathLocks } from "./path-locks";
 import { createProjectFiles, type ProjectFilesystem, type ResolvedEntry } from "./project-files";
 
 interface Setup {
@@ -319,4 +320,49 @@ test("after the workspace moved to another tab every write is refused", async ()
   await expect(service.write("a.txt", "late")).rejects.toThrow("another tab");
   await expect(service.saved()).rejects.toThrow("another tab");
   expect(memory.files.size).toBe(0);
+});
+
+/** The same filesystem with reads and renames slowed down, so two operations interleave as tabs do. */
+const later = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+function slowed(filesystem: ProjectFilesystem): ProjectFilesystem {
+  return {
+    ...filesystem,
+    readFile: async (path) => (await later(), filesystem.readFile(path)),
+    resolvePath: async (path) => (await later(), filesystem.resolvePath(path)),
+    move: async (from, to) => (await later(), filesystem.move(from, to)),
+  };
+}
+
+test("of two overlapping conditional saves from two tabs, the second sees the first", async () => {
+  const memory = memoryFilesystem({ files: { "/workspace/shared.txt": "base\n" } });
+  const locks = localPathLocks();
+  // Two tabs: two services on one filesystem, sharing the workspace's locks.
+  const first = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+  const second = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+
+  const outcomes = await Promise.all([
+    first.writeIfUnchanged("shared.txt", "base\nfirst tab", "base\n"),
+    second.writeIfUnchanged("shared.txt", "base\nsecond tab", "base\n"),
+  ]);
+
+  expect(outcomes.filter((outcome) => outcome.written)).toHaveLength(1);
+  const refused = outcomes.find((outcome) => !outcome.written);
+  expect(refused).toEqual({ written: false, current: memory.text("/workspace/shared.txt") });
+});
+
+test("of two overlapping moves to one free name, the second fails and keeps its source", async () => {
+  const memory = memoryFilesystem({
+    files: { "/workspace/a.txt": "first payload", "/workspace/b.txt": "second payload" },
+  });
+  const locks = localPathLocks();
+  const first = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+  const second = createProjectFiles(slowed(memory.filesystem), noWatch, undefined, locks);
+
+  const moves = await Promise.allSettled([first.move("a.txt", "out.txt"), second.move("b.txt", "out.txt")]);
+
+  expect(moves.map((move) => move.status).toSorted()).toEqual(["fulfilled", "rejected"]);
+  const lost = moves[0].status === "rejected" ? "/workspace/a.txt" : "/workspace/b.txt";
+  expect(memory.files.has(lost)).toBe(true);
+  expect([memory.text("/workspace/out.txt")]).not.toContain(memory.text(lost));
 });

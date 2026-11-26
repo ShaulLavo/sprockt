@@ -137,6 +137,12 @@ interface Entry {
   /** The text a running save is writing; while set, "dirty" compares against it instead. */
   inflight: PieceTableSnapshot | undefined;
   saving: number;
+  /**
+   * A save of this text was acknowledged, but storage may not hold it: its flush failed, or the
+   * files came back from storage (another tab hosting them now) without it. The buffer stays
+   * unsaved until a later save of it is durable.
+   */
+  unconfirmed: boolean;
   /** True while we edit the buffer ourselves, so a reload is not mistaken for typing. */
   applying: boolean;
   setDirty(dirty: boolean): void;
@@ -182,6 +188,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
    * Cheap in the usual cases: equal snapshots, a different length or a shared tree answer at once.
    */
   function isUnsaved(entry: Entry): boolean {
+    if (entry.unconfirmed) return true;
     const current = entry.buffer.session.getSnapshot();
     // Clean only when the text is on disk and no running save is about to replace it with
     // something else: a write is not counted until it has succeeded.
@@ -209,6 +216,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       persisted: session.getSnapshot(),
       inflight: undefined,
       saving: 0,
+      unconfirmed: false,
       applying: false,
       setDirty,
       setConflict,
@@ -235,6 +243,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     replaceText(entry, text ?? "");
     entry.persisted = entry.buffer.session.getSnapshot();
     entry.disk = text;
+    entry.unconfirmed = false;
     entry.setConflict(undefined);
     entry.setMissing(text === undefined);
     refreshDirty(entry);
@@ -257,6 +266,9 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       entry.setMissing(text === undefined);
       return entry.setConflict(undefined);
     }
+    // Storage moved away from a save it never confirmed: the save may be lost, so the buffer's
+    // text stays, unsaved, instead of being replaced by what storage came back with.
+    if (undurable.has(path)) setUnconfirmed(entry, true);
     if (text === undefined) return markGone(entry);
     entry.setMissing(false);
     const current = entry.buffer.session.materializeFullText();
@@ -333,17 +345,28 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
    */
   const undurable = new Map<string, Draft>();
 
+  function setUnconfirmed(entry: Entry, unconfirmed: boolean): void {
+    entry.unconfirmed = unconfirmed;
+    refreshDirty(entry);
+  }
+
   async function untilDurable(path: string, written: Draft): Promise<void> {
     const draft = { text: written.text, baseText: undurable.get(path)?.baseText ?? written.baseText };
     undurable.set(path, draft);
-    try {
-      await files.saved();
-    } catch {
-      return; // The flush failed: the text stays recoverable.
-    }
+    const durable = await files.saved().then(
+      () => true,
+      () => false,
+    );
     // A later save of the same path may have replaced the record; it settles itself.
     if (undurable.get(path) !== draft) return;
+    const entry = entries.get(path);
+    // The flush failed: the text stays recoverable, and its buffer unsaved.
+    if (!durable) {
+      if (entry && entry.disk === written.text) setUnconfirmed(entry, true);
+      return;
+    }
     undurable.delete(path);
+    if (entry && entry.disk === written.text) setUnconfirmed(entry, false);
     options.onDurable?.(path);
   }
 
@@ -510,6 +533,8 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       if (!entry?.buffer.conflict()) return;
       const text = await files.read(entry.buffer.path);
       if (!live(entry)) return;
+      // The person chose the file over this tab's text, an unconfirmed save of it included.
+      undurable.delete(entry.buffer.path);
       if (text !== undefined) return adopt(entry, text);
       // The file is gone: there is nothing to reload, so the draft stays, marked deleted.
       markGone(entry);

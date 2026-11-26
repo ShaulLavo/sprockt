@@ -12,6 +12,7 @@ import {
 } from "../workspace/paths";
 import { DestinationExistsError, MoveIntoItselfError } from "./errors";
 import { isSameOrInside, joinPath, rebase, safeRelativePath } from "./paths";
+import { localPathLocks, type PathLocks } from "./path-locks";
 import { createPersistence, type SaveState } from "./persistence";
 import type { DirEntry, FileChange, FileService, UploadItem, UploadResult, WriteOutcome } from "./service";
 import { isHeavyPath, sortEntries, toProjectPath } from "./tree";
@@ -125,11 +126,15 @@ async function confirmInside(lookup: Lookup, absolute: string, through: boolean)
 /**
  * `sizeOf` measures a file at an absolute path without reading it; without one, `size` reads the
  * file (in-memory filesystems in tests).
+ *
+ * `locks` makes each check-and-act one step across the tabs attached to the workspace (see
+ * `path-locks.ts`); the default only orders operations within this page.
  */
 export function createProjectFiles(
   filesystem: ProjectFilesystem,
   watch: WatchFiles,
   sizeOf?: SizeLookup,
+  locks: PathLocks = localPathLocks(),
 ): ProjectFiles {
   const [revision, setRevision] = createSignal(0);
   const [saveState, setSaveState] = createSignal<SaveState>("saved");
@@ -240,6 +245,10 @@ export function createProjectFiles(
     await filesystem.writeFile(absolute, content);
   }
 
+  /** A write that waits for any other tab's check-and-act on the same file. */
+  const writeLocked = (confine: ReturnType<typeof confiner>, path: string, content: string | Uint8Array) =>
+    locks.hold([projectPath(path)], () => writeConfined(confine, path, content));
+
   async function readConfined(path: string): Promise<Uint8Array | undefined> {
     const absolute = projectPath(path);
     await confiner()(absolute, true);
@@ -304,7 +313,7 @@ export function createProjectFiles(
           // The bytes are read first and the links checked afterwards, with a fresh check per
           // entry: the check must describe the filesystem as it is when the write happens.
           const bytes = data && new Uint8Array(await data.arrayBuffer());
-          if (bytes) return writeConfined(confiner(), path, bytes);
+          if (bytes) return writeLocked(confiner(), path, bytes);
           const absolute = projectPath(path);
           await confiner()(absolute, true);
           await filesystem.mkdirp(absolute);
@@ -355,20 +364,26 @@ export function createProjectFiles(
       if (sizeOf) return sizeOf.size(absolute);
       return (await filesystem.readFile(absolute))?.length;
     },
-    write: (path, content) => mutate(() => writeConfined(confiner(), path, content), [path]),
+    write: (path, content) => mutate(() => writeLocked(confiner(), path, content), [path]),
+    // The read, the comparison and the write hold the file's lock together, so a save in another
+    // tab cannot land between them: the second of two overlapping saves sees the first and fails.
     writeIfUnchanged: (path, content, expected) =>
-      mutate(async (): Promise<WriteOutcome> => {
-        const current = await readText(path);
-        if (current !== expected) return { written: false, current };
-        if (expected !== undefined) {
-          await writeConfined(confiner(), path, content);
-          return { written: true };
-        }
-        // Expected absent: create it exclusively, so a file that appears between the check and
-        // the write (the shell, another tab) is reported as a conflict, never replaced.
-        if (await writeExclusive(path, content)) return { written: true };
-        return { written: false, current: await pastReported(() => readText(path)) };
-      }, [path]),
+      mutate(
+        () =>
+          locks.hold([projectPath(path)], async (): Promise<WriteOutcome> => {
+            const current = await readText(path);
+            if (current !== expected) return { written: false, current };
+            if (expected !== undefined) {
+              await writeConfined(confiner(), path, content);
+              return { written: true };
+            }
+            // Expected absent: create it exclusively, so a file that appears between the check and
+            // the write (the shell, another tab) is reported as a conflict, never replaced.
+            if (await writeExclusive(path, content)) return { written: true };
+            return { written: false, current: await pastReported(() => readText(path)) };
+          }),
+        [path],
+      ),
     async writeMany(files) {
       const entries = Object.entries(files);
       // Every path is checked before the first byte is written: a bad entry writes nothing.
@@ -378,7 +393,7 @@ export function createProjectFiles(
         async () => {
           // Links are checked for the whole set first, for the same reason.
           await Promise.all(entries.map(([path]) => confine(projectPath(path), true)));
-          await Promise.all(entries.map(([path, content]) => writeConfined(confine, path, content)));
+          await Promise.all(entries.map(([path, content]) => writeLocked(confine, path, content)));
         },
         entries.map(([path]) => path),
       );
@@ -390,51 +405,59 @@ export function createProjectFiles(
         await filesystem.mkdirp(absolute);
       }, [path]),
     create: (path, content = "") =>
-      mutate(async () => {
-        if (!(await writeExclusive(path, content))) throw new DestinationExistsError(path);
-      }, [path]),
-    remove: (path) =>
       mutate(
-        async (effects) => {
-          const absolute = projectPath(path);
-          // The entry itself is removed, link or not; only the way to it must stay inside.
-          await confiner()(absolute, false);
-          // Listed before the removal: afterwards there is nothing left to list.
-          const inside = await filesInside(absolute);
-          await filesystem.remove(absolute);
-          effects.removed.push(path, ...inside);
-        },
+        () =>
+          locks.hold([projectPath(path)], async () => {
+            if (!(await writeExclusive(path, content))) throw new DestinationExistsError(path);
+          }),
         [path],
       ),
+    remove: (path) =>
+      mutate(
+        (effects) =>
+          locks.hold([projectPath(path)], async () => {
+            const absolute = projectPath(path);
+            // The entry itself is removed, link or not; only the way to it must stay inside.
+            await confiner()(absolute, false);
+            // Listed before the removal: afterwards there is nothing left to list.
+            const inside = await filesInside(absolute);
+            await filesystem.remove(absolute);
+            effects.removed.push(path, ...inside);
+          }),
+        [path],
+      ),
+    // Both names are held while the destination is checked and the rename runs, so of two moves
+    // to one free name the second finds it taken and leaves its source where it was.
     move: (from, to) =>
       mutate(
-        async (effects) => {
-          const source = projectPath(from);
-          const destination = projectPath(to);
-          // Refused before anything is created: a folder cannot go inside itself.
-          if (isSameOrInside(to, from)) throw new MoveIntoItselfError(from, to);
-          const confine = confiner();
-          await Promise.all([confine(source, false), confine(destination, false)]);
-          if (!(await found(source))) throw new Error(`"${from}" does not exist`);
-          const inside = await filesInside(source);
-          await filesystem.mkdirp(parentOf(destination));
-          // The last look before the rename: Waffle's rename would replace what is there.
-          if (await found(destination)) throw new DestinationExistsError(to);
-          try {
-            await filesystem.move(source, destination);
-          } catch (error) {
-            remember(error);
-            throw error;
-          }
-          // One operation id for the folder and every file listed with it: a reader applies the
-          // operation once, and can tell it apart from a later move between the same paths.
-          moveOperations += 1;
-          const operation = moveOperations;
-          effects.moves.push(
-            { from, to, operation },
-            ...inside.map((file) => ({ from: file, to: rebase(file, from, to), operation })),
-          );
-        },
+        (effects) =>
+          locks.hold([projectPath(from), projectPath(to)], async () => {
+            const source = projectPath(from);
+            const destination = projectPath(to);
+            // Refused before anything is created: a folder cannot go inside itself.
+            if (isSameOrInside(to, from)) throw new MoveIntoItselfError(from, to);
+            const confine = confiner();
+            await Promise.all([confine(source, false), confine(destination, false)]);
+            if (!(await found(source))) throw new Error(`"${from}" does not exist`);
+            const inside = await filesInside(source);
+            await filesystem.mkdirp(parentOf(destination));
+            // The last look before the rename: Waffle's rename would replace what is there.
+            if (await found(destination)) throw new DestinationExistsError(to);
+            try {
+              await filesystem.move(source, destination);
+            } catch (error) {
+              remember(error);
+              throw error;
+            }
+            // One operation id for the folder and every file listed with it: a reader applies the
+            // operation once, and can tell it apart from a later move between the same paths.
+            moveOperations += 1;
+            const operation = moveOperations;
+            effects.moves.push(
+              { from, to, operation },
+              ...inside.map((file) => ({ from: file, to: rebase(file, from, to), operation })),
+            );
+          }),
         [from, to],
       ),
     upload: (items, directory) => upload(items, directory),
