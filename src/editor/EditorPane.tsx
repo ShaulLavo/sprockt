@@ -283,9 +283,11 @@ export function EditorPane(props: { store: EditorStore }) {
         onClose={() => store.setQuickOpen(false)}
         commands={commands}
       />
-      {pendingClose && pendingClose.length > 0 ? (
+      {pendingClose && pendingClose.paths.length > 0 ? (
         <UnsavedChangesDialog
-          paths={pendingClose}
+          paths={pendingClose.paths}
+          saving={pendingClose.saving}
+          error={pendingClose.error}
           onSave={() => void store.resolvePendingClose("save").catch(reportSaveError)}
           onDiscard={() => void store.resolvePendingClose("discard")}
           onCancel={() => void store.resolvePendingClose("cancel")}

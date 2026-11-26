@@ -35,6 +35,8 @@ export interface EntryRow {
   readonly ancestorPaths: readonly string[];
   /** Present when consecutive single-child directories are compacted onto one row. */
   readonly segments?: readonly FolderSegment[];
+  /** True for ancestor directories shown only for context in a filtered tree. */
+  readonly contextOnly?: boolean;
 }
 
 /** The inline box for a new file or folder, shown at the top of its parent directory. */
@@ -219,6 +221,7 @@ export function filterRows(allPaths: readonly string[], query: string, listings:
         loading: false,
         editing: false,
         ancestorPaths: ancestors,
+        contextOnly: isDir && !child.path.toLowerCase().includes(needle) ? true : undefined,
       });
       if (isDir) walk(child.path, depth + 1, ancestors.concat([child.path]));
     }

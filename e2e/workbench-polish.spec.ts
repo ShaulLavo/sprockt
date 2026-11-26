@@ -106,8 +106,17 @@ test("explorer compacts single-child folders, shows indent guides, and supports 
   await expect(buttonRow).toBeVisible();
   await expect(page.locator('[data-testid="tree-row"][data-path="README.md"]')).toHaveCount(0);
 
-  await filterInput.press("Escape");
+  // Select All in a filtered tree selects matching files, never context-only ancestor folders.
+  await buttonRow.focus();
+  await pressMod(page, "Mod+a");
+  await expect(page.locator('[data-testid="tree-row"][data-path="src"]')).not.toHaveClass(/is-selected/);
+  await expect(buttonRow).toHaveClass(/is-selected/);
+
+  // Starting rename (F2) while filtered clears the filter and reveals the inline name box.
+  await page.keyboard.press("F2");
   await expect(page.getByTestId("tree-filter")).toHaveCount(0);
+  await expect(page.getByTestId("tree-input")).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(page.locator('[data-testid="tree-row"][data-path="README.md"]')).toBeVisible();
 });
 

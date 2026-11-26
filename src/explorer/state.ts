@@ -206,9 +206,11 @@ export function createExplorerState(options: ExplorerOptions) {
   }
 
   function kindOf(path: string): "file" | "directory" | undefined {
-    return listings()
+    const listed = listings()
       .get(parentOf(path))
       ?.find((entry) => entry.name === baseName(path))?.kind;
+    if (listed) return listed;
+    return entries().find((row) => row.path === path)?.kind;
   }
 
   function dropListings(directory: string): void {
@@ -359,7 +361,10 @@ export function createExplorerState(options: ExplorerOptions) {
       return;
     }
     if (how === "range" && anchor) {
-      setSelected(new Set(rangeBetween(entries(), anchor, path)));
+      const list = entries();
+      const contextOnly = new Set(list.filter((row) => row.contextOnly).map((row) => row.path));
+      const range = rangeBetween(list, anchor, path).filter((candidate) => !contextOnly.has(candidate));
+      setSelected(new Set(range.length > 0 ? range : [path]));
       return;
     }
     setSelected(new Set([path]));
@@ -367,7 +372,9 @@ export function createExplorerState(options: ExplorerOptions) {
   }
 
   function selectAll(): void {
-    const all = entries().map((row) => row.path);
+    const all = entries()
+      .filter((row) => !row.contextOnly)
+      .map((row) => row.path);
     if (all.length === 0) return;
     setSelected(new Set(all));
     anchor = all[0];
@@ -411,6 +418,7 @@ export function createExplorerState(options: ExplorerOptions) {
     if (!files.writable()) return;
     takeOver();
     const parent = directory ?? currentTarget().directory;
+    if (filterOpen()) closeFilter();
     setProblem(undefined);
     await expand(parent);
     setDraft({ mode: "create", kind, parent });
@@ -419,7 +427,13 @@ export function createExplorerState(options: ExplorerOptions) {
   function beginRename(path: string): void {
     if (!files.writable()) return;
     takeOver();
+    if (filterOpen()) closeFilter();
     setProblem(undefined);
+    const parent = parentOf(path);
+    if (parent !== "" && !expanded().has(parent)) {
+      void expand(parent).then(() => setDraft({ mode: "rename", path }));
+      return;
+    }
     setDraft({ mode: "rename", path });
   }
 
@@ -478,7 +492,10 @@ export function createExplorerState(options: ExplorerOptions) {
 
   async function requestDelete(paths: readonly string[]): Promise<void> {
     if (!files.writable()) return;
-    const doomed = topLevelPaths(paths);
+    const filtered = filterOpen() && filterQuery().trim().length > 0;
+    const visible = filtered ? new Set(entries().map((row) => row.path)) : undefined;
+    const scoped = visible ? paths.filter((path) => visible.has(path)) : paths;
+    const doomed = topLevelPaths(scoped);
     if (doomed.length === 0) return;
     setDeleting(doomed);
   }

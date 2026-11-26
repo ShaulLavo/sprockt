@@ -268,8 +268,9 @@ function createPanes(session: WorkspaceSession, frame: FrameState): PaneScope {
     }),
   );
 
-  // Workbench-wide pane shortcuts in capture phase so they work from every pane including the terminal.
-  const onWorkbenchKeyDown = createMultiHotkeyHandler({
+  // Workbench-wide pane shortcuts in capture phase so they work from every pane including the terminal,
+  // while leaving bare Ctrl+B and Ctrl+J with Ghostty on Linux/Windows so bash/readline keeps them.
+  const handleWorkbenchKey = createMultiHotkeyHandler({
     "Mod+B": () => togglePane("explorer", "files"),
     "Mod+J": () => togglePane("terminal", "terminal"),
     "Control+`": () => togglePane("terminal", "terminal"),
@@ -278,6 +279,20 @@ function createPanes(session: WorkspaceSession, frame: FrameState): PaneScope {
     "Mod+2": () => showOrFocus("preview"),
     "Mod+3": () => showOrFocus("terminal"),
   });
+  const onWorkbenchKeyDown = (event: KeyboardEvent) => {
+    const key = event.key.toLowerCase();
+    const isShellCtrlChord =
+      !mac &&
+      event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      (key === "b" || key === "j");
+    const inTerminal =
+      event.target instanceof Element && event.target.closest(".term-view, [data-slot='terminal']") !== null;
+    if (isShellCtrlChord && inTerminal) return;
+    handleWorkbenchKey(event);
+  };
   window.addEventListener("keydown", onWorkbenchKeyDown, true);
   onCleanup(() => window.removeEventListener("keydown", onWorkbenchKeyDown, true));
   createEffect(

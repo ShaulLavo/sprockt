@@ -1,5 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { parseTerminalFileLinks } from "./links";
+import { parseTerminalFileLinks, safeExternalUrl } from "./links";
+
+describe("safeExternalUrl", () => {
+  test("allows http and https URLs and rejects non-web schemes", () => {
+    expect(safeExternalUrl("https://sprockt.dev/docs?a=1")).toBe("https://sprockt.dev/docs?a=1");
+    expect(safeExternalUrl("http://localhost:5173/")).toBe("http://localhost:5173/");
+    expect(safeExternalUrl("javascript:alert(1)")).toBeUndefined();
+    expect(safeExternalUrl("data:text/html,<h1>hi</h1>")).toBeUndefined();
+    expect(safeExternalUrl("file:///etc/passwd")).toBeUndefined();
+    expect(safeExternalUrl("mailto:test@example.com")).toBeUndefined();
+    expect(safeExternalUrl("not a url")).toBeUndefined();
+  });
+});
 
 describe("parseTerminalFileLinks", () => {
   test("parses relative, dotted, and workspace-absolute paths with line and column", () => {

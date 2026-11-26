@@ -115,6 +115,17 @@ export function parseTerminalFileLinks(text: string): ParsedTerminalLink[] {
   return results;
 }
 
+/** Parses a terminal-supplied URI (OSC 8 or detected URL) and allows only http: or https: URLs. */
+export function safeExternalUrl(uri: string): string | undefined {
+  try {
+    const parsed = new URL(uri);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+    return parsed.href;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface WorkspaceLinkProviderOptions {
   exists(path: string): Promise<boolean>;
   openFile(path: string, location?: { readonly line?: number; readonly column?: number }): void;

@@ -4,7 +4,7 @@ import { Terminal, type TerminalAppearanceOptions } from "ghostty-webgpu";
 import { attachTerminalHotkeys } from "ghostty-webgpu/hotkeys";
 import type { Runtime } from "waffle";
 import type { ShellSettings } from "../runtime/boot";
-import { createWorkspaceLinkProvider } from "./links";
+import { createWorkspaceLinkProvider, safeExternalUrl } from "./links";
 import { getSharedGhosttyRuntime } from "./runtime";
 import { terminalFont } from "./theme";
 
@@ -182,7 +182,8 @@ export async function startTerminal(start: TerminalStart): Promise<TerminalHandl
     padding: PADDING,
     links: {
       activateUri: (uri) => {
-        window.open(uri, "_blank", "noopener,noreferrer");
+        const safe = safeExternalUrl(uri);
+        if (safe) window.open(safe, "_blank", "noopener,noreferrer");
       },
     },
     runtime: {

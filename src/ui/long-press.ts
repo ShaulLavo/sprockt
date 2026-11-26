@@ -6,6 +6,7 @@ import { useEffect, type RefObject } from "react";
 const LONG_PRESS_MS = 550;
 const MOVE_TOLERANCE_PX = 10;
 const NATIVE_DEDUP_MS = 700;
+const CLICK_SUPPRESS_AFTER_UP_MS = 350;
 
 function isSelectableTextTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
@@ -14,18 +15,31 @@ function isSelectableTextTarget(target: EventTarget | null): boolean {
   return style.userSelect === "text" || style.webkitUserSelect === "text";
 }
 
+function isSameGestureTarget(origin: Element, candidate: EventTarget | null): boolean {
+  return candidate instanceof Node && (origin.contains(candidate) || candidate.contains(origin));
+}
+
 export function useLongPressContextMenu(rootRef: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
 
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let suppressTimer: ReturnType<typeof setTimeout> | undefined;
     let startX = 0;
     let startY = 0;
     let pressTarget: Element | null = null;
     let pointerId: number | undefined;
-    let suppressNextClick = false;
+    let suppressedTarget: Element | null = null;
+    let suppressedPointerId: number | undefined;
     let lastSynthesizedAt = 0;
+
+    function clearSuppression(): void {
+      clearTimeout(suppressTimer);
+      suppressTimer = undefined;
+      suppressedTarget = null;
+      suppressedPointerId = undefined;
+    }
 
     function cancel(): void {
       clearTimeout(timer);
@@ -35,6 +49,8 @@ export function useLongPressContextMenu(rootRef: RefObject<HTMLElement | null>):
     }
 
     function onPointerDown(event: PointerEvent): void {
+      // A new pointer interaction starts a new gesture: never swallow clicks belonging to it.
+      clearSuppression();
       if (event.pointerType !== "touch" || !event.isPrimary) return;
       if (isSelectableTextTarget(event.target)) return;
       const target = event.target instanceof Element ? event.target : null;
@@ -46,20 +62,23 @@ export function useLongPressContextMenu(rootRef: RefObject<HTMLElement | null>):
       pointerId = event.pointerId;
       timer = setTimeout(() => {
         timer = undefined;
-        if (!pressTarget || !pressTarget.isConnected) return;
-        suppressNextClick = true;
-        lastSynthesizedAt = Date.now();
-        pressTarget.dispatchEvent(
-          new MouseEvent("contextmenu", {
-            bubbles: true,
-            cancelable: true,
-            clientX: startX,
-            clientY: startY,
-            button: 2,
-          }),
-        );
+        const targetEl = pressTarget;
+        const activePointer = pointerId;
         pressTarget = null;
         pointerId = undefined;
+        if (!targetEl || !targetEl.isConnected) return;
+        const menuEvent = new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: startX,
+          clientY: startY,
+          button: 2,
+        });
+        const accepted = !targetEl.dispatchEvent(menuEvent);
+        if (!accepted) return;
+        lastSynthesizedAt = Date.now();
+        suppressedTarget = targetEl;
+        suppressedPointerId = activePointer;
       }, LONG_PRESS_MS);
     }
 
@@ -70,11 +89,17 @@ export function useLongPressContextMenu(rootRef: RefObject<HTMLElement | null>):
 
     function onPointerEnd(event: PointerEvent): void {
       if (pointerId !== undefined && event.pointerId === pointerId) cancel();
+      if (suppressedPointerId !== undefined && event.pointerId === suppressedPointerId) {
+        clearTimeout(suppressTimer);
+        suppressTimer = setTimeout(clearSuppression, CLICK_SUPPRESS_AFTER_UP_MS);
+      }
     }
 
     function onClickCapture(event: MouseEvent): void {
-      if (!suppressNextClick) return;
-      suppressNextClick = false;
+      if (!suppressedTarget) return;
+      const matches = isSameGestureTarget(suppressedTarget, event.target);
+      clearSuppression();
+      if (!matches) return;
       event.preventDefault();
       event.stopPropagation();
     }
@@ -95,6 +120,7 @@ export function useLongPressContextMenu(rootRef: RefObject<HTMLElement | null>):
     root.addEventListener("contextmenu", onContextMenuCapture, true);
     return () => {
       cancel();
+      clearSuppression();
       root.removeEventListener("pointerdown", onPointerDown, true);
       root.removeEventListener("pointermove", onPointerMove, true);
       root.removeEventListener("pointerup", onPointerEnd, true);

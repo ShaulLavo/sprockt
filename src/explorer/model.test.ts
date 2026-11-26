@@ -158,12 +158,18 @@ test("splitFilename preserves simple and compound extensions for middle truncati
   expect(splitFilename("Makefile")).toEqual({ stem: "Makefile", ext: "" });
 });
 
-test("filterRows keeps matching files and their expanded ancestor folders", () => {
+test("filterRows keeps matching files and marks context-only ancestor folders", () => {
   const filtered = filterRows(["src/app/Button.tsx", "src/main.ts", "README.md"], "button", listings);
-  expect(filtered.map((row) => `${row.depth}:${row.path}`)).toEqual([
-    "0:src",
-    "1:src/app",
-    "2:src/app/Button.tsx",
+  expect(filtered.map((row) => `${row.depth}:${row.path}:${row.contextOnly ? "ctx" : "match"}`)).toEqual([
+    "0:src:ctx",
+    "1:src/app:ctx",
+    "2:src/app/Button.tsx:match",
+  ]);
+  const folderMatch = filterRows(["src/app/Button.tsx"], "app", listings);
+  expect(folderMatch.map((row) => `${row.path}:${row.contextOnly ? "ctx" : "match"}`)).toEqual([
+    "src:ctx",
+    "src/app:match",
+    "src/app/Button.tsx:match",
   ]);
 });
 

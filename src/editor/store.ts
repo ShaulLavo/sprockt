@@ -4,7 +4,8 @@
 import { createEffect, createSignal, on, onCleanup, type Accessor } from "../lib/reactive";
 import type { FileChange, FileService } from "../files/service";
 import { createAutosave, loadAutosaveSetting, storeAutosaveSetting } from "./autosave";
-import { createBufferSet, freeName, isDetached, originalPath, type BufferSet } from "./buffers";
+import { createBufferSet, freeName, isDetached, originalPath, type Buffer, type BufferSet } from "./buffers";
+import { EDITOR_COPY } from "./copy";
 import { loadTabs, saveTabs } from "./persist";
 import { createDraftKeeper } from "./recovery";
 import { closeTab, moveTab, openTab, pinTab, renamedPath, renameTabs, type EditorTab } from "./tabs";
@@ -35,6 +36,13 @@ export interface Conflict {
   readonly path: string;
   /** What the file holds now; undefined when it was deleted. */
   readonly diskText: string | undefined;
+}
+
+/** Confirmation dialog state for a staged batch of tabs awaiting close. */
+export interface PendingClose {
+  readonly paths: readonly string[];
+  readonly saving: boolean;
+  readonly error: string | undefined;
 }
 
 export interface MoveLock {
@@ -97,7 +105,7 @@ export interface EditorStore {
   /** Bumped to ask the search panel to focus its query field. */
   readonly searchFocus: Accessor<number>;
   /** Tabs awaiting save/discard confirmation before closing. */
-  readonly pendingClose: Accessor<readonly string[] | undefined>;
+  readonly pendingClose: Accessor<PendingClose | undefined>;
   requestClose(paths: readonly string[]): void;
   resolvePendingClose(action: "save" | "discard" | "cancel"): Promise<void>;
 }
@@ -121,7 +129,17 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
   const [quickOpenSeed, setQuickOpenSeed] = createSignal("");
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchFocus, setSearchFocus] = createSignal(0);
-  const [pendingClose, setPendingClose] = createSignal<readonly string[]>();
+  interface CloseTarget {
+    readonly initialPath: string;
+    readonly buffer: Buffer | undefined;
+    readonly dirty: boolean;
+  }
+  interface StagedClose {
+    readonly targets: readonly CloseTarget[];
+    readonly saving: boolean;
+    readonly error: string | undefined;
+  }
+  const [stagedClose, setStagedClose] = createSignal<StagedClose>();
   let revealSeq = 0;
 
   function setQuickOpen(open: boolean, seed = ""): void {
@@ -373,30 +391,95 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     if (wasDirty || !buffers.unsaved().has(path)) drafts.settled(path);
   }
 
+  function currentPathOf(target: CloseTarget): string | undefined {
+    const buffer = target.buffer;
+    if (buffer) return buffers.get(buffer.path) === buffer ? buffer.path : undefined;
+    if (!tabs().some((tab) => tab.path === target.initialPath)) return undefined;
+    return buffers.get(target.initialPath)?.dirty() ? undefined : target.initialPath;
+  }
+
   function requestClose(paths: readonly string[]): void {
     if (paths.length === 0) return;
-    const dirty: string[] = [];
-    for (const path of paths) {
-      if (buffers.dirtyPaths().includes(path)) dirty.push(path);
-      else closeOne(path);
+    const openSet = new Set(tabs().map((tab) => tab.path));
+    const targets: CloseTarget[] = [];
+    for (const path of new Set(paths)) {
+      if (!openSet.has(path)) continue;
+      const buffer = buffers.get(path);
+      targets.push({ initialPath: path, buffer, dirty: buffer?.dirty() ?? false });
     }
-    if (dirty.length > 0) setPendingClose(dirty);
+    if (targets.length === 0) return;
+    if (!targets.some((target) => target.dirty)) {
+      for (const target of targets) closeOne(target.initialPath);
+      return;
+    }
+    // Stage the full batch (clean + dirty) so Cancel leaves the entire tab set untouched.
+    setStagedClose({ targets, saving: false, error: undefined });
+  }
+
+  async function saveAndCloseTarget(target: CloseTarget): Promise<string | undefined> {
+    const buffer = target.buffer;
+    if (!buffer) {
+      const path = currentPathOf(target);
+      if (path !== undefined) closeOne(path);
+      return undefined;
+    }
+    if (buffers.get(buffer.path) !== buffer) return undefined;
+    if (buffer.dirty()) {
+      try {
+        await save(buffer.path);
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    }
+    // Re-check buffer identity after async save (saving a detached draft renames buffer.path in place).
+    if (buffers.get(buffer.path) !== buffer) return undefined;
+    if (buffer.dirty()) return EDITOR_COPY.externalChangeConflict;
+    closeOne(buffer.path);
+    return undefined;
   }
 
   async function resolvePendingClose(action: "save" | "discard" | "cancel"): Promise<void> {
-    const paths = pendingClose();
-    setPendingClose(undefined);
-    if (!paths || paths.length === 0 || action === "cancel") return;
-    if (action === "save") {
-      for (const path of paths) {
-        // oxlint-disable-next-line no-await-in-loop -- save each confirmed tab before closing it
-        await save(path);
-        // Only close tabs whose save cleared the dirty flag (a conflict leaves it open).
-        if (!buffers.dirtyPaths().includes(path)) closeOne(path);
+    const staged = stagedClose();
+    if (!staged || staged.saving) return;
+    if (action === "cancel") {
+      setStagedClose(undefined);
+      return;
+    }
+    if (action === "discard") {
+      setStagedClose(undefined);
+      for (const target of staged.targets) {
+        const path = currentPathOf(target);
+        if (path !== undefined) closeOne(path);
       }
       return;
     }
-    for (const path of paths) closeOne(path);
+    setStagedClose({ ...staged, saving: true, error: undefined });
+    const remaining: CloseTarget[] = [];
+    let firstError: string | undefined;
+    for (const target of staged.targets) {
+      // oxlint-disable-next-line no-await-in-loop -- save and close each confirmed target in order
+      const error = await saveAndCloseTarget(target);
+      if (error === undefined) continue;
+      remaining.push(target);
+      firstError ??= error;
+    }
+    setStagedClose(
+      remaining.length > 0 ? { targets: remaining, saving: false, error: firstError } : undefined,
+    );
+  }
+
+  function pendingClose(): PendingClose | undefined {
+    const staged = stagedClose();
+    if (!staged) return undefined;
+    const dirtyPaths = staged.targets.flatMap((target) => {
+      if (!target.dirty || !target.buffer) return [];
+      return buffers.get(target.buffer.path) === target.buffer ? [target.buffer.path] : [];
+    });
+    const paths =
+      dirtyPaths.length > 0
+        ? dirtyPaths
+        : staged.targets.map((target) => target.buffer?.path ?? target.initialPath);
+    return { paths, saving: staged.saving, error: staged.error };
   }
 
   return {

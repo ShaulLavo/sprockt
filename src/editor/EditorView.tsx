@@ -6,6 +6,7 @@ import {
   createOccurrenceHighlightPlugin,
 } from "@singapore-editor/core";
 import type { Editor } from "@singapore-editor/core/editor";
+import { createPlugin } from "@singapore-editor/core/extensions";
 import "@singapore-editor/core/style.css";
 import { createEditorFindPlugin } from "@singapore-editor/find";
 import "@singapore-editor/find/style.css";
@@ -79,7 +80,19 @@ function useNarrow(): boolean {
   return narrow;
 }
 
-function createPlugins(narrow: boolean) {
+type InputCommandRunner = (command: "copy" | "cut" | "paste") => void | Promise<void>;
+
+function createClipboardBridgePlugin(onReady: (runner: InputCommandRunner | undefined) => void) {
+  return createPlugin({
+    name: "sprockt-clipboard",
+    view(scope) {
+      onReady((command) => scope.view.runInputCommand(command));
+      scope.onDispose(() => onReady(undefined));
+    },
+  });
+}
+
+function createPlugins(narrow: boolean, onClipboardReady: (runner: InputCommandRunner | undefined) => void) {
   return [
     createLineGutterPlugin(),
     // A phone has no room for a fold column; its markers are hidden there too (editor.css).
@@ -94,6 +107,7 @@ function createPlugins(narrow: boolean) {
     createOccurrenceHighlightPlugin(),
     createDocumentLinkPlugin(),
     createTouchSelectionPlugin(),
+    createClipboardBridgePlugin(onClipboardReady),
   ];
 }
 
@@ -168,17 +182,17 @@ class SessionBinding {
     const current = this.shown;
     if (current?.buffer === buffer && current.path === buffer.path) return;
     if (current) current.buffer.scroll = instance.getScrollPosition();
-    const estimatedHeight = buffer.session.getTextSnapshot().lineCount * 20;
-    const restoredScroll = clampRestoredScroll(buffer.scroll, estimatedHeight, hostHeight);
+    const savedScroll = buffer.scroll;
     instance.attachSession(buffer.session, {
       // A detached draft has no file, so no document id: language servers leave it alone.
       documentId: isDetached(buffer.path) ? null : `${PROJECT_ROOT}/${buffer.path}`,
       languageId: languageOf(buffer.path),
-      scrollPosition: restoredScroll,
+      scrollPosition: savedScroll,
     });
-    if (restoredScroll?.top !== undefined) {
-      const clamped = clampRestoredScroll(restoredScroll, instance.getContentHeight(), hostHeight);
-      if (clamped && clamped.top !== restoredScroll.top) instance.setScrollPosition(clamped);
+    // Clamp once against the attached document's real wrapped height so long wrapped lines keep their offset.
+    if (savedScroll?.top !== undefined) {
+      const clamped = clampRestoredScroll(savedScroll, instance.getContentHeight(), hostHeight);
+      if (clamped && clamped.top !== instance.getScrollPosition().top) instance.setScrollPosition(clamped);
     }
     this.setShown({ buffer, path: buffer.path });
     this.refresh(instance);
@@ -225,8 +239,13 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
   const active = useValue(store.active);
   const reveal = useValue(store.reveal);
   const theme = useMemo(() => editorTheme(scheme), [scheme]);
+  const runInputCommand = useRef<InputCommandRunner>(undefined);
   // Created once: a new array would make the editor replace its plugins.
-  const [plugins] = useState(() => createPlugins(narrow));
+  const [plugins] = useState(() =>
+    createPlugins(narrow, (runner) => {
+      runInputCommand.current = runner;
+    }),
+  );
   const [shown, setShown] = useState<Shown>();
   const [menu, setMenu] = useState<{ x: number; y: number }>();
   const hostEl = useRef<HTMLDivElement | null>(null);
@@ -346,47 +365,30 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
   function editorMenuItems(): MenuItem[] {
     if (!editor) return [];
     const instance = editor;
-    const pasteFromClipboard = () => {
-      if (instance.dispatchCommand("paste")) return;
-      void (async () => {
-        try {
-          const text = await navigator.clipboard?.readText();
-          if (!text) return;
-          const sel = instance.getSelections()[0];
-          if (!sel) return;
-          const from = Math.min(sel.anchorOffset, sel.headOffset);
-          const to = Math.max(sel.anchorOffset, sel.headOffset);
-          instance.edit({ from, to, text });
-          instance.focus();
-        } catch {
-          // Clipboard read may be blocked; browser paste shortcut still works.
-        }
-      })();
+    const runClipboard = (command: "cut" | "copy" | "paste") => {
+      const runner = runInputCommand.current;
+      if (runner) void Promise.resolve(runner(command)).catch(() => {});
+      else instance.dispatchCommand(command);
+      instance.focus();
     };
     const items: MenuItem[] = [];
     if (writable) {
       items.push({
         label: EDITOR_COPY.editorMenu.cut,
         testId: "editor-menu-cut",
-        run: () => {
-          instance.dispatchCommand("cut");
-          instance.focus();
-        },
+        run: () => runClipboard("cut"),
       });
     }
     items.push({
       label: EDITOR_COPY.editorMenu.copy,
       testId: "editor-menu-copy",
-      run: () => {
-        instance.dispatchCommand("copy");
-        instance.focus();
-      },
+      run: () => runClipboard("copy"),
     });
     if (writable) {
       items.push({
         label: EDITOR_COPY.editorMenu.paste,
         testId: "editor-menu-paste",
-        run: pasteFromClipboard,
+        run: () => runClipboard("paste"),
       });
     }
     items.push(
