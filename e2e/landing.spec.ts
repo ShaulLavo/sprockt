@@ -193,6 +193,96 @@ function findHubOverlaps(
   return issues;
 }
 
+async function runHubPauseResumeCheck(root: Element) {
+  const readFrame = () =>
+    Array.from(root.querySelectorAll<SVGLineElement>(".lp-dg-comet, .lp-dg-lit"), (el) => [
+      el.getAttribute("stroke-dashoffset") ?? "",
+      el.getAttribute("stroke-dasharray") ?? "",
+      el.style.opacity,
+    ]);
+  const btn = root.querySelector<HTMLButtonElement>('[data-testid="hub-pause"]');
+  if (!btn) throw new Error("Missing hub-pause button");
+
+  const origRaf = window.requestAnimationFrame.bind(window);
+  const origCancel = window.cancelAnimationFrame.bind(window);
+  let nextId = 1;
+  const held = new Map<number, FrameRequestCallback>();
+  const holdRaf = () => {
+    window.requestAnimationFrame = (cb) => {
+      const id = nextId++;
+      held.set(id, cb);
+      return id;
+    };
+    window.cancelAnimationFrame = (id) => {
+      if (!held.delete(id)) origCancel(id);
+    };
+  };
+  const flushHeld = (ts: number): number => {
+    const cbs = Array.from(held.values());
+    held.clear();
+    for (const cb of cbs) cb(ts);
+    return cbs.length;
+  };
+  const releaseRaf = () => {
+    window.requestAnimationFrame = origRaf;
+    window.cancelAnimationFrame = origCancel;
+    const queued = Array.from(held.values());
+    held.clear();
+    for (const cb of queued) origRaf(cb);
+  };
+
+  try {
+    holdRaf();
+    const beforePause = readFrame();
+    btn.click();
+    await new Promise<void>((resolve) => setTimeout(resolve, 40));
+    const afterPause = readFrame();
+    const pausedPressed = btn.getAttribute("aria-pressed");
+    const hasPausedClass = root.classList.contains("is-paused");
+
+    releaseRaf();
+    for (let i = 0; i < 10; i++) {
+      // oxlint-disable-next-line no-await-in-loop
+      await new Promise<void>((resolve) => origRaf(() => resolve()));
+    }
+    const laterWhilePaused = readFrame();
+
+    holdRaf();
+    btn.click();
+    for (let tries = 0; tries < 25 && held.size === 0; tries++) {
+      // oxlint-disable-next-line no-await-in-loop
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+    const resumedPressed = btn.getAttribute("aria-pressed");
+    const now = performance.now();
+    const firstTickCount = flushHeld(now);
+    const firstResumed = readFrame();
+
+    // Advance only the callbacks scheduled inside the gate to prove the hub loop itself resumed.
+    let laterTickCount = 0;
+    for (let step = 1; step <= 25; step++) {
+      laterTickCount += flushHeld(now + step * 40);
+    }
+    const afterGatedTicks = readFrame();
+
+    releaseRaf();
+    return {
+      beforePause,
+      afterPause,
+      laterWhilePaused,
+      firstResumed,
+      afterGatedTicks,
+      firstTickCount,
+      laterTickCount,
+      pausedPressed,
+      hasPausedClass,
+      resumedPressed,
+    };
+  } finally {
+    releaseRaf();
+  }
+}
+
 async function assertPhoneLayout(page: Page, expectedAttr: "dark" | "light" | null): Promise<void> {
   if (expectedAttr === null) {
     await expect(page.locator("html")).not.toHaveAttribute("data-theme", /./);
@@ -402,95 +492,7 @@ test("desktop nav is dead-centered, showcases are inert, animations have WCAG pa
 
   // Gate requestAnimationFrame around both clicks so we observe the exact frame across pause
   // and on the first resumed tick (proving neither pause nor resume resets the clock).
-  const pauseResumeCheck = await hub.evaluate(async (root) => {
-    const readFrame = () =>
-      Array.from(root.querySelectorAll<SVGLineElement>(".lp-dg-comet, .lp-dg-lit"), (el) => [
-        el.getAttribute("stroke-dashoffset") ?? "",
-        el.getAttribute("stroke-dasharray") ?? "",
-        el.style.opacity,
-      ]);
-    const btn = root.querySelector<HTMLButtonElement>('[data-testid="hub-pause"]');
-    if (!btn) throw new Error("Missing hub-pause button");
-
-    const origRaf = window.requestAnimationFrame.bind(window);
-    const origCancel = window.cancelAnimationFrame.bind(window);
-    let nextId = 1;
-    const held = new Map<number, FrameRequestCallback>();
-    const holdRaf = () => {
-      window.requestAnimationFrame = (cb) => {
-        const id = nextId++;
-        held.set(id, cb);
-        return id;
-      };
-      window.cancelAnimationFrame = (id) => {
-        if (!held.delete(id)) origCancel(id);
-      };
-    };
-    const flushHeld = (ts: number): number => {
-      const cbs = Array.from(held.values());
-      held.clear();
-      for (const cb of cbs) cb(ts);
-      return cbs.length;
-    };
-    const releaseRaf = () => {
-      window.requestAnimationFrame = origRaf;
-      window.cancelAnimationFrame = origCancel;
-      const queued = Array.from(held.values());
-      held.clear();
-      for (const cb of queued) origRaf(cb);
-    };
-
-    try {
-      holdRaf();
-      const beforePause = readFrame();
-      btn.click();
-      await new Promise<void>((resolve) => setTimeout(resolve, 40));
-      const afterPause = readFrame();
-      const pausedPressed = btn.getAttribute("aria-pressed");
-      const hasPausedClass = root.classList.contains("is-paused");
-
-      releaseRaf();
-      for (let i = 0; i < 10; i++) {
-        // oxlint-disable-next-line no-await-in-loop
-        await new Promise<void>((resolve) => origRaf(() => resolve()));
-      }
-      const laterWhilePaused = readFrame();
-
-      holdRaf();
-      btn.click();
-      for (let tries = 0; tries < 25 && held.size === 0; tries++) {
-        // oxlint-disable-next-line no-await-in-loop
-        await new Promise<void>((resolve) => setTimeout(resolve, 10));
-      }
-      const resumedPressed = btn.getAttribute("aria-pressed");
-      const now = performance.now();
-      const firstTickCount = flushHeld(now);
-      const firstResumed = readFrame();
-
-      // Advance only the callbacks scheduled inside the gate to prove the hub loop itself resumed.
-      let laterTickCount = 0;
-      for (let step = 1; step <= 25; step++) {
-        laterTickCount += flushHeld(now + step * 40);
-      }
-      const afterGatedTicks = readFrame();
-
-      releaseRaf();
-      return {
-        beforePause,
-        afterPause,
-        laterWhilePaused,
-        firstResumed,
-        afterGatedTicks,
-        firstTickCount,
-        laterTickCount,
-        pausedPressed,
-        hasPausedClass,
-        resumedPressed,
-      };
-    } finally {
-      releaseRaf();
-    }
-  });
+  const pauseResumeCheck = await hub.evaluate(runHubPauseResumeCheck);
 
   expect(pauseResumeCheck.pausedPressed).toBe("true");
   expect(pauseResumeCheck.hasPausedClass).toBe(true);
