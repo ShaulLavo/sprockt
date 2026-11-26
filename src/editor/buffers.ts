@@ -329,9 +329,13 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       if (!occupant || movingSet.has(occupant)) continue;
       entries.delete(target);
       // The file at `target` was replaced: any earlier flush for `target` must not settle
-      // either the displaced draft or the incoming buffer taking `target`.
+      // either the displaced draft or the incoming buffer taking `target`. If the occupant
+      // itself owns that pending undurable write, detach it rather than dropping an edit
+      // storage has not confirmed yet.
+      const pending = undurable.get(target);
       undurable.delete(target);
-      if (!occupant.buffer.dirty()) {
+      const hasPending = pending?.token.buffer === occupant.id;
+      if (!occupant.buffer.dirty() && !hasPending) {
         occupant.unsubscribe();
         continue;
       }
@@ -340,6 +344,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       occupant.buffer.path = aside;
       occupant.version = nextVersion();
       markGone(occupant);
+      occupant.setDirty(true);
       entries.set(aside, occupant);
       displaced.push({ from: target, to: aside });
     }

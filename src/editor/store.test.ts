@@ -527,3 +527,55 @@ test("an earlier flush finishing does not erase a draft detached after its file 
   expect(first.disk.get("target/a.txt")).toBe("replacement");
   reopened.dispose();
 });
+
+test("a move reported before editor sync preserves a clean buffer's pending undurable write as a detached draft", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+  first.store.open("src/a.txt");
+  await first.store.buffers.load("src/a.txt");
+
+  // Edit and save target/a.txt, holding its flush so the buffer is clean in memory but undurable.
+  type(first.store, "target/a.txt", "unflushed ");
+  await first.store.save("target/a.txt");
+  expect(first.store.buffers.get("target/a.txt")?.dirty()).toBe(false);
+  expect(first.flushes).toHaveLength(1);
+
+  // First page hide records the pending undurable write for recovery.
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+
+  // Delete target/a.txt and move src -> target BEFORE editor sync runs.
+  first.disk.set("target/a.txt", "replacement");
+  first.disk.delete("src/a.txt");
+  first.emit({
+    moves: [
+      { from: "src", to: "target", operation: 1 },
+      { from: "src/a.txt", to: "target/a.txt", operation: 1 },
+    ],
+  });
+  await tick();
+  const detachedTabs = first.store.tabs().filter((tab) => isDetached(tab.path));
+  expect(detachedTabs).toHaveLength(1);
+  const aside = detachedTabs[0]!.path;
+  expect(first.store.buffers.get(aside)?.dirty()).toBe(true);
+
+  // Reject the held flush and hide the page again: the detached draft's recovery copy must stay.
+  first.flushes.shift()?.reject(new Error("flush failed"));
+  await tick();
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+  first.dispose();
+
+  // Reopening recovers the unflushed edit while keeping the replacement file on disk.
+  const reopened = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  expect(reopened.store.tabs().map((tab) => tab.path)).toContain(aside);
+  const buffer = await reopened.store.buffers.load(aside);
+  expect(buffer?.session.materializeFullText()).toBe("unflushed old");
+  expect(first.disk.get("target/a.txt")).toBe("replacement");
+  reopened.dispose();
+});
