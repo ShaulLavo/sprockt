@@ -414,15 +414,6 @@ test("desktop nav is dead-centered, showcases are inert, animations have WCAG pa
 
     const origRaf = window.requestAnimationFrame.bind(window);
     const origCancel = window.cancelAnimationFrame.bind(window);
-    const waitRealFrames = (count: number) =>
-      new Promise<void>((resolve) => {
-        let remaining = count;
-        const step = () => {
-          if (--remaining <= 0) resolve();
-          else origRaf(step);
-        };
-        origRaf(step);
-      });
     let nextId = 1;
     const held = new Map<number, FrameRequestCallback>();
     const holdRaf = () => {
@@ -434,6 +425,12 @@ test("desktop nav is dead-centered, showcases are inert, animations have WCAG pa
       window.cancelAnimationFrame = (id) => {
         if (!held.delete(id)) origCancel(id);
       };
+    };
+    const flushHeld = (ts: number): number => {
+      const cbs = Array.from(held.values());
+      held.clear();
+      for (const cb of cbs) cb(ts);
+      return cbs.length;
     };
     const releaseRaf = () => {
       window.requestAnimationFrame = origRaf;
@@ -453,18 +450,29 @@ test("desktop nav is dead-centered, showcases are inert, animations have WCAG pa
       const hasPausedClass = root.classList.contains("is-paused");
 
       releaseRaf();
-      await waitRealFrames(10);
+      for (let i = 0; i < 10; i++) {
+        // oxlint-disable-next-line no-await-in-loop
+        await new Promise<void>((resolve) => origRaf(() => resolve()));
+      }
       const laterWhilePaused = readFrame();
 
       holdRaf();
       btn.click();
-      await new Promise<void>((resolve) => setTimeout(resolve, 40));
+      for (let tries = 0; tries < 25 && held.size === 0; tries++) {
+        // oxlint-disable-next-line no-await-in-loop
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      }
       const resumedPressed = btn.getAttribute("aria-pressed");
-      const firstTickCbs = Array.from(held.values());
-      held.clear();
       const now = performance.now();
-      for (const cb of firstTickCbs) cb(now);
+      const firstTickCount = flushHeld(now);
       const firstResumed = readFrame();
+
+      // Advance only the callbacks scheduled inside the gate to prove the hub loop itself resumed.
+      let laterTickCount = 0;
+      for (let step = 1; step <= 25; step++) {
+        laterTickCount += flushHeld(now + step * 40);
+      }
+      const afterGatedTicks = readFrame();
 
       releaseRaf();
       return {
@@ -472,6 +480,9 @@ test("desktop nav is dead-centered, showcases are inert, animations have WCAG pa
         afterPause,
         laterWhilePaused,
         firstResumed,
+        afterGatedTicks,
+        firstTickCount,
+        laterTickCount,
         pausedPressed,
         hasPausedClass,
         resumedPressed,
@@ -487,8 +498,10 @@ test("desktop nav is dead-centered, showcases are inert, animations have WCAG pa
   expect(pauseResumeCheck.afterPause).toEqual(pauseResumeCheck.beforePause);
   expect(pauseResumeCheck.laterWhilePaused).toEqual(pauseResumeCheck.beforePause);
   expect(pauseResumeCheck.resumedPressed).toBe("false");
+  expect(pauseResumeCheck.firstTickCount).toBeGreaterThan(0);
+  expect(pauseResumeCheck.laterTickCount).toBeGreaterThan(0);
   expect(pauseResumeCheck.firstResumed).toEqual(pauseResumeCheck.beforePause);
-  await expect.poll(hubSnapshot).not.toEqual(pauseResumeCheck.beforePause);
+  expect(pauseResumeCheck.afterGatedTicks).not.toEqual(pauseResumeCheck.beforePause);
 
   // All landing page <img> assets (browser logos, hub logos, template icons) load eagerly.
   const brokenImages = await page.evaluate(() =>
