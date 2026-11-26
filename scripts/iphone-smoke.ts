@@ -138,6 +138,10 @@ const terminalHas = (pattern: string) =>
 
 async function runInTerminal(driver: WebDriver, command: string): Promise<void> {
   await driver.until(`${textOf("terminal-state")} === "ready"`, "the shell");
+  // A phone shows one pane at a time: bring the terminal up first.
+  await driver.script(
+    `document.querySelector('[data-testid="pane-switcher"] [aria-controls="wb-slot-terminal"]')?.click(); return true;`,
+  );
   await driver.click(".terminal-host");
   await driver.type(command + ENTER);
 }
