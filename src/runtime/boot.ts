@@ -147,7 +147,13 @@ export async function bootWorkspace(
     await runtime.filesystem.flush();
     return programs;
   });
-  onStage("ready");
+  try {
+    onStage("ready");
+  } catch (error) {
+    // Nobody receives the runtime when the report fails, so nobody else would dispose it.
+    await dispose().catch(() => {});
+    throw error;
+  }
   return {
     id,
     runtime,
