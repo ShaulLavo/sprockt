@@ -191,7 +191,7 @@ test("subscribers hear which paths changed, once per burst, and moves say where 
   expect(await moved).toEqual({
     paths: ["src/a.ts", "src/b.ts"],
     reset: false,
-    moves: [{ from: "src/a.ts", to: "src/b.ts" }],
+    moves: [{ from: "src/a.ts", to: "src/b.ts", operation: 1 }],
     removed: [],
   });
 
@@ -207,10 +207,12 @@ test("moving a folder reports the folder and every file inside it, at any depth"
   await service.move("app", "lib/renamed");
   const change = await moved;
   expect(change.moves.toSorted((a, b) => (a.from < b.from ? -1 : 1))).toEqual([
-    { from: "app", to: "lib/renamed" },
-    { from: "app/a.ts", to: "lib/renamed/a.ts" },
-    { from: "app/deep/er/b.ts", to: "lib/renamed/deep/er/b.ts" },
+    { from: "app", to: "lib/renamed", operation: 1 },
+    { from: "app/a.ts", to: "lib/renamed/a.ts", operation: 1 },
+    { from: "app/deep/er/b.ts", to: "lib/renamed/deep/er/b.ts", operation: 1 },
   ]);
+  // The folder itself comes first: the entry a reader applies.
+  expect(change.moves[0]).toEqual({ from: "app", to: "lib/renamed", operation: 1 });
   expect((await service.list()).toSorted()).toEqual([
     "lib/renamed/a.ts",
     "lib/renamed/deep/er/b.ts",

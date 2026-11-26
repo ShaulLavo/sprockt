@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { languageOf } from "./languages";
+import { languageName, languageOf } from "./languages";
 
 test("known extensions map to their language, whatever the case or directory", () => {
   expect(languageOf("src/main.ts")).toBe("typescript");
@@ -15,4 +15,12 @@ test("unknown extensions, dotfiles and extensionless names have no language", ()
   expect(languageOf(".gitignore")).toBeNull();
   expect(languageOf("Makefile")).toBeNull();
   expect(languageOf("dir.ts/README")).toBeNull();
+});
+
+test("the status bar names a file's language, and plain text otherwise", () => {
+  expect(languageName("src/App.tsx")).toBe("TypeScript JSX");
+  expect(languageName("src/App.vue")).toBe("Vue");
+  expect(languageName("README.MD")).toBe("Markdown");
+  expect(languageName("Makefile")).toBe("Plain Text");
+  expect(languageName(".env")).toBe("Plain Text");
 });

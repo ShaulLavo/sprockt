@@ -6,6 +6,7 @@ import type { Runtime } from "waffle";
 import type { SaveState } from "./persistence";
 import { createProjectFiles, type ProjectFiles } from "./project-files";
 import type { DirEntry } from "./tree";
+import { createSizeLookup } from "./size";
 import { watchFilesystem } from "./watch";
 
 export type { SaveState };
@@ -32,10 +33,12 @@ export interface FileChange {
   /** Events may have been lost (watcher overflow or reopen): treat everything as changed. */
   readonly reset: boolean;
   /**
-   * Renames and moves made through `FileService.move`, so open tabs can follow their file. Moving
-   * a folder lists the folder itself and every file inside it, each with its old and new path.
+   * Renames and moves made through `FileService.move`, in the order they happened, so open tabs
+   * can follow their file. Moving a folder lists the folder itself, then every file inside it,
+   * each with its old and new path. `operation` is the same for one `move` call and grows with
+   * every call: apply the first entry of an operation once, the others describe it.
    */
-  readonly moves: readonly { readonly from: string; readonly to: string }[];
+  readonly moves: readonly { readonly from: string; readonly to: string; readonly operation: number }[];
   /**
    * Paths deleted through `FileService.remove`. Deleting a folder lists the folder itself and every
    * file that was inside it, so no open buffer is left attached to a path that no longer exists.
@@ -60,6 +63,8 @@ export interface FileService {
   readdir(path: string): Promise<DirEntry[] | undefined>;
   read(path: string): Promise<string | undefined>;
   readBytes(path: string): Promise<Uint8Array | undefined>;
+  /** A file's size in bytes, without reading it; undefined when it is missing or not a file. */
+  size(path: string): Promise<number | undefined>;
   /** Creates missing parent directories. */
   write(path: string, content: string | Uint8Array): Promise<void>;
   /**
@@ -111,5 +116,9 @@ export interface FileService {
 }
 
 export function createFileService(runtime: Runtime): ProjectFiles {
-  return createProjectFiles(runtime.filesystem, (onChange) => watchFilesystem(runtime, onChange));
+  return createProjectFiles(
+    runtime.filesystem,
+    (onChange) => watchFilesystem(runtime, onChange),
+    createSizeLookup(runtime),
+  );
 }

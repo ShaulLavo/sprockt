@@ -158,6 +158,8 @@
   padding-left: var(--space-2, 8px);
   overflow-x: auto;
   overscroll-behavior-x: contain;
+  /* A tab scrolled into view clears the edge fade, so its name and unsaved dot stay readable. */
+  scroll-padding-inline: 28px;
   scrollbar-width: none;
 }
 

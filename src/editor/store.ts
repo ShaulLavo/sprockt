@@ -2,8 +2,8 @@
 // and whether quick open or project search is showing. Other panes (the explorer, the title bar)
 // drive the editor only through this store.
 import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-js";
-import type { FileService } from "../files/service";
-import { createBufferSet, type BufferSet } from "./buffers";
+import type { FileChange, FileService } from "../files/service";
+import { createBufferSet, freeName, isDetached, originalPath, type BufferSet } from "./buffers";
 import { loadTabs, saveTabs } from "./persist";
 import { discardRecovered, leaveForRecovery, recovered } from "./recovery";
 import { closeTab, moveTab, openTab, pinTab, renamedPath, renameTabs, type EditorTab } from "./tabs";
@@ -36,6 +36,11 @@ export interface Conflict {
   readonly diskText: string | undefined;
 }
 
+export interface MoveLock {
+  /** `moved`: the move happened, so saves wait for its change event as well. */
+  release(moved: boolean): void;
+}
+
 export interface EditorStore {
   readonly tabs: Accessor<readonly EditorTab[]>;
   /** The selected tab. */
@@ -55,8 +60,12 @@ export interface EditorStore {
   close(path: string): void;
   move(from: number, to: number): void;
   pin(path: string): void;
-  /** Follows a file or directory the explorer moved. */
-  rename(from: string, to: string): void;
+  /**
+   * Locks paths for a move (the explorer's rename or drag): waits for saves writing there, and
+   * holds new saves until `release`. Released after a successful move, saves wait further until
+   * the change event reporting the move was applied, so they write to the new path.
+   */
+  lockPaths(roots: readonly string[]): Promise<MoveLock>;
   /** Saves the file on screen, or `path` when given. Never the file merely selected. */
   save(path?: string): Promise<void>;
   /** Keeps the edits of the file on screen over the disk version, and saves them. */
@@ -77,7 +86,10 @@ export interface EditorStore {
 
 export interface EditorWorkspace {
   readonly id: string;
-  readonly files: Pick<FileService, "read" | "writeIfUnchanged" | "saved" | "revision" | "writable">;
+  readonly files: Pick<
+    FileService,
+    "read" | "writeIfUnchanged" | "saved" | "revision" | "writable" | "subscribe"
+  >;
 }
 
 /** Call inside a component: the store follows the files for as long as its owner lives. */
@@ -129,10 +141,109 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     return path === undefined ? undefined : buffers.get(path);
   };
   const save = async (path = displayed()) => {
-    if (path !== undefined) await buffers.save(path);
+    if (path === undefined) return;
+    // Exclusive creation still turns a name taken in the meantime into a conflict.
+    await buffers.save(isDetached(path) ? await attach(path) : path);
   };
 
+  /** Moves a single tab, the file on screen and the selection from one exact path to another. */
+  function retarget(from: string, to: string, current: string | undefined): string | undefined {
+    commit(
+      tabs().map((tab) => (tab.path === from ? { path: to, preview: false } : tab)),
+      current === from ? to : current,
+    );
+    if (displayed() === from) setDisplayed(to);
+    return current === from ? to : current;
+  }
+
+  /**
+   * Tabs, the file on screen and buffers (with unsaved text and undo) follow a move. A draft
+   * already open at a destination is not dropped: it moves aside to a free name first.
+   */
+  function applyRename(from: string, to: string): void {
+    const follows = (path: string) => renamedPath(path, from, to) !== path;
+    const shown = displayed();
+    const affected = tabs().some((tab) => follows(tab.path)) || buffers.paths().some(follows);
+    if (!affected && (shown === undefined || !follows(shown))) return;
+    let current = active();
+    for (const aside of buffers.rename(from, to)) current = retarget(aside.from, aside.to, current);
+    const moved = displayed();
+    commit(renameTabs(tabs(), from, to), current === undefined ? undefined : renamedPath(current, from, to));
+    if (moved !== undefined) setDisplayed(renamedPath(moved, from, to));
+  }
+
+  /** The last move operation applied; FileService numbers them in the order they happened. */
+  let lastOperation = 0;
+  /** Locks waiting for the change event that reports their move before they let saves through. */
+  let afterNextChange: (() => void)[] = [];
+
+  /**
+   * Moves come from FileService change events only, applied once each and in order: the first
+   * entry of an operation is the file or folder that moved, the entries after it with the same
+   * operation list the files inside it and are covered by applying the first. Applying a move only
+   * changes which path a buffer points at; nothing is written. The revision sync that follows
+   * compares each moved buffer with its new file, so different disk text under unsaved edits
+   * shows as a conflict.
+   */
+  function applyChange(change: FileChange): void {
+    for (const move of change.moves) {
+      if (move.operation <= lastOperation) continue;
+      lastOperation = move.operation;
+      applyRename(move.from, move.to);
+    }
+    if (change.removed.length > 0) buffers.markRemoved(change.removed);
+    if (change.moves.length > 0) void buffers.sync();
+    const waiting = afterNextChange;
+    afterNextChange = [];
+    for (const release of waiting) release();
+  }
+
+  // Resolves once this tab loses the workspace: a move waiting for saves then gives up.
+  const revoked = Promise.withResolvers<void>();
+  createEffect(() => {
+    if (!workspace.files.writable()) revoked.resolve();
+  });
+
+  async function lockPaths(roots: readonly string[]): Promise<MoveLock> {
+    const lock = await Promise.race([
+      buffers.lock(roots),
+      revoked.promise.then((): never => {
+        throw new Error("This workspace is open in another tab, so this tab can no longer change files.");
+      }),
+    ]);
+    return {
+      release(moved) {
+        // Saves wait until the editor has followed the move, so they write to the new path.
+        if (moved) afterNextChange.push(() => lock.release());
+        else lock.release();
+      },
+    };
+  }
+
+  /** A detached draft is saved under a free name next to where it was, picked now. */
+  async function attach(key: string): Promise<string> {
+    const original = originalPath(key);
+    const known = new Set(
+      tabs()
+        .map((tab) => tab.path)
+        .concat(buffers.paths()),
+    );
+    for (;;) {
+      const candidate = freeName(original, (path) => known.has(path));
+      // oxlint-disable-next-line no-await-in-loop -- names are tried one after another
+      if ((await workspace.files.read(candidate)) === undefined) {
+        applyRename(key, candidate);
+        return candidate;
+      }
+      known.add(candidate);
+    }
+  }
+
   createEffect(on(workspace.files.revision, () => void buffers.sync(), { defer: true }));
+  // Moves and deletes made through FileService (the explorer, another pane) say exactly what
+  // happened, in order: a folder lists every file inside it. Changes by the shell or another tab
+  // only arrive as changed paths, and the revision sync marks a vanished file deleted.
+  onCleanup(workspace.files.subscribe(applyChange));
   // Once another tab owns the workspace this tab cannot save. Its unsaved text is left where
   // that tab finds it when it opens the file.
   createEffect(() => {
@@ -186,16 +297,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     },
     move: (from, to) => commit(moveTab(tabs(), from, to), active()),
     pin,
-    rename(from, to) {
-      const current = active();
-      commit(
-        renameTabs(tabs(), from, to),
-        current === undefined ? undefined : renamedPath(current, from, to),
-      );
-      const shown = displayed();
-      if (shown !== undefined) setDisplayed(renamedPath(shown, from, to));
-      buffers.rename(from, to);
-    },
+    lockPaths,
     async keepMine() {
       const path = displayed();
       if (path === undefined) return;

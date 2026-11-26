@@ -6,9 +6,16 @@ import type { SearchQuery } from "./text";
 const encoder = new TextEncoder();
 
 function fakeFiles(contents: Record<string, string | Uint8Array>, delays: Record<string, number> = {}) {
+  const read: string[] = [];
   return {
+    read,
     list: async () => Object.keys(contents),
+    async size(path: string) {
+      const content = contents[path];
+      return typeof content === "string" ? encoder.encode(content).length : content?.length;
+    },
     async readBytes(path: string) {
+      read.push(path);
       await new Promise((resolve) => setTimeout(resolve, delays[path] ?? 0));
       const content = contents[path];
       return typeof content === "string" ? encoder.encode(content) : content;
@@ -92,6 +99,7 @@ test("reads stay one batch ahead of delivery when an early file is slow", async 
   let reads = 0;
   const files = {
     list: async () => names,
+    size: async () => 3,
     async readBytes(path: string) {
       reads += 1;
       if (path === "f000.txt") await gate.promise;
@@ -156,6 +164,7 @@ test("a search worker that fails to start ends the search with an error instead 
       await new Promise((resolve) => setTimeout(resolve, 10));
       return ["a.txt", "b.txt"];
     },
+    size: async () => 3,
     readBytes: async () => encoder.encode("hit"),
   };
   const summary = await searchProject(files, {
@@ -190,4 +199,41 @@ test("a worker that fails with matches pending ends the search instead of report
   await new Promise((resolve) => setTimeout(resolve, 10));
   worker?.dispatchEvent(new Event("error"));
   expect((await running).kind).toBe("failed");
+});
+
+test("a file over the size limit is skipped without being read", async () => {
+  const big = new Uint8Array(3 * 1024 * 1024).fill(0x61);
+  const files = fakeFiles({ "big.min.js": big, "small.js": "a" });
+  const found: FileMatches[] = [];
+  await searchProject(files, {
+    query: query("a"),
+    include: "",
+    exclude: "",
+    signal: new AbortController().signal,
+    onFile: (result) => found.push(result),
+  });
+  expect(found.map((result) => result.path)).toEqual(["small.js"]);
+  expect(files.read).toEqual(["small.js"]);
+});
+
+test("a file whose size cannot be looked up is still read and searched", async () => {
+  const files = {
+    list: async () => ["a.txt", "b.txt", "big.txt"],
+    size: async (path: string): Promise<number | undefined> => {
+      if (path === "a.txt") throw new Error("stat failed");
+      return undefined;
+    },
+    readBytes: async (path: string) =>
+      path === "big.txt" ? new Uint8Array(3 * 1024 * 1024).fill(0x68) : encoder.encode("hit"),
+  };
+  const found: FileMatches[] = [];
+  await searchProject(files, {
+    query: query("hit"),
+    include: "",
+    exclude: "",
+    signal: new AbortController().signal,
+    onFile: (result) => found.push(result),
+  });
+  // Unknown sizes are read; the byte count still keeps the 3 MiB file out.
+  expect(found.map((result) => result.path)).toEqual(["a.txt", "b.txt"]);
 });

@@ -6,12 +6,14 @@ import { createEditorFindPlugin } from "@singapore-editor/find";
 import "@singapore-editor/find/style.css";
 import { createFoldGutterPlugin, createLineGutterPlugin } from "@singapore-editor/gutters";
 import { createHighlightingPlugin } from "@singapore-editor/highlighting";
-import { createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
+import { createEffect, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
 import { debugHandle } from "../app/debug";
 import { PROJECT_ROOT, projectRelative } from "../workspace/paths";
+import { STATUS_SLOT } from "../workbench/slots";
 import { useWorkspace } from "../workspace/session";
-import type { Buffer } from "./buffers";
-import { languageOf } from "./languages";
+import { isDetached, type Buffer } from "./buffers";
+import { EDITOR_COPY, fill } from "./copy";
+import { languageName, languageOf } from "./languages";
 import { mountEditorPlugins } from "./plugins";
 import type { EditorStore, RevealRequest } from "./store";
 import { createColorScheme, editorTheme } from "./theme";
@@ -85,6 +87,7 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
   const narrow = createNarrow();
   const [editor, setEditor] = createSignal<Editor>();
   const [shown, setShown] = createSignal<Shown>();
+  const [caret, setCaret] = createSignal<{ line: number; column: number }>();
   let host!: HTMLDivElement;
   let handledReveal = 0;
 
@@ -107,6 +110,8 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
       lineHeight: 20,
       gutterLeadingInset: 8,
       wordWrapBreak: "word",
+      // Every edit and every caret move: the status bar shows where the caret is.
+      onChange: () => untrack(() => refreshCaret(instance)),
     });
     const unmount = mountEditorPlugins(
       {
@@ -134,16 +139,43 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
   // Once another tab owns the workspace, this tab can read but no longer write.
   createEffect(() => editor()?.setEditability(workspace.files.writable() ? "editable" : "readonly"));
 
+  function refreshCaret(instance: Editor): void {
+    const current = shown();
+    setCaret(current ? caretOf(current, instance) : undefined);
+  }
+
+  // Cursor position and language in the status bar, for the file on screen.
+  createEffect(() => {
+    const position = caret();
+    const current = shown();
+    workspace.status.set(
+      STATUS_SLOT.cursor,
+      current && position
+        ? { text: fill(EDITOR_COPY.cursorPosition, position), side: "end", order: 10 }
+        : undefined,
+    );
+    workspace.status.set(
+      STATUS_SLOT.language,
+      current ? { text: languageName(current.path), side: "end", order: 11 } : undefined,
+    );
+  });
+  onCleanup(() => {
+    workspace.status.set(STATUS_SLOT.cursor, undefined);
+    workspace.status.set(STATUS_SLOT.language, undefined);
+  });
+
   function attach(instance: Editor, buffer: Buffer): void {
     const current = shown();
     if (current?.buffer === buffer && current.path === buffer.path) return;
     if (current) current.buffer.scroll = instance.getScrollPosition();
     instance.attachSession(buffer.session, {
-      documentId: `${PROJECT_ROOT}/${buffer.path}`,
+      // A detached draft has no file, so no document id: language servers leave it alone.
+      documentId: isDetached(buffer.path) ? null : `${PROJECT_ROOT}/${buffer.path}`,
       languageId: languageOf(buffer.path),
       scrollPosition: buffer.scroll,
     });
     setShown({ buffer, path: buffer.path });
+    refreshCaret(instance);
     props.store.setDisplayed(buffer.path);
   }
 
@@ -153,6 +185,7 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
     current.buffer.scroll = instance.getScrollPosition();
     instance.detachSession();
     setShown(undefined);
+    setCaret(undefined);
     props.store.setDisplayed(undefined);
   }
 

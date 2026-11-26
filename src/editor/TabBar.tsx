@@ -3,6 +3,7 @@
 // when tabs are actually hidden past it.
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { CloseIcon, FileIcon } from "../search/icons";
+import { originalPath } from "./buffers";
 import { EDITOR_COPY, fill } from "./copy";
 import type { EditorStore } from "./store";
 import type { EditorTab } from "./tabs";
@@ -10,7 +11,10 @@ import type { EditorTab } from "./tabs";
 const DRAG_THRESHOLD_PX = 5;
 
 const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
-const dirname = (path: string) => path.slice(0, Math.max(path.lastIndexOf("/"), 0));
+const dirname = (path: string) => {
+  const shown = originalPath(path);
+  return shown.slice(0, Math.max(shown.lastIndexOf("/"), 0));
+};
 
 /** Asks before closing a tab with unsaved edits. */
 export function requestClose(store: EditorStore, path: string): void {
@@ -145,7 +149,7 @@ function Tab(props: {
       }}
       tabindex={active() ? 0 : -1}
       aria-selected={active()}
-      title={missing() ? `${props.tab.path} · ${EDITOR_COPY.deletedFile}` : props.tab.path}
+      title={missing() ? `${originalPath(props.tab.path)} · ${EDITOR_COPY.deletedFile}` : props.tab.path}
       data-testid="editor-tab"
       data-path={props.tab.path}
       onPointerDown={(event) => props.onPointerDown(event)}

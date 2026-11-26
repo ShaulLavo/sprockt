@@ -27,6 +27,54 @@ export interface Conflict {
   readonly diskText: string | undefined;
 }
 
+const isSameOrInside = (path: string, other: string) => path === other || path.startsWith(`${other}/`);
+const under = (path: string, roots: readonly string[]) => roots.some((root) => isSameOrInside(path, root));
+
+/**
+ * A draft pushed aside by a move keeps its text under a key that is no project path at all (it
+ * starts with a NUL, which FileService refuses), so no file can ever open at it. Saving such a
+ * draft picks a real, free name at that moment.
+ */
+const DETACHED = "\u0000unsaved:";
+
+let detachedCount = 0;
+
+export function detachedKey(original: string): string {
+  detachedCount += 1;
+  return `${DETACHED}${detachedCount}/${original}`;
+}
+
+export const isDetached = (key: string) => key.startsWith(DETACHED);
+
+/** The path a detached draft came from, or the key itself for an ordinary path. */
+export function originalPath(key: string): string {
+  if (!isDetached(key)) return key;
+  return key.slice(key.indexOf("/") + 1);
+}
+
+/** An unsaved draft moved out of the way of a file that moved onto its path. */
+export interface PathLock {
+  release(): void;
+}
+
+export interface Displacement {
+  readonly from: string;
+  readonly to: string;
+}
+
+/** `dir/a.txt` becomes `dir/a (unsaved).txt`, then `dir/a (unsaved 2).txt`, until one is free. */
+export function freeName(path: string, taken: (path: string) => boolean): string {
+  const slash = path.lastIndexOf("/");
+  const dot = path.lastIndexOf(".");
+  const split = dot > slash + 1 ? dot : path.length;
+  const stem = path.slice(0, split);
+  const extension = path.slice(split);
+  for (let count = 1; ; count += 1) {
+    const candidate = `${stem} (unsaved${count === 1 ? "" : ` ${count}`})${extension}`;
+    if (!taken(candidate)) return candidate;
+  }
+}
+
 export interface Buffer {
   /** Project-relative path. Changes only through `BufferSet.rename`. */
   readonly path: string;
@@ -45,7 +93,19 @@ export interface BufferSet {
   /** The buffer for a file, read on first use. Undefined when the file does not exist. */
   load(path: string): Promise<Buffer | undefined>;
   release(path: string): void;
-  rename(from: string, to: string): void;
+  /**
+   * Buffers follow a move. A buffer with unsaved text already at a destination is moved aside to
+   * a free name rather than dropped; the returned list says where each went.
+   */
+  rename(from: string, to: string): Displacement[];
+  /**
+   * Locks paths (and everything inside them) for a move: resolves once writes already running
+   * there have finished, and from then until `release`, saves to those paths wait. A save that
+   * waited writes to its buffer's path as it is after the move.
+   */
+  lock(roots: readonly string[]): Promise<PathLock>;
+  /** Files (and everything inside folders) deleted: their buffers stay, marked deleted, text kept. */
+  markRemoved(paths: readonly string[]): void;
   /**
    * Writes the buffer's text to its own path if the file still holds what the buffer was last in
    * step with; otherwise the buffer gets a conflict. Edits made while the write runs stay unsaved.
@@ -185,20 +245,55 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
 
   async function syncOne(entry: Entry): Promise<void> {
     if (entry.saving > 0) return;
-    const text = await files.read(entry.buffer.path);
-    // The buffer may have been closed, renamed or saved while the read ran.
-    if (!live(entry) || entry.saving > 0) return;
-    entry.setMissing(text === undefined);
+    const path = entry.buffer.path;
+    // A detached draft has no file to compare with.
+    if (isDetached(path)) return;
+    const text = await files.read(path);
+    // The buffer may have been closed, moved or saved while the read ran; a moved buffer is
+    // compared again under its new path by the sync that follows the move.
+    if (!live(entry) || entry.buffer.path !== path || entry.saving > 0) return;
     // Back to what the buffer was last in step with: an earlier outside change was undone.
-    if (text === entry.disk) return entry.setConflict(undefined);
-    if (text === undefined) {
-      // A deleted file stays open, marked, with any unsaved text; saving writes it again.
-      entry.disk = undefined;
+    if (text === entry.disk) {
+      entry.setMissing(text === undefined);
       return entry.setConflict(undefined);
     }
+    if (text === undefined) return markGone(entry);
+    entry.setMissing(false);
     const current = entry.buffer.session.materializeFullText();
     if (text === current || !entry.buffer.dirty()) return adopt(entry, text);
     entry.setConflict({ diskText: text });
+  }
+
+  /**
+   * Before buffers move onto paths, a buffer already at one of those paths gives way: a clean
+   * one is let go (its file was replaced), one with unsaved text is detached (a key no file can
+   * open at) and marked deleted, so no draft is dropped. Returns where the drafts went.
+   */
+  function makeRoom(moving: readonly Entry[], from: string, to: string): Displacement[] {
+    const movingSet = new Set(moving);
+    const displaced: Displacement[] = [];
+    for (const entry of moving) {
+      const target = renamedPath(entry.buffer.path, from, to);
+      const occupant = entries.get(target);
+      if (!occupant || movingSet.has(occupant)) continue;
+      entries.delete(target);
+      if (!occupant.buffer.dirty()) {
+        occupant.unsubscribe();
+        continue;
+      }
+      occupant.buffer.path = detachedKey(target);
+      markGone(occupant);
+      entries.set(occupant.buffer.path, occupant);
+      displaced.push({ from: target, to: occupant.buffer.path });
+    }
+    return displaced;
+  }
+
+  /** A deleted file stays open, marked, with any unsaved text; saving writes it again. */
+  function markGone(entry: Entry): void {
+    entry.disk = undefined;
+    entry.setMissing(true);
+    entry.setConflict(undefined);
   }
 
   async function syncAll(): Promise<void> {
@@ -253,17 +348,61 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
   }
 
   /** One save, run when the file's earlier saves have finished: it captures its text and baseline now. */
+  interface Lock {
+    readonly roots: readonly string[];
+    readonly released: Promise<void>;
+  }
+  const locks = new Set<Lock>();
+  /** Writes running now, by the path they write. */
+  const writing = new Set<{ readonly path: string; readonly done: Promise<unknown> }>();
+
+  /** Waits until no lock covers the buffer's path; the path may change (a move) while waiting. */
+  async function untilUnlocked(entry: Entry): Promise<void> {
+    for (;;) {
+      const blocking = Array.from(locks).filter((held) => under(entry.buffer.path, held.roots));
+      if (blocking.length === 0) return;
+      // oxlint-disable-next-line no-await-in-loop -- a lock released may reveal another on the new path
+      await Promise.all(blocking.map((held) => held.released));
+    }
+  }
+
+  async function lock(roots: readonly string[]): Promise<PathLock> {
+    const gate = Promise.withResolvers<void>();
+    const record: Lock = { roots, released: gate.promise };
+    locks.add(record);
+    const running = Array.from(writing).filter((write) => under(write.path, roots));
+    await Promise.all(running.map((write) => write.done.catch(() => {})));
+    return {
+      release() {
+        locks.delete(record);
+        gate.resolve();
+      },
+    };
+  }
+
+  const lockedFor = (entry: Entry) => Array.from(locks).some((held) => under(entry.buffer.path, held.roots));
+
   async function saveNow(entry: Entry): Promise<void> {
-    if (!live(entry)) return;
+    // Only a locked path waits: otherwise the save captures the text exactly when it was asked for.
+    if (lockedFor(entry)) await untilUnlocked(entry);
+    // Nothing awaits between here and the write starting: a lock taken now sees this write.
+    if (!live(entry) || isDetached(entry.buffer.path)) return;
+    const target = entry.buffer.path;
     const snapshot = entry.buffer.session.getSnapshot();
     const text = entry.buffer.session.materializeFullText();
     entry.saving += 1;
     entry.inflight = snapshot;
     refreshDirty(entry);
     try {
-      const outcome = await files.writeIfUnchanged(entry.buffer.path, text, entry.disk);
+      const write = files.writeIfUnchanged(target, text, entry.disk);
+      const record = { path: target, done: write };
+      writing.add(record);
+      const outcome = await write.finally(() => writing.delete(record));
+      if (outcome.written) void untilDurable(target, { text, baseText: entry.disk });
+      // The file moved while the write ran: what was written went to the old path, so it says
+      // nothing about this buffer's file. The buffer stays unsaved.
+      if (entry.buffer.path !== target) return;
       if (outcome.written) {
-        void untilDurable(entry.buffer.path, { text, baseText: entry.disk });
         entry.persisted = snapshot;
         entry.disk = text;
         entry.setConflict(undefined);
@@ -329,17 +468,25 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       entries.delete(path);
       membershipChanged();
     },
+    markRemoved(paths) {
+      for (const entry of entries.values()) {
+        if (paths.some((path) => isSameOrInside(entry.buffer.path, path))) markGone(entry);
+      }
+    },
     rename(from, to) {
       const moved = Array.from(entries.values()).filter(
         (entry) => renamedPath(entry.buffer.path, from, to) !== entry.buffer.path,
       );
+      const displaced = makeRoom(moved, from, to);
       for (const entry of moved) entries.delete(entry.buffer.path);
       for (const entry of moved) {
         entry.buffer.path = renamedPath(entry.buffer.path, from, to);
         entries.set(entry.buffer.path, entry);
       }
       membershipChanged();
+      return displaced;
     },
+    lock,
     sync() {
       if (syncing) {
         syncAgain = true;
@@ -365,9 +512,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       if (!live(entry)) return;
       if (text !== undefined) return adopt(entry, text);
       // The file is gone: there is nothing to reload, so the draft stays, marked deleted.
-      entry.disk = undefined;
-      entry.setMissing(true);
-      entry.setConflict(undefined);
+      markGone(entry);
     },
     paths: () => Array.from(entries.keys()),
     unsaved() {

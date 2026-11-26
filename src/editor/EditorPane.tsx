@@ -9,6 +9,7 @@ import { AlertIcon, ChevronIcon } from "../search/icons";
 import { useWorkspace } from "../workspace/session";
 import { EDITOR_COPY } from "./copy";
 import "./editor.css";
+import { originalPath } from "./buffers";
 import { EditorView } from "./EditorView";
 import type { EditorStore } from "./store";
 import { TabBar } from "./TabBar";
@@ -92,6 +93,11 @@ function useEditorShortcuts(store: EditorStore, pane: () => HTMLElement, editor:
 }
 
 export function EditorPane(props: { store: EditorStore }) {
+  // A detached draft shows the path it came from.
+  const displayedName = () => {
+    const path = props.store.displayed();
+    return path === undefined ? undefined : originalPath(path);
+  };
   const workspace = useWorkspace();
   let pane!: HTMLElement;
   let editor: Editor | undefined;
@@ -121,7 +127,7 @@ export function EditorPane(props: { store: EditorStore }) {
         </Show>
         <div class="editor-main">
           <TabBar store={props.store} />
-          <Crumbs path={props.store.displayed()} />
+          <Crumbs path={displayedName()} />
           <ConflictBar store={props.store} />
           <div class="editor-body">
             <EditorView store={props.store} onEditor={(instance) => (editor = instance)} />

@@ -12,6 +12,7 @@ existed before changed meaning.
 | `upload(items, directory)` | Files and folders from outside, replacing files with the same path. Names must be plain relative paths: absolute names and empty, `.` or `..` segments are skipped, as is anything inside `node_modules` or `.git`.                                     |
 | `exportZip()`              | The whole project as a ZIP `Blob` (the writer in `src/lib/zip`), without `node_modules` and `.git`.                                                                                                                                                     |
 | `subscribe(listener)`      | Like `revision` but says what changed (below).                                                                                                                                                                                                          |
+| `size(path)`               | A file's size in bytes without reading it (a stat through the filesystem worker); `undefined` when it is missing or not a file. Search skips large files with it.                                                                                       |
 
 ## `subscribe` events
 

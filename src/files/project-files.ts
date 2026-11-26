@@ -1,5 +1,6 @@
 // FileService on top of a filesystem and a watcher, with nothing browser-specific in it, so the
 // rules it enforces (the project boundary, what "saved" means) are tested without a runtime.
+import type { SizeLookup } from "./size";
 import { createSignal } from "solid-js";
 import { createZipBlob } from "../lib/zip/zip";
 import {
@@ -59,7 +60,7 @@ const BATCH = 8;
 
 interface Pending {
   paths: Set<string>;
-  moves: { from: string; to: string }[];
+  moves: { from: string; to: string; operation: number }[];
   removed: Set<string>;
   reset: boolean;
 }
@@ -67,7 +68,7 @@ interface Pending {
 /** What one change did, beyond the paths it touched: filled in by the change itself. */
 interface Effects {
   readonly paths: string[];
-  readonly moves: { from: string; to: string }[];
+  readonly moves: { from: string; to: string; operation: number }[];
   readonly removed: string[];
 }
 
@@ -121,7 +122,15 @@ async function confirmInside(lookup: Lookup, absolute: string, through: boolean)
   }
 }
 
-export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFiles): ProjectFiles {
+/**
+ * `sizeOf` measures a file at an absolute path without reading it; without one, `size` reads the
+ * file (in-memory filesystems in tests).
+ */
+export function createProjectFiles(
+  filesystem: ProjectFilesystem,
+  watch: WatchFiles,
+  sizeOf?: SizeLookup,
+): ProjectFiles {
   const [revision, setRevision] = createSignal(0);
   const [saveState, setSaveState] = createSignal<SaveState>("saved");
   const [writable, setWritable] = createSignal(true);
@@ -142,12 +151,25 @@ export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFi
     }
   }
   const persistence = createPersistence(flushUnlessReported, setSaveState);
-  const found = (path: string) => filesystem.resolvePath(path).catch(absentWhenMissing);
+  const found = (path: string) => pastReported(() => filesystem.resolvePath(path)).catch(absentWhenMissing);
+  /**
+   * Runs a read that Waffle may fail with an error an operation already reported (it throws the
+   * failed change once more on the next call): that error is not this read's, so it runs again.
+   */
+  async function pastReported<T>(read: () => Promise<T>): Promise<T> {
+    try {
+      return await read();
+    } catch (error) {
+      if (typeof error !== "object" || error === null || !reported.has(error)) throw error;
+      return read();
+    }
+  }
   const decoder = new TextDecoder();
   const listeners = new Set<(change: FileChange) => void>();
   let revoked: Error | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending = emptyPending();
+  let moveOperations = 0;
 
   function announce(): void {
     timer = undefined;
@@ -222,6 +244,24 @@ export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFi
     const absolute = projectPath(path);
     await confiner()(absolute, true);
     return filesystem.readFile(absolute);
+  }
+
+  /** Writes a file that must not exist yet. False when the name is taken; nothing is replaced. */
+  async function writeExclusive(path: string, content: string | Uint8Array): Promise<boolean> {
+    const absolute = projectPath(path);
+    await confiner()(absolute, true);
+    await filesystem.mkdirp(parentOf(absolute));
+    // Looked at first, so the common clash fails without a failed write at all.
+    if (await found(absolute)) return false;
+    try {
+      await filesystem.writeFile(absolute, content, { exclusive: true });
+      return true;
+    } catch (error) {
+      remember(error);
+      // Whatever the filesystem called it, a name that is taken is the answer the caller needs.
+      if (await found(absolute)) return false;
+      throw error;
+    }
   }
 
   async function readText(path: string): Promise<string | undefined> {
@@ -309,13 +349,25 @@ export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFi
     },
     read: readText,
     readBytes: readConfined,
+    async size(path) {
+      const absolute = projectPath(path);
+      await confiner()(absolute, true);
+      if (sizeOf) return sizeOf.size(absolute);
+      return (await filesystem.readFile(absolute))?.length;
+    },
     write: (path, content) => mutate(() => writeConfined(confiner(), path, content), [path]),
     writeIfUnchanged: (path, content, expected) =>
       mutate(async (): Promise<WriteOutcome> => {
         const current = await readText(path);
         if (current !== expected) return { written: false, current };
-        await writeConfined(confiner(), path, content);
-        return { written: true };
+        if (expected !== undefined) {
+          await writeConfined(confiner(), path, content);
+          return { written: true };
+        }
+        // Expected absent: create it exclusively, so a file that appears between the check and
+        // the write (the shell, another tab) is reported as a conflict, never replaced.
+        if (await writeExclusive(path, content)) return { written: true };
+        return { written: false, current: await pastReported(() => readText(path)) };
       }, [path]),
     async writeMany(files) {
       const entries = Object.entries(files);
@@ -339,19 +391,7 @@ export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFi
       }, [path]),
     create: (path, content = "") =>
       mutate(async () => {
-        const absolute = projectPath(path);
-        await confiner()(absolute, true);
-        await filesystem.mkdirp(parentOf(absolute));
-        // Looked at first, so the common clash fails without a failed write at all.
-        if (await found(absolute)) throw new DestinationExistsError(path);
-        try {
-          await filesystem.writeFile(absolute, content, { exclusive: true });
-        } catch (error) {
-          remember(error);
-          // Whatever the filesystem called it, a name that is taken is the answer the caller needs.
-          if (await found(absolute)) throw new DestinationExistsError(path);
-          throw error;
-        }
+        if (!(await writeExclusive(path, content))) throw new DestinationExistsError(path);
       }, [path]),
     remove: (path) =>
       mutate(
@@ -386,9 +426,13 @@ export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFi
             remember(error);
             throw error;
           }
+          // One operation id for the folder and every file listed with it: a reader applies the
+          // operation once, and can tell it apart from a later move between the same paths.
+          moveOperations += 1;
+          const operation = moveOperations;
           effects.moves.push(
-            { from, to },
-            ...inside.map((file) => ({ from: file, to: rebase(file, from, to) })),
+            { from, to, operation },
+            ...inside.map((file) => ({ from: file, to: rebase(file, from, to), operation })),
           );
         },
         [from, to],
@@ -417,6 +461,7 @@ export function createProjectFiles(filesystem: ProjectFilesystem, watch: WatchFi
       clearTimeout(timer);
       listeners.clear();
       stopWatching();
+      sizeOf?.dispose();
     },
   };
 }
