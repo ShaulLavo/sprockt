@@ -184,23 +184,16 @@ test("full or blocked storage never throws", () => {
   expect(() => leaveForRecovery(blocked, "ws1", "t", drafts({ "a.txt": { text: "x" } }))).not.toThrow();
 });
 
-test("settled with an earlier version or different buffer keeps a left draft until a matching covering version settles", () => {
+test("settled with an earlier version keeps a newer left draft until a covering version settles", () => {
   const storage = memoryStorage();
   const locks = memoryLocks();
   const tab = keeper(storage, locks, "tab-1");
-  tab.leave(
-    drafts({ "a.txt": { text: "A+B", baseText: "base" } }),
-    new Map([["a.txt", { buffer: 1, version: 2 }]]),
-  );
+  tab.leave(drafts({ "a.txt": { text: "A+B", baseText: "base" } }), new Map([["a.txt", 2]]));
 
-  tab.settled("a.txt", { buffer: 1, version: 1 });
+  tab.settled("a.txt", 1);
   expect(storage.items.has(draftKey("ws1", "a.txt", "tab-1"))).toBe(true);
 
-  // A flush from a different buffer with a higher version must not clear this buffer's draft.
-  tab.settled("a.txt", { buffer: 2, version: 9 });
-  expect(storage.items.has(draftKey("ws1", "a.txt", "tab-1"))).toBe(true);
-
-  tab.settled("a.txt", { buffer: 1, version: 2 });
+  tab.settled("a.txt", 2);
   expect(storage.items.has(draftKey("ws1", "a.txt", "tab-1"))).toBe(false);
 });
 

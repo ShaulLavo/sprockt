@@ -15,12 +15,6 @@ export interface Draft {
   readonly baseText?: string | undefined;
 }
 
-/** Identifies the buffer and edit version a stored or durable draft belongs to. */
-export interface DraftVersion {
-  readonly buffer: number;
-  readonly version: number;
-}
-
 /** A draft some tab left, with where it is stored. */
 export interface LeftDraft extends Draft {
   readonly key: string;
@@ -135,17 +129,16 @@ export function discardRecovered(storage: TextStore, keys: readonly string[]): v
 /** One tab's side of recovery: what it leaves, what it took from gone tabs, and when they go. */
 export interface DraftKeeper {
   /** The draft to show when `path` is opened in this tab, if a tab that can no longer save left one. */
-  recover(path: string, version?: DraftVersion): Promise<Draft | undefined>;
+  recover(path: string, version?: number): Promise<Draft | undefined>;
   /** Paths of drafts left by gone tabs that match `match` (for discovering detached drafts). */
   recoverablePaths(match: (path: string) => boolean): Promise<string[]>;
   /** Leaves this tab's unsaved text, replacing what it left before (page hidden, workspace lost). */
-  leave(drafts: ReadonlyMap<string, Draft>, versions?: ReadonlyMap<string, DraftVersion>): void;
+  leave(drafts: ReadonlyMap<string, Draft>, versions?: ReadonlyMap<string, number>): void;
   /**
    * Removes recovery entries for `path`. Without `version`, removes unconditionally (close,
-   * reload from disk). With `version`, removes only entries belonging to the same buffer up to
-   * that durable write version.
+   * reload from disk). With `version`, removes only entries covered by that durable write.
    */
-  settled(path: string, version?: DraftVersion): void;
+  settled(path: string, version?: number): void;
   /** Entries follow a file or folder this tab saw move. */
   renamed(from: string, to: string): void;
   /** This tab can no longer save (or is closing): other tabs may take what it left. */
@@ -160,11 +153,6 @@ export interface DraftKeeperOptions {
   /** Where a path is after a move (`tabs.ts` renamedPath). */
   renamedPath(path: string, from: string, to: string): string;
   now?(): number;
-}
-
-function covers(stored: DraftVersion | undefined, durable: DraftVersion): boolean {
-  if (stored === undefined) return true;
-  return stored.buffer === durable.buffer && stored.version <= durable.version;
 }
 
 function parseRecoveryKey(
@@ -185,12 +173,9 @@ export function createDraftKeeper(options: DraftKeeperOptions): DraftKeeper {
   const { storage, workspace, tab } = options;
   const releaseLease = holdTabLease(tab, options.locks);
   /** Entries other tabs left that this tab showed, by the path they are open at here. */
-  const taken = new Map<
-    string,
-    { readonly keys: readonly string[]; readonly version: DraftVersion | undefined }
-  >();
-  /** The buffer identity and version of each entry this tab last wrote via `leave`, by path. */
-  const ownVersions = new Map<string, DraftVersion | undefined>();
+  const taken = new Map<string, { readonly keys: readonly string[]; readonly version: number }>();
+  /** The monotonic version of each entry this tab last wrote via `leave`, by path. */
+  const ownVersions = new Map<string, number>();
 
   /** This tab's own entries, by the path they are for. */
   function ownEntries(): Map<string, string> {
@@ -237,7 +222,7 @@ export function createDraftKeeper(options: DraftKeeperOptions): DraftKeeper {
   }
 
   return {
-    async recover(path, version) {
+    async recover(path, version = 0) {
       const left = draftsLeftFor(storage, workspace, path);
       if (left.length === 0) return undefined;
       const live = await liveTabs(options.locks);
@@ -260,10 +245,11 @@ export function createDraftKeeper(options: DraftKeeperOptions): DraftKeeper {
     leave(drafts, versions) {
       leaveForRecovery(storage, workspace, tab, drafts, options.now?.());
       ownVersions.clear();
-      for (const path of drafts.keys()) ownVersions.set(path, versions?.get(path));
+      for (const path of drafts.keys()) ownVersions.set(path, versions?.get(path) ?? 0);
     },
     settled(path, version) {
       const takenEntry = taken.get(path);
+      const ownVersion = ownVersions.get(path);
       if (version === undefined) {
         discardRecovered(storage, (takenEntry?.keys ?? []).concat([draftKey(workspace, path, tab)]));
         taken.delete(path);
@@ -271,11 +257,11 @@ export function createDraftKeeper(options: DraftKeeperOptions): DraftKeeper {
         return;
       }
       const keys: string[] = [];
-      if (takenEntry && covers(takenEntry.version, version)) {
+      if (takenEntry && takenEntry.version <= version) {
         keys.push(...takenEntry.keys);
         taken.delete(path);
       }
-      if (ownVersions.has(path) && covers(ownVersions.get(path), version)) {
+      if (ownVersion !== undefined && ownVersion <= version) {
         keys.push(draftKey(workspace, path, tab));
         ownVersions.delete(path);
       }

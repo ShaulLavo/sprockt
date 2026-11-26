@@ -189,25 +189,33 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
 
   /** Moves a single tab, the file on screen and the selection from one exact path to another. */
   function retarget(from: string, to: string, current: string | undefined): string | undefined {
-    commit(
-      tabs().map((tab) => (tab.path === from ? { path: to, preview: false } : tab)),
-      current === from ? to : current,
-    );
+    const list = tabs();
+    const nextTabs = list.some((tab) => tab.path === from)
+      ? list.map((tab) => (tab.path === from ? { path: to, preview: false } : tab))
+      : list.concat([{ path: to, preview: false }]);
+    commit(nextTabs, current === from ? to : current);
     if (displayed() === from) setDisplayed(to);
     return current === from ? to : current;
   }
 
   /**
-   * Tabs, the file on screen and buffers (with unsaved text and undo) follow a move. A draft
-   * already open at a destination is not dropped: it moves aside to a free name first.
+   * Tabs, the file on screen and buffers (with unsaved text and undo) follow a move. A draft or
+   * pending undurable write at a destination is not dropped: it moves aside to a free name first.
    */
   function applyRename(from: string, to: string): void {
     const follows = (path: string) => renamedPath(path, from, to) !== path;
     const shown = displayed();
-    const affected = tabs().some((tab) => follows(tab.path)) || buffers.paths().some(follows);
-    if (!affected && (shown === undefined || !follows(shown))) return;
+    const displaced = buffers.rename(from, to);
+    const affected =
+      displaced.length > 0 ||
+      tabs().some((tab) => follows(tab.path)) ||
+      (shown !== undefined && follows(shown));
+    if (!affected) {
+      drafts.renamed(from, to);
+      return;
+    }
     let current = active();
-    for (const aside of buffers.rename(from, to)) {
+    for (const aside of displaced) {
       drafts.renamed(aside.from, aside.to);
       current = retarget(aside.from, aside.to, current);
     }
@@ -387,11 +395,13 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
       setReveal({ path, line: options.line, column: options.column, seq: revealSeq });
     },
     close(path) {
+      const wasDirty = buffers.get(path)?.dirty() ?? false;
       const next = closeTab(tabs(), path, active());
       commit(next.tabs, next.active);
       buffers.release(path);
-      // Closing confirmed dropping any unsaved text, a recovered copy included.
-      drafts.settled(path);
+      // Closing a dirty tab confirmed dropping its unsaved edits. Closing a clean tab whose
+      // save has not flushed yet keeps any recovery copy until that flush finishes.
+      if (wasDirty || !buffers.unsaved().has(path)) drafts.settled(path);
     },
     move: (from, to) => commit(moveTab(tabs(), from, to), active()),
     pin,
