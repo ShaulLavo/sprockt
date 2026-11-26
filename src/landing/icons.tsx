@@ -1,5 +1,5 @@
 // Crisp 24x24 stroke icons. The logo is the 8-tooth sprocket with `< >` brackets from ../ui/SprocktLogo.
-import type { JSX } from "solid-js";
+import type { ReactNode } from "react";
 import { SPROCKT_BRACKETS_PATH, SPROCKT_GEAR_PATH } from "../ui/SprocktLogo";
 
 export type IconName =
@@ -45,7 +45,7 @@ export type IconName =
   | "code"
   | "menu";
 
-function iconBody(name: IconName): JSX.Element {
+function iconBody(name: IconName): ReactNode {
   switch (name) {
     case "logo":
       return (
@@ -54,15 +54,15 @@ function iconBody(name: IconName): JSX.Element {
             d={SPROCKT_GEAR_PATH}
             fill="none"
             stroke="currentColor"
-            stroke-width="1.5"
-            stroke-linejoin="round"
+            strokeWidth="1.5"
+            strokeLinejoin="round"
           />
           <path
             d={SPROCKT_BRACKETS_PATH}
             fill="none"
             stroke="var(--accent, #1a4be0)"
-            stroke-width="1.9"
-            stroke-linecap="square"
+            strokeWidth="1.9"
+            strokeLinecap="square"
           />
         </>
       );
@@ -190,7 +190,7 @@ function iconBody(name: IconName): JSX.Element {
         </>
       );
     case "more":
-      return <path d="M5.5 12h.01M12 12h.01M18.5 12h.01" stroke-width="3" />;
+      return <path d="M5.5 12h.01M12 12h.01M18.5 12h.01" strokeWidth="3" />;
     case "left":
       return <path d="M19 12H5.5M11 6l-6 6 6 6" />;
     case "right":
@@ -276,7 +276,7 @@ function iconBody(name: IconName): JSX.Element {
 
 export function Icon(props: { readonly name: IconName; readonly class?: string }) {
   return (
-    <svg class={props.class ? `lp-ico ${props.class}` : "lp-ico"} viewBox="0 0 24 24" aria-hidden="true">
+    <svg className={props.class ? `lp-ico ${props.class}` : "lp-ico"} viewBox="0 0 24 24" aria-hidden="true">
       {iconBody(props.name)}
     </svg>
   );

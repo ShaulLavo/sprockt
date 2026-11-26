@@ -1,6 +1,6 @@
 // The four feature cards from the #4 landing: a title, two lines, and a drawn piece of the real
 // workbench on the painterly ground panel. The drawings are decorative; the words carry the meaning.
-import { For, type JSX } from "solid-js";
+import { Fragment, type ReactNode } from "react";
 import { LANDING_COPY } from "./copy";
 import { BrandLogoTile } from "./logos";
 
@@ -126,15 +126,23 @@ const WORKSPACES: readonly (readonly [logo: string, name: string, state: string]
 
 function Tokens(props: { readonly tokens: readonly Tok[] }) {
   return (
-    <For each={props.tokens}>
-      {(token) => (token[0] ? <span class={token[0]}>{token[1]}</span> : token[1])}
-    </For>
+    <>
+      {props.tokens.map((token, index) =>
+        token[0] ? (
+          <span key={index} className={token[0]}>
+            {token[1]}
+          </span>
+        ) : (
+          <Fragment key={index}>{token[1]}</Fragment>
+        ),
+      )}
+    </>
   );
 }
 
 function Tick() {
   return (
-    <svg class="lp-mini-tick" viewBox="0 0 16 16" aria-hidden="true">
+    <svg className="lp-mini-tick" viewBox="0 0 16 16" aria-hidden="true">
       <path d="m3.5 8.4 2.8 2.8 6.2-6.4" />
     </svg>
   );
@@ -142,24 +150,22 @@ function Tick() {
 
 function CheckPanel() {
   return (
-    <div class="lp-mini lp-mini-code lp-at-corner">
-      <div class="lp-mini-tabs">
-        <span class="is-on" data-tab-tone="ts">
+    <div className="lp-mini lp-mini-code lp-at-corner">
+      <div className="lp-mini-tabs">
+        <span className="is-on" data-tab-tone="ts">
           cart.ts
         </span>
         <span>types.ts</span>
         <em>3 problems</em>
       </div>
-      <ol class="lp-mini-pre">
-        <For each={CHECK_LINES}>
-          {(line) => (
-            <li data-n={line[0]}>
-              <Tokens tokens={line[1]} />
-            </li>
-          )}
-        </For>
+      <ol className="lp-mini-pre">
+        {CHECK_LINES.map((line) => (
+          <li key={line[0]} data-n={line[0]}>
+            <Tokens tokens={line[1]} />
+          </li>
+        ))}
       </ol>
-      <div class="lp-mini-diag">
+      <div className="lp-mini-diag">
         <b>ts(2322)</b> Type 'number[]' is not assignable to type 'number'.
       </div>
     </div>
@@ -168,21 +174,19 @@ function CheckPanel() {
 
 function CompletePanel() {
   return (
-    <div class="lp-mini lp-mini-complete lp-at-rise">
-      <div class="lp-mini-line">
+    <div className="lp-mini lp-mini-complete lp-at-rise">
+      <div className="lp-mini-line">
         order.
-        <span class="lp-mini-caret" />
+        <span className="lp-mini-caret" />
       </div>
-      <ul class="lp-mini-list">
-        <For each={MEMBERS}>
-          {(member, index) => (
-            <li classList={{ "is-on": index() === 0 }}>
-              <i>{member[0]}</i>
-              {member[1]}
-              <span>{member[2]}</span>
-            </li>
-          )}
-        </For>
+      <ul className="lp-mini-list">
+        {MEMBERS.map((member, index) => (
+          <li key={member[1]} className={index === 0 ? "is-on" : undefined}>
+            <i>{member[0]}</i>
+            {member[1]}
+            <span>{member[2]}</span>
+          </li>
+        ))}
       </ul>
     </div>
   );
@@ -190,9 +194,9 @@ function CompletePanel() {
 
 function TerminalPanel() {
   return (
-    <div class="lp-mini lp-mini-term lp-at-right">
-      <div class="lp-mini-termhead">
-        <span class="lp-mini-dots">
+    <div className="lp-mini lp-mini-term lp-at-right">
+      <div className="lp-mini-termhead">
+        <span className="lp-mini-dots">
           <i />
           <i />
           <i />
@@ -200,41 +204,40 @@ function TerminalPanel() {
         <b>my-app</b>
         <span>bash</span>
       </div>
-      <div class="lp-mini-screen">
+      <div className="lp-mini-screen">
         <p>
-          <span class="lp-mini-cwd">~/my-app</span> <span class="lp-mini-sig">$</span> <b>bun test</b>
+          <span className="lp-mini-cwd">~/my-app</span> <span className="lp-mini-sig">$</span> <b>bun test</b>
         </p>
-        <p class="lp-mini-meter">
-          <span class="lp-mini-bar" />3 of 3 files
+        <p className="lp-mini-meter">
+          <span className="lp-mini-bar" />3 of 3 files
         </p>
-        <For each={TEST_FILES}>
-          {(row) => (
-            <p class="lp-mini-log">
-              <Tick />
-              <span>{row[0]}</span>
-              <span class="lp-mini-n">{row[1]}</span>
-            </p>
-          )}
-        </For>
-        <p class="lp-mini-gap" />
-        <p class="lp-mini-sum">
+        {TEST_FILES.map((row) => (
+          <p key={row[0]} className="lp-mini-log">
+            <Tick />
+            <span>{row[0]}</span>
+            <span className="lp-mini-n">{row[1]}</span>
+          </p>
+        ))}
+        <p className="lp-mini-gap" />
+        <p className="lp-mini-sum">
           <span>Test files</span>
           <b>3 passed</b>
         </p>
-        <p class="lp-mini-sum">
+        <p className="lp-mini-sum">
           <span>Tests</span>
           <b>15 passed</b>
         </p>
-        <p class="lp-mini-done">
-          <span class="lp-mini-ok">
+        <p className="lp-mini-done">
+          <span className="lp-mini-ok">
             <Tick />
           </span>
-          <b>15 pass</b> <span class="lp-mini-dim">0 fail</span>
+          <b>15 pass</b> <span className="lp-mini-dim">0 fail</span>
         </p>
         <p>
-          <span class="lp-mini-cwd">~/my-app</span> <span class="lp-mini-sig">$</span> <b>bun run build</b>
+          <span className="lp-mini-cwd">~/my-app</span> <span className="lp-mini-sig">$</span>{" "}
+          <b>bun run build</b>
         </p>
-        <p class="lp-mini-log">
+        <p className="lp-mini-log">
           <Tick />
           <span>dist/index.html</span>
         </p>
@@ -245,18 +248,16 @@ function TerminalPanel() {
 
 function StorePanel() {
   return (
-    <div class="lp-mini lp-mini-ws lp-at-low">
-      <div class="lp-mini-head">Workspaces</div>
+    <div className="lp-mini lp-mini-ws lp-at-low">
+      <div className="lp-mini-head">Workspaces</div>
       <ul>
-        <For each={WORKSPACES}>
-          {(row, index) => (
-            <li classList={{ "is-on": index() === 0 }}>
-              <BrandLogoTile templateId={row[0]} />
-              <b>{row[1]}</b>
-              <span>{row[2]}</span>
-            </li>
-          )}
-        </For>
+        {WORKSPACES.map((row, index) => (
+          <li key={row[1]} className={index === 0 ? "is-on" : undefined}>
+            <BrandLogoTile templateId={row[0]} />
+            <b>{row[1]}</b>
+            <span>{row[2]}</span>
+          </li>
+        ))}
       </ul>
     </div>
   );
@@ -266,14 +267,14 @@ function FeatureCard(props: {
   readonly title: string;
   readonly body: string;
   readonly fade: "b" | "br";
-  readonly children: JSX.Element;
+  readonly children: ReactNode;
 }) {
   return (
-    <article class="lp-card">
+    <article className="lp-card">
       <h3>{props.title}</h3>
       <p>{props.body}</p>
-      <div class="lp-panel" aria-hidden="true">
-        <div class={`lp-stage lp-fade-${props.fade}`}>{props.children}</div>
+      <div className="lp-panel" aria-hidden="true">
+        <div className={`lp-stage lp-fade-${props.fade}`}>{props.children}</div>
       </div>
     </article>
   );
@@ -281,7 +282,7 @@ function FeatureCard(props: {
 
 export function FeatureCards() {
   return (
-    <div class="lp-cards">
+    <div className="lp-cards">
       <FeatureCard title={LANDING_COPY.featureCheckTitle} body={LANDING_COPY.featureCheckBody} fade="br">
         <CheckPanel />
       </FeatureCard>

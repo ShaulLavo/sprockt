@@ -31,7 +31,7 @@ const ASTRO_PATH =
 export function ReactMark(props: { readonly class?: string }) {
   return (
     <svg
-      class={props.class ? `lp-react-svg ${props.class}` : "lp-react-svg"}
+      className={props.class ? `lp-react-svg ${props.class}` : "lp-react-svg"}
       viewBox="0 0 256 228"
       aria-hidden="true"
     >
@@ -40,42 +40,40 @@ export function ReactMark(props: { readonly class?: string }) {
   );
 }
 
-export function BrandLogoTile(props: { readonly templateId: string; readonly class?: string }) {
-  const classes = () =>
-    props.class
-      ? `lp-logo-tile lp-logo-${props.templateId} ${props.class}`
-      : `lp-logo-tile lp-logo-${props.templateId}`;
-
-  function renderMark() {
-    switch (props.templateId) {
-      case "vite-react":
-        return <ReactMark class="lp-brand-svg" />;
-      case "next-app":
-        return (
-          <svg class="lp-brand-svg" viewBox="0 0 24 24" aria-hidden="true">
-            <path d={NEXT_PATH} />
-          </svg>
-        );
-      case "hono":
-        return <img src={LOGOS.hono} alt="" width="24" height="24" />;
-      case "astro":
-        return (
-          <svg class="lp-brand-svg" viewBox="1.917 -0.48 20.166 24.96" aria-hidden="true">
-            <path d={ASTRO_PATH} />
-          </svg>
-        );
-      case "sveltekit":
-        return <img src={LOGOS.svelte} alt="" width="24" height="24" />;
-      case "vanilla":
-        return <img src={LOGOS.typescript} alt="" width="24" height="24" />;
-      case "bun-sqlite":
-        return <img src={LOGOS.bun} alt="" width="24" height="24" />;
-      case "github":
-        return <Icon name="github" class="lp-glyph" />;
-      default:
-        return <Icon name="file" class="lp-glyph" />;
-    }
+function brandMark(templateId: string) {
+  switch (templateId) {
+    case "vite-react":
+      return <ReactMark class="lp-brand-svg" />;
+    case "next-app":
+      return (
+        <svg className="lp-brand-svg" viewBox="0 0 24 24" aria-hidden="true">
+          <path d={NEXT_PATH} />
+        </svg>
+      );
+    case "hono":
+      return <img src={LOGOS.hono} alt="" width="24" height="24" />;
+    case "astro":
+      return (
+        <svg className="lp-brand-svg" viewBox="1.917 -0.48 20.166 24.96" aria-hidden="true">
+          <path d={ASTRO_PATH} />
+        </svg>
+      );
+    case "sveltekit":
+      return <img src={LOGOS.svelte} alt="" width="24" height="24" />;
+    case "vanilla":
+      return <img src={LOGOS.typescript} alt="" width="24" height="24" />;
+    case "bun-sqlite":
+      return <img src={LOGOS.bun} alt="" width="24" height="24" />;
+    case "github":
+      return <Icon name="github" class="lp-glyph" />;
+    default:
+      return <Icon name="file" class="lp-glyph" />;
   }
+}
 
-  return <span class={classes()}>{renderMark()}</span>;
+export function BrandLogoTile(props: { readonly templateId: string; readonly class?: string }) {
+  const classes = props.class
+    ? `lp-logo-tile lp-logo-${props.templateId} ${props.class}`
+    : `lp-logo-tile lp-logo-${props.templateId}`;
+  return <span className={classes}>{brandMark(props.templateId)}</span>;
 }
