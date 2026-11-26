@@ -39,13 +39,28 @@ export async function detectWorkspace(files: FileService): Promise<ProjectDetect
 const shellWord = (word: string) =>
   /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 
+/** How the dev-server task starts a project. */
+export interface DevStart {
+  /** The shell command for the first start, with the install in front when one is needed. */
+  readonly script: string;
+  /**
+   * What to run again when a source file changes, for a command that does not pick edits up by
+   * itself. Undefined when it does (a dev script: Vite, `bun --hot`, whatever the project chose).
+   */
+  readonly rerun: string | undefined;
+}
+
 /**
- * The shell command that brings the dev server up, installing dependencies first when the
- * project declares some and has none installed. Undefined when nothing can be started.
+ * How to bring the dev server up, installing dependencies first when the project declares some
+ * and has none installed. Undefined when nothing can be started.
+ *
+ * A project without a dev script is started from its entry file with plain `bun <file>`, which
+ * serves what it loaded and never looks at the file again, so the task runs it again on a change.
  */
-export function devCommand(detection: ProjectDetection, hasNodeModules: boolean): string | undefined {
+export function devStart(detection: ProjectDetection, hasNodeModules: boolean): DevStart | undefined {
   if (!detection.dev) return undefined;
   const start = [detection.dev.command].concat(detection.dev.args).map(shellWord).join(" ");
   const install = detection.install && !hasNodeModules;
-  return install ? `bun install && ${start}` : start;
+  const bareEntry = detection.devScript === undefined && detection.dev.command === "bun";
+  return { script: install ? `bun install && ${start}` : start, rerun: bareEntry ? start : undefined };
 }

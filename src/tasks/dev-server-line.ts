@@ -38,13 +38,13 @@ export interface LineState {
   readonly remotePorts: readonly number[];
 }
 
-export interface DevServerLineOptions {
+export interface DevServerLineOptions<Command> {
   readonly coordinator: DevServerCoordinator;
   readonly ports: LocalPorts;
-  /** The command that starts the project's server, or nothing when it has none. */
-  command(): Promise<string | undefined>;
+  /** What starts the project's server, or nothing when it has none. */
+  command(): Promise<Command | undefined>;
   /** Runs `command` in this tab. */
-  spawn(command: string): Promise<ServerProcess>;
+  spawn(command: Command): Promise<ServerProcess>;
 }
 
 export interface DevServerLine {
@@ -71,7 +71,7 @@ const aborted = (signal: AbortSignal) =>
     else signal.addEventListener("abort", () => resolve(), { once: true });
   });
 
-export function createDevServerLine(options: DevServerLineOptions): DevServerLine {
+export function createDevServerLine<Command>(options: DevServerLineOptions<Command>): DevServerLine {
   const { coordinator, ports } = options;
   const listeners = new Set<(state: LineState) => void>();
   /** Leaves the line. Set while this tab stands in it or owns the server. */
@@ -87,7 +87,7 @@ export function createDevServerLine(options: DevServerLineOptions): DevServerLin
   /** Moved on by `stop` and `dispose`: a start that was still looking for its command gives up. */
   let generation = 0;
   /** The command a start found, for the lease that start is about to get. */
-  let found: string | undefined;
+  let found: Command | undefined;
 
   function state(): LineState {
     const current = coordinator.current();
@@ -186,7 +186,7 @@ export function createDevServerLine(options: DevServerLineOptions): DevServerLin
     // Claimed here, before the first await: the status is "starting" from this moment.
     requested = true;
     emit();
-    let command: string | undefined;
+    let command: Command | undefined;
     try {
       command = await options.command();
     } finally {

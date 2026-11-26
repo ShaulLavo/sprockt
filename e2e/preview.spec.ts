@@ -168,26 +168,30 @@ test("reload, the error indicator and the viewport switch", async ({ page }) => 
   expect(await width()).not.toBe(768);
 });
 
-// A server entry file the dev-server task can start: it runs one with `bun --hot`, which in
-// bun-wasm takes only an ES module without WebSocket handlers.
-const ENTRY_HTML =
-  "<!doctype html><html><head><title>Home</title></head><body><h1>Hello from Bun.serve</h1></body></html>";
-const ENTRY = `export {};
-Bun.serve({
-  port: 3000,
-  fetch: () => new Response(${JSON.stringify(ENTRY_HTML)}, { headers: { "content-type": "text/html; charset=utf-8" } }),
-});
-`;
-
 test("the pane's button starts a server entry file, and the pill stops it", async ({ page }) => {
   await newWorkspace(page);
-  await writeFile(page, "server.ts", ENTRY);
+  // A script with no import or export and with WebSocket handlers: the kind of file `bun --hot`
+  // refuses in bun-wasm. The task runs it with plain `bun`.
+  await writeFile(page, "server.ts", SERVER);
   const task = page.getByTestId("preview-task");
   await expect(task).toHaveAttribute("data-status", "stopped");
   await task.click();
   await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
   await expect(task).toHaveAttribute("data-status", "running");
   await expect(page.getByTestId("dev-server")).toHaveText(":3000");
+  await navigate(page, "/echo");
+  await expect(frame(page).getByRole("heading")).toHaveText("echo: PING");
+
+  // An edit shows without anyone restarting anything: the task runs the file again.
+  await writeFile(page, "server.ts", SERVER.replace("Hello from Bun.serve", "Edited and restarted"));
+  await expect(frame(page).getByRole("heading")).toHaveText("Edited and restarted");
+  await expect(task).toHaveAttribute("data-status", "running");
+  // What the server writes itself is not a reason to restart it.
+  await writeFile(page, "data.json", "{}");
+  await writeFile(page, "notes.sqlite", "not source");
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+  await expect(task).toHaveAttribute("data-status", "running");
+  await expect(frame(page).getByRole("heading")).toHaveText("Edited and restarted");
 
   await page.getByTestId("dev-server").getByRole("button", { name: "Stop dev server" }).click();
   await expect(task).toHaveAttribute("data-status", "stopped");
@@ -196,9 +200,39 @@ test("the pane's button starts a server entry file, and the pill stops it", asyn
 
   // It starts again, from the pane's button, and that button stops it too.
   await task.click();
-  await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
+  await expect(frame(page).getByRole("heading")).toHaveText("Edited and restarted");
   await task.click();
   await expect(task).toHaveAttribute("data-status", "stopped");
+  // Stopped is stopped: an edit now starts nothing.
+  await writeFile(page, "server.ts", SERVER);
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+  await expect(task).toHaveAttribute("data-status", "stopped");
+  await expect(page.getByTestId("preview-port")).toBeDisabled();
+});
+
+test("the Bun.serve + bun:sqlite starter starts from the pane's button and renders", async ({ page }) => {
+  // The starter installs Bun's types from the npm registry inside the browser first: these are
+  // hang caps for a download, not speed targets.
+  test.setTimeout(900_000);
+  const patient = { timeout: 600_000 };
+  await page.goto("/");
+  await page.getByTestId("template-bun-sqlite").click();
+  await expect(page).toHaveURL(/\/w\/[a-z0-9-]+$/);
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+
+  await page.getByTestId("preview-task").click();
+  const app = frame(page);
+  await expect(app.getByRole("heading")).toHaveText("Bun.serve + bun:sqlite", patient);
+  await expect(page.getByTestId("preview-port")).toHaveValue("5173");
+  // The page is rendered from rows the server put in its database.
+  await expect(app.getByText("SQLite persists inside IndexedDB")).toBeVisible();
+
+  // A form post writes a row, and the redirect back stays in the preview.
+  await app.getByPlaceholder("Write a note...").fill("written from the preview");
+  await app.getByRole("button", { name: "Add" }).click();
+  await expect(app.getByText("written from the preview")).toBeVisible();
+  await expect(urlBar(page)).toHaveValue("/");
+  await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "running");
 });
 
 test("a tab that takes the workspace over is not left following the old tab's dev server", async ({
@@ -208,7 +242,7 @@ test("a tab that takes the workspace over is not left following the old tab's de
   // With the attach policy a second tab shares the workspace instead (e2e/dev-server-tabs.spec.ts).
   test.skip(TAB_POLICY === "attach", "a second tab takes over only with the takeover policy");
   const id = await newWorkspace(page);
-  await writeFile(page, "server.ts", ENTRY);
+  await writeFile(page, "server.ts", SERVER);
   await expect(page.getByTestId("save-state")).toHaveText("saved");
   await page.getByTestId("preview-task").click();
   await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");

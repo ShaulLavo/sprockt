@@ -13,7 +13,8 @@ import type { ShellSettings } from "../runtime/boot";
 import { createDevServerCoordinator } from "../workspace/coordinator";
 import { PROJECT_ROOT } from "../workspace/paths";
 import { createDevServerLine, type DevServerStatus, type ServerProcess } from "./dev-server-line";
-import { devCommand, detectWorkspace } from "./detect";
+import { detectWorkspace, devStart, type DevStart } from "./detect";
+import { isSourceChange, restartingProcess, type Run } from "./restarting";
 
 export type { DevServerStatus } from "./dev-server-line";
 
@@ -83,52 +84,67 @@ export function createDevServer(host: DevServerHost): DevServer {
     append(new TextEncoder().encode(`\n${error instanceof Error ? error.message : String(error)}\n`));
   }
 
-  async function command(): Promise<string | undefined> {
+  async function command(): Promise<DevStart | undefined> {
     const [project, modules] = await Promise.all([
       detectWorkspace(host.files),
       host.runtime.filesystem.resolvePath(`${PROJECT_ROOT}/node_modules`),
     ]);
-    return devCommand(project, modules !== undefined);
+    return devStart(project, modules !== undefined);
   }
 
-  function openShell(script: string): Promise<Shell> {
-    return createShell({
+  /** One run of `script` in a shell of its own, its output copied until it ends. */
+  async function openRun(script: string): Promise<Run> {
+    const shell = await createShell({
       runtime: host.runtime,
       wasmUrl: host.shell.wasmUrl,
       workerUrl: host.shell.workerUrl,
       cwd: host.shell.cwd,
       env: { ...host.shell.env },
       script,
-    }).catch((error: unknown) => {
-      // No shell, so no server: what went wrong is the output, and it stays on screen.
-      setEnded(true);
-      throw error;
     });
-  }
-
-  /** Runs `script` in a shell of its own and copies its output until it ends. */
-  async function spawn(script: string): Promise<ServerProcess> {
-    setOutput("");
-    setEnded(false);
-    const shell = await openShell(script);
     let over = false;
-    let stopped = false;
     const wake = () => {
       over = true;
       shell.terminal.signal();
     };
     shell.done.then(wake, wake);
-    const exited = pump(shell, append, () => over)
+    const done = pump(shell, append, () => over)
       .then(() => shell.dispose())
-      .catch(report)
-      // It ended without being asked to: its last output says why, and the pane keeps it.
-      .finally(() => setEnded(!stopped));
+      .catch(report);
     return {
-      command: script,
-      exited,
+      done,
+      interrupt() {
+        if (!over) shell.interrupt();
+      },
+    };
+  }
+
+  /** Starts the server. A command that does not reload itself runs again when the source changes. */
+  async function spawn(start: DevStart): Promise<ServerProcess> {
+    setOutput("");
+    setEnded(false);
+    let stopped = false;
+    const process = await restartingProcess({
+      script: start.script,
+      rerun: start.rerun,
+      open: openRun,
+      onSourceChange: (listener) =>
+        host.files.subscribe((change) => {
+          if (isSourceChange(change)) listener();
+        }),
+      onRestart: () => setOutput(""),
+    }).catch((error: unknown) => {
+      // No shell, so no server: what went wrong is the output, and it stays on screen.
+      setEnded(true);
+      throw error;
+    });
+    return {
+      command: process.command,
+      // It ended without being asked to: its last output says why, and the pane keeps it.
+      exited: process.exited.catch(report).finally(() => setEnded(!stopped)),
       stop() {
         stopped = true;
-        if (!over) shell.interrupt();
+        process.stop();
       },
     };
   }

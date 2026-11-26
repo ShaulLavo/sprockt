@@ -253,7 +253,8 @@ How the mounted transport works:
   until the socket is open, and a page that is reloaded or removed ends its sockets, because
   the server learns that only from the channel. It also reports the page's location and
   errors to the pane and takes "reload" and "go to" from it (`preview/bridge.ts`,
-  `window.postMessage`, the same for an isolated origin), and keeps links inside the mount.
+  `window.postMessage`, the same for an isolated origin), and keeps links and form posts to
+  `/path` inside the mount (`preview/inject/mounting.ts`).
 - **The pane** (`preview/PreviewPane.tsx`) keeps its own back and forward list
   (`preview/history.ts`). A frame's browser history is shared with the IDE page, so stepping
   through it could walk the IDE itself back.
@@ -272,6 +273,13 @@ project detection (`importer/detect`, through `tasks/detect.ts`) what starts thi
 project has a `package.json` and no `node_modules`, then the command, in its own shell on the
 workspace's runtime. It is `running` once a port listens. Terminals are separate shells, so
 stopping the task never touches what was started by hand.
+
+A dev script reloads the way its author chose (Vite, `bun --hot`). A bare entry file is run
+with plain `bun <file>`, which never looks at the file again, so the task runs it again when
+the source changes (`tasks/restarting.ts`): code, pages and styles count, and what a server
+writes itself (a database, a JSON file) and what is installed do not. The server's port goes
+away and comes back, and the pane loads the page again. A run that ends by itself is not
+started again: a crashed server stays down, with its output on screen.
 
 One tab of a workspace runs the task (`tasks/dev-server-line.ts`, on
 `workspace/coordinator.ts`). Asking for the server stands in the workspace's line; the tab that
@@ -447,11 +455,13 @@ where the bytes live.
    hand in a terminal shows in its own tab only, unless that tab also runs the task. The
    two-tab tests (`e2e/dev-server-tabs.spec.ts`) run only with the attach policy (gap 1); they
    pass when it is switched on locally.
-7. **`bun --hot` in bun-wasm is narrower than Bun's.** The task starts a bare entry file with
-   `bun --hot <file>` (the importer's detection). bun-wasm refuses that for a file with no
-   `import` or `export` ("--hot requires an ESM graph") and for a server with routes or
-   WebSocket handlers ("--hot does not support routes, WebSockets, TLS or Unix listeners"), and
-   then waits for an edit, so the task stays on "starting" with the error under it.
+7. **`bun --hot` in bun-wasm is narrower than Bun's, and there is no `bun --watch`.** bun-wasm
+   refuses `--hot` for a file with no `import` or `export` ("--hot requires an ESM graph") and
+   for a server with routes or WebSocket handlers ("--hot does not support routes, WebSockets,
+   TLS or Unix listeners"), and then waits for an edit; `--watch` prints the usage text.
+   Sprockt no longer picks `--hot` itself: a bare entry file is run plainly and restarted by
+   the task. A project whose own dev script says `bun --hot` still meets these limits (the
+   Hono and SQLite starters' scripts do, and their servers are within them).
 8. **Waffle's preview router does not close a server connection whose page vanished.** A
    WebSocket tunnel ends on the server only when the page's end says `end`. The client script
    says it when the page is reloaded, navigated or removed. A page that dies without running

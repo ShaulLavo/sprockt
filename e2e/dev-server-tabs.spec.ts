@@ -12,9 +12,7 @@ test.beforeEach(({ browserName }) => {
   test.fixme(browserName === "webkit", "Bun's browser engine traps in WebKit");
 });
 
-// An ES module: the task runs an entry file with `bun --hot`, which in bun-wasm takes no other kind.
 const SERVER = `
-export {};
 Bun.serve({
   port: 3000,
   fetch: () =>

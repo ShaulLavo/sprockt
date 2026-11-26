@@ -250,7 +250,10 @@ function devCommand(
   entry: string | undefined,
 ): Command | undefined {
   if (devScript) return { command: "bun", args: ["run", devScript] };
-  if (entry) return { command: "bun", args: ["--hot", entry] };
+  // A bare entry file is run as it is. `bun --hot` in bun-wasm refuses a file without an import
+  // or export and a server with routes or WebSocket handlers, and there is no `--watch`; the
+  // dev-server task restarts the file itself when the source changes (tasks/restarting.ts).
+  if (entry) return { command: "bun", args: [entry] };
   if (!framework || framework === "hono" || framework === "bun-serve") return undefined;
   return { command: "bunx", args: DEFAULT_DEV[framework] };
 }

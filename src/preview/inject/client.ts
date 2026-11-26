@@ -2,6 +2,7 @@
 // WebSocket that reaches its dev server (hot reload needs one), and it tells the preview pane
 // where the page is and what went wrong in it.
 import { frameMessage, isFrameCommand, type FrameMessage } from "../bridge";
+import { remounted } from "./mounting";
 import { tunnelTarget, type PageServer } from "./tunnel";
 import { endTunnels, TunnelWebSocket } from "./websocket";
 
@@ -88,14 +89,38 @@ function keepLinksMounted(): void {
     if (!(anchor instanceof HTMLAnchorElement) || event.defaultPrevented || event.button !== 0) return;
     if (event.metaKey || event.ctrlKey || event.shiftKey || (anchor.target && anchor.target !== "_self"))
       return;
-    const url = new URL(anchor.href);
-    const mounted = url.pathname === server.mount || url.pathname.startsWith(`${server.mount}/`);
-    if (url.origin !== location.origin || mounted) return;
+    const target = remounted(anchor.href, new URL(location.href), server.mount);
+    if (target === undefined) return;
     event.preventDefault();
-    location.assign(server.mount + url.pathname + url.search + url.hash);
+    location.assign(target);
+  });
+}
+
+type Submitter = HTMLButtonElement | HTMLInputElement;
+
+const isSubmitter = (element: HTMLElement | null): element is Submitter =>
+  element instanceof HTMLButtonElement || element instanceof HTMLInputElement;
+
+/**
+ * The same for a form: `action="/notes"` is the server's `/notes`. The address is corrected
+ * while the submit event is under way, before the browser reads it. A form the page submits
+ * itself (it called `preventDefault`) is left alone.
+ */
+function keepFormsMounted(): void {
+  window.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || event.defaultPrevented) return;
+    // A submit button may name its own address, which then wins over the form's.
+    const button =
+      isSubmitter(event.submitter) && event.submitter.hasAttribute("formaction") ? event.submitter : null;
+    const target = remounted(button ? button.formAction : form.action, new URL(location.href), server.mount);
+    if (target === undefined) return;
+    if (button) button.formAction = target;
+    else form.action = target;
   });
 }
 
 if (Number.isInteger(server.port) && server.port > 0) installWebSocket();
 if (server.mount) keepLinksMounted();
+if (server.mount) keepFormsMounted();
 if (parent !== window) installBridge(parent);
