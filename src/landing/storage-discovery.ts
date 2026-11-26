@@ -2,6 +2,8 @@
 // Imports only Waffle's fs/ storage modules so waffle/runtime.ts stays unloaded on "/".
 import { IndexedDBStorage } from "waffle/fs/indexeddb";
 import type { PersistedIndex, PersistedNode } from "waffle/fs/storage";
+import { browserIdentityStore } from "../preview/identity-store";
+import { deleteStorage } from "../workspace/storage-lifecycle";
 
 const INDEXEDDB_FORMAT_PREFIX = "waffle-indexeddb-";
 const decoder = new TextDecoder();
@@ -169,27 +171,46 @@ function deleteDatabase(name: string): Promise<void> {
   });
 }
 
+/** What holding a workspace's storage idle gives: the claim on its OPFS files. */
+interface IdleStorage {
+  remove(): Promise<"deleted" | "missing">;
+}
+
+async function removeIdleStorage(name: string, held: IdleStorage): Promise<"deleted" | "missing"> {
+  const database = await openExistingDatabase(name);
+  let removedIdb = false;
+  if (database) {
+    const valid = await isWorkspaceDatabase(database).finally(() => database.close());
+    if (valid) {
+      await deleteDatabase(name);
+      removedIdb = true;
+    }
+  }
+  const opfsOutcome = await held.remove();
+  return removedIdb || opfsOutcome === "deleted" ? "deleted" : "missing";
+}
+
+/**
+ * Deletes a workspace's storage, and with it the IDE's record of the workspace's preview
+ * identity, in one step under the storage's locks (workspace/storage-lifecycle.ts). Every
+ * deletion of a workspace goes through here. Rejects, with the storage still there, when the
+ * identity could not be forgotten.
+ */
 export async function deleteIdleWorkspaceStorage(name: string): Promise<"deleted" | "missing" | "busy"> {
   if (!globalThis.indexedDB || !globalThis.navigator?.locks) return "missing";
   const { OpfsStorage } = await import("waffle/fs/opfs");
-  const result = await withIdleIndexedDbLock(name, async (): Promise<"deleted" | "missing" | "busy"> => {
-    const opfs = await OpfsStorage.claimIdle(name);
-    if (opfs === "busy") return "busy";
-    try {
-      const database = await openExistingDatabase(name);
-      let removedIdb = false;
-      if (database) {
-        const valid = await isWorkspaceDatabase(database).finally(() => database.close());
-        if (valid) {
-          await deleteDatabase(name);
-          removedIdb = true;
+  return deleteStorage<IdleStorage>({
+    whileIdle: (work) =>
+      withIdleIndexedDbLock(name, async () => {
+        const opfs = await OpfsStorage.claimIdle(name);
+        if (opfs === "busy") return "busy" as const;
+        try {
+          return await work(opfs);
+        } finally {
+          await opfs.release();
         }
-      }
-      const opfsOutcome = await opfs.remove();
-      return removedIdb || opfsOutcome === "deleted" ? "deleted" : "missing";
-    } finally {
-      await opfs.release();
-    }
+      }),
+    forgetIdentity: () => browserIdentityStore().forget(name),
+    removeStorage: (held) => removeIdleStorage(name, held),
   });
-  return result;
 }

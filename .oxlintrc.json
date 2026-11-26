@@ -22,5 +22,12 @@
       "rules": { "no-console": "off" }
     }
   ],
-  "ignorePatterns": ["dist", "dist-previews-off", "public/guests", "test-results", "playwright-report"]
+  "ignorePatterns": [
+    "dist",
+    "dist-previews-off",
+    "dist-isolated",
+    "public/guests",
+    "test-results",
+    "playwright-report"
+  ]
 }

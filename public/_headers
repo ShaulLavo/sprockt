@@ -7,6 +7,8 @@
   Cache-Control: no-store
 /index.html
   Cache-Control: no-store
+/preview-frame
+  Cache-Control: no-store
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 /guests/*

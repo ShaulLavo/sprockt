@@ -3,8 +3,11 @@
 import { buildPreviewKind } from "./kind";
 import { retirePreviewWorker } from "./retire";
 
-/** A build without previews removes the preview worker a build before it may have left here. */
+/**
+ * A build without mounted previews removes the mounted preview worker a build before it may
+ * have left on this origin: a build with no previews, and one whose previews are isolated.
+ */
 export function retirePreviewsIfOff(): void {
-  if (buildPreviewKind() !== "none") return;
+  if (buildPreviewKind() === "mounted") return;
   retirePreviewWorker().catch((error: unknown) => console.error("Removing the preview worker failed", error));
 }

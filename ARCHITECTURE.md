@@ -35,8 +35,9 @@ src/
   editor/             EditorPane, tabs, EditorStore, file buffers, theme, plugin mount hook
   search/             quick open (fuzzy file finder) and project search, run in the page
   terminal/           TerminalPane, Ghostty + bash-web session
-  preview/            PreviewTransport seam, mounted transport and its service worker, the client
-                      script for previewed pages, PreviewPane and its toolbar
+  preview/            PreviewTransport seam; the mounted transport, its service worker and the
+                      client script for previewed pages; the isolated transport, the workspace's
+                      preview identity and the new-tab page; PreviewPane and its toolbar
   templates/          (slice 1) starter catalog and file sets
   importer/           (slice 4) GitHub import, install and dev-script detection, share links
   tasks/              the dev-server task and dev-script detection; (slice 7) its cross-tab owner
@@ -180,7 +181,7 @@ program it runs.
 | `waffle` (`@waffle-os/runtime`), `@waffle-os/relay`     | 0.0.150            | npm                                                                   |
 | `waffle-base`                                           | programs-v0.0.23   | GitHub release tarball                                                |
 | `bash-web`                                              | 0.0.114            | npm                                                                   |
-| `bun-wasm`                                              | commit `7b25271e3` | Git dependency (not on npm); `trustedDependencies` runs its `prepare` |
+| `bun-wasm`                                              | commit `a997a2069` | Git dependency (not on npm); `trustedDependencies` runs its `prepare` |
 | `ghostty-webgpu`                                        | 0.3.34             | npm                                                                   |
 | `@singapore-editor/core`, `/solid`, `/find`, `/gutters` | 0.2.13             | npm                                                                   |
 | `@singapore-editor/highlighting`                        | 0.2.16             | npm (Tree-sitter grammars load per language, on first use)            |
@@ -188,13 +189,15 @@ program it runs.
 
 Guests are the WASM programs the workers run. They are published to the hash-addressed guest
 store, `bun-artifacts.shaulavo.dev/<sha256>/<file>.gz`, served gzip-encoded with immutable
-caching and `Access-Control-Allow-Origin: *`. The packages do not name them yet: bun-wasm's
-`BUN_WASM_ASSET` is `null` and the bash-web package ships no `shell-engine.wasm` (Known gaps, 3).
+caching and `Access-Control-Allow-Origin: *`. bun-wasm names its guest by hash
+(`BUN_WASM_ASSET`); the bash-web package ships no `shell-engine.wasm` yet (Known gaps, 3).
 
-- `guests.lock.json` pins `bun-browser.wasm` (bun-wasm `7b25271e3`) and `shell-engine.wasm`
-  (bash-web 0.0.114) by store URL, SHA-256 and size. The URL contains the hash, so it never
-  serves anything else. `tsrs-lsp.wasm` (the TypeScript language server) is pinned to its
-  tagged GitHub release on the ShaulLavo/tsrs fork (`wasi-lsp-v0.1.1`), served uncompressed.
+- `guests.lock.json` pins `bun-browser.wasm` (bun-wasm `a997a2069`, Bun 1.4.5) and
+  `shell-engine.wasm` (bash-web 0.0.114) by store URL, SHA-256 and size. The URL contains the
+  hash, so it never serves anything else. `scripts/guest-lock.test.ts` checks that the lock
+  names the commit `package.json` pins and the guest that package names, so the host code and
+  its guest cannot move apart. `tsrs-lsp.wasm` (the TypeScript language server) is pinned to
+  its tagged GitHub release on the ShaulLavo/tsrs fork (`wasi-lsp-v0.1.1`), served uncompressed.
 - `bun run guests` downloads, decodes the gzip encoding, checks the decoded size and SHA-256,
   and stages them at `public/guests/<sha256>/<name>` (written beside the target and renamed,
   so a killed run leaves no partial file). The build script runs it first, so a build never
@@ -212,39 +215,136 @@ caching and `Access-Control-Allow-Origin: *`. The packages do not name them yet:
 **Preview** (`preview/transport.ts`). The pane asks a `PreviewTransport` for everything. The
 runtime reports listening ports to it (`register`, `unregister`; boot passes them from
 bun-wasm's `network.listening` hook). The pane reads `servers()` and `subscribe()`, builds
-URLs with `frameUrl(port, path)` and `tabUrl(port, path)`, and turns what a frame reports back
-into a place with `locate(href)` and `ownsOrigin(origin, port)`. A transport belongs to one
-workspace, and the workspace id is part of every route it builds: two workspaces that both run
-a server on port 5173 never see each other's HTTP or WebSocket traffic.
-`createPreviewTransport(workspace)` in `preview/index.ts` picks one:
+URLs with `frameUrl(port, path)` and `tabUrl(port, path)`, hears what the page in its frame
+reports through `watch(frame, listener)` (the transport passes on only messages from that frame
+and from an origin it serves), and turns a reported address into a place with `locate(href)`.
+`takesCommands` says whether a page takes "reload" and "go to" by message; otherwise the pane
+steers the frame by its address. `serverEnv` is what a dev server's shell needs so the server
+accepts the transport's host names; the session puts it into every shell of the workspace, the
+task's and the terminals' (`workspace/shell-env.ts`). A transport belongs to one workspace, and
+the workspace is part of every route it builds, so two workspaces that both run a server on
+port 5173 are routed apart.
+`createPreviewTransport(workspace)` in `preview/index.ts` picks one, by the build
+(`preview/kind.ts`):
+
+| Build                                                       | Transport  |
+| ----------------------------------------------------------- | ---------- |
+| `vite dev`, or a build with `VITE_SPROCKT_PREVIEWS=mounted` | `mounted`  |
+| any other build that names `VITE_SPROCKT_PREVIEW_DOMAIN`    | `isolated` |
+| any other build                                             | none       |
+
+A build that names a preview domain and also asks for `mounted` is refused: naming the domain
+says the build is public, and a public build must never be mounted. A domain that is not a
+plain host name fails the build too.
+
+**Only `isolated` separates previewed code from the IDE, from other workspaces and from other
+servers.** `mounted` separates nothing and is for trusted code only: development, the test
+build and the owner's private preview.
 
 - `mounted` (`preview/mounted.ts`, `preview/sw.ts`): Waffle's `PreviewRouter` plus
   `waffle/browser/service-worker`, serving `/__preview/<workspace>/<port>/` on the IDE's own
-  origin. A mounted preview shares the IDE's origin, so the previewed code can reach the
-  workbench and its IndexedDB. **It is a development stopgap for trusted, local projects
-  only.** It exists under `vite dev` and in a build made with `VITE_SPROCKT_PREVIEWS=mounted`
-  (the test build in CI). A public build does not set that and gets the inactive transport.
-  A build without previews also takes down what a build with them left on the origin: every
-  page removes the preview worker's registration when it loads and tells the worker to stop
-  answering (`preview/retire.ts`), and where the worker's file was it publishes one that serves
-  nothing and removes itself (`preview/sw-off.ts`). Otherwise a tab of the earlier build that
-  is still open would keep answering `/__preview/…` through the old worker.
+  origin. A mounted preview shares the IDE's origin, so the previewed code can read the
+  workbench's storage and every workspace's, and can send its frame or a new tab to any
+  address of ours. **It is for trusted code only, and it isolates nothing**: not a workspace
+  from another, not a server from another, not the IDE from either. A service worker cannot
+  change that: it sees a page load only when the address it goes to is in its scope, and never
+  learns for certain who started one. It exists under `vite dev` and in a build made with
+  `VITE_SPROCKT_PREVIEWS=mounted` (the test build in CI, the owner's private preview). A
+  public build does not set that, and cannot: see the table above.
+  A build without mounted previews (one with none, or with isolated ones) also takes down what
+  a build with them left on the origin: every page removes the preview worker's registration
+  when it loads and tells the worker to stop answering (`preview/retire.ts`), and where the
+  worker's file was it publishes one that serves nothing and removes itself
+  (`preview/sw-off.ts`). Otherwise a tab of the earlier build that is still open would keep
+  answering `/__preview/…` through the old worker.
   The worker itself decides from what lasts, never from memory (`preview/retirement.ts`): the
   browser stops an idle worker and starts it again with nothing remembered, and an unregistered
   worker stays in charge of pages it already controls. So retiring sets a flag in the origin's
   cache storage, which the worker reads whenever it starts; and a build with previews publishes
-  `/preview-mode.json`, which the worker asks for when it starts, again before every page
-  navigation, and otherwise at most every thirty seconds. A deploy that has no such file
-  retires the worker on the spot.
-- `isolated` (preview-origins lane): bun-wasm's planned `RootPreviews`, whose `url(port, path)`
-  returns `https://<id>-<port>-pv.sprockt.dev/…`, where `<id>` is derived from the workspace.
-  Each server gets its own origin, which is what keeps a previewed project away from the IDE.
-  **Isolated origins are required before any public deploy** (see "Before public deploy").
-  It needs a `createIsolatedPreviewTransport` beside the mounted one and a branch in
-  `createPreviewTransport`; the pane does not change.
+  `/preview-mode.json`, which the worker asks for before every request and every socket it
+  would answer. No earlier answer is trusted, however recent: a page that is still open gets
+  nothing more from the workspace after the deploy changed, not only a page that loads. A
+  request is answered only from a question asked after it arrived; requests that arrive while
+  one is out share the next one. A deploy that has no such file retires the worker on the
+  spot. A deploy that cannot be asked (offline, a server error) is not served for either, and
+  does not retire the worker: it serves again when the deploy says it may.
+- `isolated` (`preview/isolated.ts`, on bun-wasm's `RootPreviews` from
+  `bun-wasm/preview-origins`): each server gets an origin of its own,
+  `https://<id>-<port>-pv.sprockt.dev`, which is what keeps a previewed project away from the
+  IDE's storage, cookies and service workers. **This is the transport of a public build.**
 
-`tabUrl` exists because an isolated preview opened directly in Safari cannot reach the IDE and
-has to go through a page on our origin.
+`tabUrl` exists because an isolated preview opened directly in a tab cannot reach the IDE in
+every browser and has to go through a page on our origin.
+
+How the isolated transport works (the carrying is bun-wasm's; `docs/preview-origins.md` there
+has the protocol):
+
+- **Names.** `<id>` is 52 base32 characters: the SHA-256 of the IDE's origin and the
+  workspace's preview identity (`preview/isolated-origins.ts`). The identity is the host's own
+  key for the workspace (its storage name) and a random nonce (`preview/identity.ts`). The
+  nonce is kept in an IndexedDB database of the IDE's origin (`preview/identity-store.ts`),
+  never in the workspace's filesystem, which every program in the workspace can write: a
+  guest cannot choose its workspace's host names, and since the key is part of the identity,
+  two workspaces never derive the same origin whatever their nonces are. Every tab of a
+  workspace reads the same nonce (a claim is one IndexedDB transaction) and so derives the
+  same hosts. The nonce lives exactly as long as the storage it was made for
+  (`workspace/storage-lifecycle.ts`): a tab claims it only once it has the storage open, and
+  a claim still out when the tab closes is stored before the tab lets go of the storage. Every
+  deletion of a workspace goes through `deleteIdleWorkspaceStorage`, which forgets the nonce
+  while it holds the storage's locks, before it removes the storage, so no tab can open the
+  workspace in between and claim the old nonce. A nonce that cannot be forgotten fails the
+  deletion and leaves the workspace as it was; a busy workspace keeps its nonce. So a
+  workspace created again under the same id gets new hosts, and never the cookies or storage
+  its predecessor's pages left behind, and all of its tabs agree on them. The same workspace
+  under another IDE origin gets other hosts too.
+- **A request's way.** The tab that runs a server mounts one hidden relay frame on the
+  server's origin and hands it a `MessagePort`. The origin's service worker sends every
+  request of the app over that port to the tab, which passes it to the server with the one
+  Waffle grant bound to that port. The app runs at `/` and needs no path rewriting. A server
+  is listed (`servers()`) only once its origin holds the connection, so the pane and the
+  workspace's other tabs never load a host that cannot answer yet.
+- **Other tabs.** A tab that only shows the preview loads the same origin; its requests go
+  through the service worker to the tab that runs the server. If that tab is still attaching,
+  the worker says so and the frame is sent to its address again a few times
+  (`RETRY_DELAYS_MS`).
+- **The preview hosts** are a Worker of their own (`worker/preview.ts`,
+  `wrangler.preview.jsonc`). It runs first on every path and answers with four fixed files
+  from the pinned bun-wasm package (`handlePreviewOriginRequest`): the service worker, the
+  relay page, a cold-load page for a framed navigation, and a `403` for a tab opened on the
+  host itself. Anything else is refused, and a name without the exact preview shape gets 404.
+  Once an origin's worker is installed, no request of the previewed app reaches the hosts.
+- **Cookies** live in a jar on the IDE side (bun-wasm), kept in the IDE origin's
+  `localStorage` per preview origin. The server's `Set-Cookie` never reaches the preview
+  origin's own cookie store, and `HttpOnly` cookies never reach the page. Nothing here sets a
+  `Domain=.sprockt.dev` cookie.
+- **WebSockets** go over a `MessagePort` from a script the origin's worker adds to HTML pages
+  (bun-wasm's, not ours). That script also reports where the page is, which `watch` turns into
+  the pane's location messages; it takes no commands, so reload and "go to" set the frame's
+  address.
+- **A new tab** opens `/preview-frame?url=<preview address>` on the IDE's origin
+  (`preview/frame-page-html.ts`, `preview/frame-page.ts`): a page that loads none of the app
+  and calls bun-wasm's `showPreviewFrame`, which frames only a preview origin of this build's
+  domain and cuts the tab's way back to its opener. Links and `window.open` inside a preview
+  that mean a new tab are sent to the same page. Only a build with isolated previews publishes
+  it, as one HTML file and one classic script from `preview/vite-plugin.ts`. It is not a second
+  entry of the app's build: that made the two pages share a chunk, and the app's own page
+  then preloaded it on every visit.
+- **Dev servers.** Waffle passes the public host name to the server. Vite refuses names it
+  does not know, so `serverEnv` carries `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=.sprockt.dev`
+  (bun-wasm's `previewHostEnv`). A server with its own allow-list needs the domain added by
+  hand.
+
+What an isolated preview does not do (bun-wasm's limits, and ours on top):
+
+- The pane's error count stays empty: the page's script is not ours and reports no console
+  errors.
+- A link with `target="_top"` navigates the IDE tab. A form with `target="_blank"`, the
+  browser's own "open in new tab" and an `about:blank` popup navigated later land on the
+  host's `403`.
+- WebSockets opened from a worker inside the preview do not connect. A page whose
+  Content-Security-Policy admits no single script tag gets no WebSocket or cookie shim.
+- A server that redirects into another tab's preview, or two frames on one address that both
+  show documents the origin cannot read, can miss or share a "loaded" report.
 
 How the mounted transport works:
 
@@ -253,17 +353,51 @@ How the mounted transport works:
   (`preview/host-protocol.ts`). A tab answers only for the workspace it has open and declines
   anything else at once. Tabs also tell the worker which workspace they host, so it asks the
   right tab first; that list only orders the asking and is rebuilt when the worker restarts.
+- **Where the worker can tell who asks, the page decides, not the address**
+  (`preview/boundary.ts`). This is defence in depth for trusted code, not a boundary: it keeps
+  an honest project's stray link or redirect out of another server and out of the IDE, and it
+  stops nothing a page does on purpose. A previewed page's own requests name it as their
+  client, and are served by the one server it was loaded from: that workspace and that port.
+  Its request for another workspace's mount, or another server's in its own workspace, is
+  refused (403), however the address is spelled. A page load has no client yet, so the page
+  that started it is taken from its referrer when there is one. A request with no previewed
+  page behind it (the pane pointing its frame at a server, a tab a person opened, a page load
+  that sent no referrer) goes where its address says, and a page load to an address outside
+  `/__preview/` never reaches the worker at all. A page's WebSocket reaches its own server's
+  port and no other, though the page names the port itself.
+- **Live streams stay under the deploy's word** (`preview/tunnels.ts`). The worker asks the
+  deploy before it hands a request or a socket to the tab that runs the server, and is out of
+  it afterwards; a handoff can also arrive late, after the deploy changed. So that tab asks
+  too: every server it registers is wrapped, and nothing is passed on without a yes that was
+  asked after it arrived. That covers the handoff itself (the server sees no request and no
+  connection before it), every frame of a socket in either direction, and the head and every
+  chunk of a response. What waits together shares one question. On a no, or when the deploy
+  cannot be asked, every live socket is ended on both sides and every response is cut off
+  (Known gaps, 12, for the server's side of a response). The worker also tells the tabs when
+  it is retired or refuses a request (`revoke`), so idle streams end then and not at their
+  next frame, and a stream whose question was out at that moment is ended too. A page that
+  closes its socket lets go of the server's connection at once, even while a question is out.
+  A tab of the old build that nobody tells, with sockets that carry nothing, keeps those idle
+  sockets open until their next frame.
+- **Every question has a deadline** (`preview/retirement.ts`, `MODE_DEADLINE_MS`). The whole
+  question, from the request for `/preview-mode.json` to the end of its body, is bounded and
+  then aborted. A question that runs out is no answer, which is never a yes: the worker does
+  not serve, and the tab ends its live streams.
 - **Requests outside the mount.** A previewed page asks for `/src/main.tsx` or `/@vite/client`
   at the root of our origin. The worker sees which page asked and sends the request to that
-  page's server.
+  page's server. Redirects in answer to such requests follow the same rules as any other.
 - **Paths stay on their server.** A path from the URL bar is resolved against the server's own
   root, as a browser resolves it, before the mount is put in front (`preview/paths.ts`): `..`
   segments, written out or encoded, stop at that root and cannot reach another port's mount,
   another workspace's or the IDE. A redirect is resolved the same way, against the path that
-  was asked for, and rewritten to the same place under the mount. A loopback address
-  (`http://localhost:3000/…`, which is how a server names itself and the servers beside it)
-  is the mount of the server at that port, never the person's own machine; a redirect to
-  another site passes as the server wrote it.
+  was asked for, and rewritten to the same place under the mount (`mountedRedirect`). A
+  redirect only ever leads to the same server or away to another site. The server's loopback
+  name for itself (`http://localhost:3000/…`) is its own mount. A loopback address with
+  another port means another server of the workspace, or the person's own machine if followed
+  as written: that redirect is not passed on (403). An address on the IDE's own origin,
+  written in full or without its scheme, is a path on the server like any other, so it can
+  show neither the IDE nor another mount. A redirect to another site passes as the server
+  wrote it.
 - **Isolation headers.** Every response carries the opener, embedder and resource policies
   (`preview/isolation.ts`), so a preview opened in its own tab is cross-origin isolated like
   the framed one and has `SharedArrayBuffer`.
@@ -278,13 +412,19 @@ How the mounted transport works:
   is reloaded or removed ends its sockets, because
   the server learns that only from the channel. It also reports the page's location and
   errors to the pane and takes "reload" and "go to" from it (`preview/bridge.ts`,
-  `window.postMessage`, the same for an isolated origin). And it keeps the page's links and
+  `window.postMessage`). And it keeps the page's links and
   forms inside the preview (`preview/inject/navigation.ts`, the rule in `mounting.ts`): an
   address is resolved where the page is on its server, put under that server's mount, and
   written back with the element's own attribute functions (a form control named `action`
   hides `form.action`); `form.submit()` is covered as well as the submit event; a `_top` or
-  `_parent` target becomes the preview's own frame; and what would still land on the IDE's own
-  pages is not followed at all.
+  `_parent` target becomes the preview's own frame; and what would still land anywhere on our
+  origin outside the page's own server's mount (the IDE's pages, another workspace's mount,
+  another server's), or on a loopback address, is not followed at all.
+- **Does this page take commands?** The pane asks instead of guessing from the order of
+  messages and load events, which differs between browsers (`preview/greeting.ts`): every
+  document that finishes loading gets a numbered `hello`, and only an answer with that number
+  makes the pane send "reload" and "go to" as messages. A document that says nothing (an
+  image, a download, the worker's refusal) is steered by the frame's address.
 - **The pane** (`preview/PreviewPane.tsx`) keeps its own back and forward list
   (`preview/history.ts`). A frame's browser history is shared with the IDE page, so stepping
   through it could walk the IDE itself back. Its toolbar is the panes' header band with the
@@ -327,8 +467,9 @@ exists), and a start after a stop is a new start.
 One tab of a workspace runs the task (`tasks/dev-server-line.ts`, on
 `workspace/coordinator.ts`). Asking for the server stands in the workspace's line; the tab that
 gets the lease starts the process and announces this tab's ports. The other tabs list those
-ports, show the same preview address (the service worker asks each tab of the workspace until
-one has the port), and stand behind the owner, so one of them starts the server when the
+ports, show the same preview address (mounted: the service worker asks each tab of the
+workspace until one has the port; isolated: every tab derives the same origin, whose service
+worker holds the owner's connection), and stand behind the owner, so one of them starts the server when the
 owner's tab closes. Only the owner has a stop button. A server stopped on purpose, or one that
 ended by itself, is announced as `down` before its lease ends, and the tabs behind it leave the
 line instead of restarting it.
@@ -401,10 +542,47 @@ where the bytes live.
 
 - `wrangler.jsonc`: assets-only Worker, `not_found_handling: "single-page-application"` (deep
   links get `index.html` on navigation only; a missing worker or guest still answers 404).
-- The route is the apex `sprockt.dev` only, never a wildcard. `bun.sprockt.dev` is the bun-wasm
-  playground, and `<id>-<port>-pv.sprockt.dev` belongs to the preview-origins lane's Worker.
+- The IDE's route is the apex `sprockt.dev` only, never a wildcard. Sprockt owns all of
+  `sprockt.dev`; the bun-wasm playground is on `bun.shaulavo.dev`.
+- `wrangler.preview.jsonc`: the preview hosts, `<id>-<port>-pv.sprockt.dev`, as a second
+  Worker (`worker/preview.ts`). It is separate so that it can run first on every path of a
+  preview host, which must never answer with a file of the IDE, while the IDE's Worker keeps
+  serving its assets without running code. Its assets are the four prebuilt files in the
+  pinned bun-wasm package, read where the package has them, so there is no copy to drift.
+  Nothing deploys it by itself. Before `wrangler deploy --config wrangler.preview.jsonc`:
+  1. a proxied wildcard DNS record `*` on `sprockt.dev` (live since 2026-11-26). The names are one label deep, so the
+     zone's Universal SSL certificate covers them;
+  2. the route `*-pv.sprockt.dev/*` belongs to this repository's `worker/preview.ts` and is
+     deployed from here (decision, 2026-11-26): the bun-wasm playground moved to
+     `bun.shaulavo.dev`, so Sprockt owns all of `sprockt.dev`. The service worker it serves
+     and the IDE page that talks to it come from one bun-wasm version, the pin in
+     `package.json`;
+  3. the IDE build names the same domain, by running `bun run build` with
+     `VITE_SPROCKT_PREVIEW_DOMAIN=sprockt.dev` set. A build without it has no previews; it is
+     never `mounted`.
+- `/preview-frame` (`preview-frame.html` in the build) is the page a preview opens in for a tab
+  of its own.
+  It gets the same isolation headers as every page, `Cross-Origin-Opener-Policy: same-origin`
+  among them, and is `no-store` like `index.html`.
 - Sprockt sets no cookies. Anything it stores is host-only (IndexedDB, `localStorage` on
-  `sprockt.dev`); nothing may use `Domain=.sprockt.dev`, so previews stay isolated from the IDE.
+  `sprockt.dev`); nothing of ours may use `Domain=.sprockt.dev`.
+- **Previews share the IDE's cookie domain, and that is an accepted risk for V1 only (owner,
+  2026-11-26).** Public previews are served on `<id>-<port>-pv.sprockt.dev`, under the same
+  registrable domain as the IDE. A separate origin keeps storage, service workers and scripts
+  apart, but not cookies set for the parent domain.
+
+  **If Sprockt ever adds user accounts, logins, GitHub OAuth or session cookies on
+  `sprockt.dev`, previews MUST first move to a dedicated preview-only registrable domain, and
+  that domain must be submitted to the Public Suffix List.** Why: preview code can set
+  `Domain=sprockt.dev` cookies that reach the IDE and every other preview.
+
+  Today that is harmless because nothing on `sprockt.dev` reads a cookie: the IDE has no
+  accounts and no sessions, the GitHub import proxy takes no credentials from the browser, and
+  a preview's own cookies are kept in the IDE-side jar, not in the browser's cookie store. The
+  preview domain is one setting in each place it is needed (`VITE_SPROCKT_PREVIEW_DOMAIN` for
+  the IDE build, `PREVIEW_DOMAIN` and the route in `wrangler.preview.jsonc` for the hosts),
+  so moving is a configuration change.
+
 - `public/_headers` sends `Cross-Origin-Opener-Policy: same-origin`,
   `Cross-Origin-Embedder-Policy: require-corp` and `Cross-Origin-Resource-Policy: same-origin`
   on every path. All four target browsers need COOP plus COEP for `SharedArrayBuffer`. Safari
@@ -418,12 +596,20 @@ where the bytes live.
 
 ### Before public deploy
 
-1. **Isolated preview origins are live** and the build uses the `isolated` transport. The
-   `mounted` transport is not in a public build, and imported projects are not enabled
-   without isolated origins.
-2. The basic flow passes on the iPhone simulator, not only in Chrome.
+1. **Isolated preview origins are live**: the wildcard DNS record exists, the preview hosts'
+   Worker is deployed and owns `*-pv.sprockt.dev/*`, and the IDE is built with
+   `VITE_SPROCKT_PREVIEW_DOMAIN=sprockt.dev` (see "Deploy"). The `mounted` transport is not in
+   a public build. Until the first two exist, a public build is made without the domain and
+   has no previews: a build that names a domain whose hosts do not resolve lists a server and
+   shows a frame that cannot load.
+2. The basic flow, a preview included, passes on the iPhone simulator, not only in Chrome.
 3. On the deployed site: `304` responses carry the isolation headers; a missing guest or worker
-   URL answers 404, not `index.html`; a deep link (`/w/<id>`) loads the app on navigation.
+   URL answers 404, not `index.html`; a deep link (`/w/<id>`) loads the app on navigation;
+   `/preview-frame` answers with its own page and the isolation headers; a preview host opened
+   in a tab of its own answers `403`.
+4. **Reload a workbench tab with a live preview in real Firefox.** In Playwright's Firefox, a
+   tab that holds a preview origin's relay frame never commits a reload or any other
+   navigation of itself (Known gaps, 10). Whether stock Firefox does the same is not known.
 
 ## Testing and CI
 
@@ -444,9 +630,16 @@ where the bytes live.
   `VITE_SPROCKT_PREVIEWS=mounted`, so `e2e/preview.spec.ts` and `e2e/hmr.spec.ts` have a
   transport; run them locally the same way. The hot-reload test installs React and Vite from
   the npm registry inside the browser, so it needs the network. The suite also builds the app
-  once more without previews (`dist-previews-off`) and serves both builds on a second port,
-  picked per browser context by a cookie (`scripts/serve-builds.ts`): `e2e/previews-off.spec.ts`
-  moves a browser from one build to the other, as a deploy does under open tabs.
+  twice more, without previews (`dist-previews-off`) and with isolated ones (`dist-isolated`),
+  and serves all three builds on a second port, picked per browser context by a cookie
+  (`scripts/serve-builds.ts`). `e2e/previews-off.spec.ts` moves a browser from one build to
+  another, as a deploy does under open tabs. `e2e/isolated-preview.spec.ts` runs on the
+  isolated build: its preview domain is that server's own `localhost:<port>`, browsers
+  resolve every name under `localhost` to the machine, and the server answers those names
+  with the Worker that serves the real hosts (`worker/preview.ts`). Those tests read a
+  previewed page through a probe their server adds and `window.postMessage`
+  (`e2e/preview-probe.ts`), never through Playwright's frames: its Firefox driver does not
+  see every cross-origin frame.
 
 ## Known gaps
 
@@ -459,15 +652,13 @@ where the bytes live.
 2. **Runtime.dispose() after takeover keeps the filesystem worker.** Waffle 0.0.148 to 0.0.150:
    after ownership loss, disposal rejects ("Runtime disposal failed") and the worker stays. The
    test in `e2e/layout.spec.ts` is `fixme`; it only applies under the takeover policy.
-3. **The packages do not name their guests.** The guests are in the hash-addressed store, but
-   bun-wasm's `BUN_WASM_ASSET` is `null` and bash-web ships no `shell-engine.wasm`, so
-   `guests.lock.json` pins them beside the packages and moves with them by hand. When the
-   packages name their guest by hash, the lock can read it from them.
-4. **bun-wasm's host pieces are not package exports.** The program worker, `Previews`,
-   `HostedPreviews`, the service worker, the memory policy and the dev-server coordinator live
-   in bun-wasm's `web/src` and `sandbox/src`. Slice 5 builds on Waffle's public
-   `waffle/browser/preview` and ports the rest; an export from bun-wasm would replace the
-   path imports.
+3. **Only bun-wasm names its guest.** bun-wasm's `BUN_WASM_ASSET` names the Bun guest by hash,
+   and a unit test holds `guests.lock.json` to it. bash-web ships no `shell-engine.wasm` and
+   names none, so that entry still moves with the package by hand.
+4. **Most of bun-wasm's host pieces are not package exports.** Isolated previews are
+   (`bun-wasm/preview-origins`). The program worker, the mounted `Previews`, the memory policy
+   and the dev-server coordinator live in bun-wasm's `web/src` and `sandbox/src`; the mounted
+   transport builds on Waffle's public `waffle/browser/preview` and ports the rest.
 5. **Waffle has no conditional or confined file operation.** Several FileService rules are a
    check followed by an operation: `writeIfUnchanged` (read, compare, write), create, move and
    rename (destination free, then write or rename), and the project boundary (resolve, then
@@ -518,6 +709,41 @@ where the bytes live.
    instead of reloading the older text. A flush that the new hosting tab answers before the
    editor sees the files change can still hide a lost save; Waffle would have to report that
    its storage changed hands.
+10. **In Playwright's Firefox, a tab with an isolated preview cannot navigate itself.** Once a
+    workbench tab has mounted a preview origin's relay frame (bun-wasm's `RootPreviews`), a
+    reload, a `location.reload()` from script or a navigation to another address of the IDE
+    never commits, with no dialog and no page error (5 of 5 runs, Playwright 1.64.1, Firefox
+    157). It also happens after the server has stopped, because the relay frame stays. Removing
+    the page's frames first makes the reload work, the mounted build reloads, Chromium and
+    WebKit reload, and a new tab on the same workspace opens. Whether stock Firefox behaves
+    the same is unknown: no stock Firefox was at hand. The tests reopen a workspace in a new
+    tab instead of reloading. If stock Firefox does it too, the fix belongs in bun-wasm's
+    relay frame, and a public deploy waits for it ("Before public deploy", 4).
+11. **Vite sometimes never starts under Bun, mostly in Playwright's WebKit.** With the Bun 1.4.5 guest,
+    Bun's servers run in Playwright's WebKit, and the preview tests on a plain `Bun.serve` run
+    there. The Vite + React starter also works there most of the time (10 of 10 with two
+    workers), but in 2 of about 30 runs with three or six workers `bun install` finished
+    ("24 packages installed") and Vite then never listened; the pane stayed on "Starting" until
+    the test's hang cap. It happened on the mounted and on the isolated transport, before any
+    page was previewed, so it is not the preview. The two hot-reload tests (`e2e/hmr.spec.ts`)
+    are `fixme` in WebKit for that reason; Chromium and Firefox run them. Firefox is not free
+    of it either: in one of about ten full local runs with four workers, on the isolated
+    build, Vite exited by itself right after `$ vite --host 127.0.0.1 --port 5173
+--strictPort` with no output, and the pane said the dev server had stopped. Whether the
+    1.4.4 guest did the same was not measured. No retry was added: a hot-reload test that
+    fails with the server never coming up is this, and its failure line prints the task's
+    status and last output. The cause is in bun-wasm or Waffle and has not been looked into.
+12. **A mounted response that is cut off keeps running in the server.** When the deploy takes
+    previews back, `preview/tunnels.ts` stops a streaming HTTP response (server-sent events, a
+    long download) from reaching the page and ends the page's request with an error. The
+    server's side stays open: Waffle 0.0.150's `PreviewServer.request()` returns only a
+    boolean, so there is no way to end one request. The guest keeps writing into a response
+    nobody reads until it ends it itself or the server stops. Nothing more reaches the page;
+    the cost is the server's work and one open guest connection per cut response. Waffle PR
+    652 adds `request(port, request, sink, { signal })`, which closes the guest's connection
+    on abort; once a release with it is pinned, `tunnels.ts` passes one signal per request
+    and aborts it when it cuts the response off. Mounted previews are trusted-only, so this
+    never reaches a public build.
 
 ## Parallel work map
 

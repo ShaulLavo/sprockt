@@ -26,6 +26,18 @@ export function visited(history: PreviewHistory, path: string): PreviewHistory {
   return { entries, index: entries.length - 1 };
 }
 
+/**
+ * A path without its fragment. A frame sent to the address it is already at, fragment included,
+ * only scrolls; sent to the address without the fragment, it asks the server again.
+ */
+export const withoutFragment = (path: string): string => path.split("#", 1)[0] ?? path;
+
+/** The same list with the entry the frame is at changed to `path`: nothing is added. */
+export function replaced(history: PreviewHistory, path: string): PreviewHistory {
+  if (history.index < 0 || currentPath(history) === path) return history;
+  return { entries: history.entries.with(history.index, path), index: history.index };
+}
+
 /** Moves one entry back (-1) or forward (+1), staying inside the list. */
 export function stepped(history: PreviewHistory, delta: -1 | 1): PreviewHistory {
   const index = history.index + delta;

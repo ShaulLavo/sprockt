@@ -1,6 +1,7 @@
 import type { BrowserContext, Page } from "@playwright/test";
 import { expect, newWorkspace, runInTerminal, test, writeFile } from "./helpers";
 import { TWO_BUILDS_ORIGIN } from "./origins";
+import { expectPreviewText, PROBE } from "./preview-probe";
 import { BUILD_COOKIE, type Deploy } from "../scripts/serve-builds";
 
 // These tests run on the origin that serves two builds (scripts/serve-builds.ts): the test build
@@ -22,6 +23,52 @@ Bun.serve({
 });
 `;
 
+/** The same page with the probe that lets a test read it on an origin of its own (preview-probe.ts). */
+const PROBED_SERVER = `
+Bun.serve({
+  port: 3000,
+  fetch: (request) =>
+    new URL(request.url).pathname === "/probe.js"
+      ? new Response(Bun.file("probe.js"), { headers: { "content-type": "text/javascript" } })
+      : new Response("<!doctype html><title>Guest</title><script src='/probe.js'></script><h1>Guest page</h1>", {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+});
+`;
+
+/**
+ * The guest page with a WebSocket that stays open: it says hello when it opens, and the page
+ * keeps what the server echoes and whether the socket is still open.
+ */
+const SOCKET_SERVER = `
+const PAGE = "<!doctype html><html><head><title>Guest</title></head><body><h1>Guest page</h1><script>" +
+  "window.echoes = []; window.socketState = 'connecting';" +
+  "window.socket = new WebSocket('ws://' + location.host + '/ws');" +
+  "socket.onopen = () => { window.socketState = 'open'; socket.send('hello'); };" +
+  "socket.onmessage = (event) => window.echoes.push(event.data);" +
+  "socket.onclose = () => { window.socketState = 'closed'; };" +
+  "</script></body></html>";
+Bun.serve({
+  port: 3000,
+  fetch(request, server) {
+    if (new URL(request.url).pathname === "/ws") return server.upgrade(request) ? undefined : new Response("no upgrade", { status: 400 });
+    return new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } });
+  },
+  websocket: {
+    message(socket, message) {
+      socket.send(String(message).toUpperCase());
+    },
+  },
+});
+`;
+
+/** What the guest page above keeps about its socket. */
+interface SocketPage {
+  echoes: string[];
+  socketState: string;
+  socket: WebSocket;
+}
+
 /** How many service workers this origin has registered. */
 const registrations = (page: Page) =>
   page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
@@ -30,9 +77,9 @@ const registrations = (page: Page) =>
  * The build with previews: a workspace in `page` runs a server, and its address works in a tab
  * of its own. Returns that address. `page` stays open and keeps hosting the server.
  */
-async function hostAGuest(page: Page, context: BrowserContext): Promise<string> {
+async function hostAGuest(page: Page, context: BrowserContext, server = SERVER): Promise<string> {
   const id = await newWorkspace(page);
-  await writeFile(page, "server.ts", SERVER);
+  await writeFile(page, "server.ts", server);
   await runInTerminal(page, "bun server.ts");
   await expect(page.frameLocator("[data-testid=preview-frame]").getByRole("heading")).toHaveText(
     "Guest page",
@@ -77,9 +124,14 @@ async function deployChangesUnderAnOpenTab(
 
 test.describe("with a tab of the earlier build still open", () => {
   test.beforeEach(({ browserName }) => {
-    // The earlier build has to run a server, and Bun's browser engine traps in Playwright's
-    // WebKit (ARCHITECTURE.md "Known gaps").
-    test.fixme(browserName === "webkit", "Bun's browser engine traps in WebKit");
+    // The earlier build here is the one with mounted previews, which only development builds
+    // have. Like e2e/preview.spec.ts, these are left to Chromium and Firefox: they pass in
+    // Playwright's WebKit, which is the slowest of the three in CI and runs the previews a
+    // public build has (e2e/isolated-preview.spec.ts).
+    test.skip(
+      browserName === "webkit",
+      "mounted previews run in Chromium and Firefox; WebKit runs the isolated ones",
+    );
   });
 
   test("a page of a build without previews removes the earlier build's worker", async ({ page, context }) => {
@@ -93,6 +145,69 @@ test.describe("with a tab of the earlier build still open", () => {
     context,
   }) => {
     await deployChangesUnderAnOpenTab(page, context, "off");
+  });
+
+  test("a deploy that moves to isolated previews takes the mounted worker down, and previews on its own origins", async ({
+    page,
+    context,
+  }) => {
+    await deployChangesUnderAnOpenTab(page, context, "isolated");
+
+    // The new build's previews are not on this origin at all: a server gets a host of its own.
+    const fresh = await context.newPage();
+    await newWorkspace(fresh);
+    await writeFile(fresh, "probe.js", PROBE);
+    await writeFile(fresh, "server.ts", PROBED_SERVER);
+    await runInTerminal(fresh, "bun server.ts");
+    await expectPreviewText(fresh, "h1", "Guest page");
+    const address = new URL((await fresh.getByTestId("preview-frame").getAttribute("src")) ?? "");
+    expect(address.host).toMatch(/^[a-z2-7]{52}-3000-pv\.localhost:\d+$/);
+    expect(await registrations(fresh)).toBe(0);
+  });
+
+  test("a preview that is still open gets nothing more from the workspace once the deploy changed", async ({
+    page,
+    context,
+  }) => {
+    const address = await hostAGuest(page, context);
+    const open = await context.newPage();
+    await open.goto(address);
+    await expect(open.getByRole("heading")).toHaveText("Guest page");
+    /** What the open page's own script gets from its server now. */
+    const again = () => open.evaluate(async () => (await fetch("./data")).text());
+    expect(await again()).toContain("Guest page");
+
+    // The deploy changes. No page is loaded, and the worker file is still the old one. The
+    // worker asks the deploy for every request, so the very next one is not answered from the
+    // workspace: it used to trust its last answer for half a minute.
+    await deployWithoutPreviews(context, "off-old-worker");
+    expect(await again()).not.toContain("Guest page");
+    await expect.poll(() => registrations(open)).toBe(0);
+    await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "ready");
+  });
+
+  test("a WebSocket that was open when the deploy changed is closed, and carries nothing more", async ({
+    page,
+    context,
+  }) => {
+    const address = await hostAGuest(page, context, SOCKET_SERVER);
+    const open = await context.newPage();
+    await open.goto(address);
+    const socket = () =>
+      open.evaluate(() => {
+        const guest = window as unknown as SocketPage;
+        return { state: guest.socketState, echoes: guest.echoes };
+      });
+    await expect.poll(socket).toEqual({ state: "open", echoes: ["HELLO"] });
+
+    // The deploy changes. No page is loaded, the worker file is still the old one, and the
+    // socket was handed to the tab that runs the server long ago: the worker is out of it.
+    await deployWithoutPreviews(context, "off-old-worker");
+    await open.evaluate(() => (window as unknown as SocketPage).socket.send("after the deploy changed"));
+    // The tab that runs the server asks the deploy before it passes the frame on. It does not
+    // pass it on: the server never sees it, nothing is echoed, and the socket ends.
+    await expect.poll(socket).toEqual({ state: "closed", echoes: ["HELLO"] });
+    await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "ready");
   });
 
   test("a preview address opened right after the deploy changed is not served by the old worker", async ({

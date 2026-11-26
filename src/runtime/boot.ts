@@ -7,6 +7,7 @@ import { installBase } from "waffle-base";
 import type { PreviewServer as PreviewBackend } from "waffle/browser/preview";
 import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import { runtimeAssets } from "./assets";
+import { bootUntilHandedOver } from "./handover";
 import { TAB_POLICY } from "./tab-policy";
 
 /**
@@ -137,29 +138,31 @@ export async function bootWorkspace(
   const runtime = createWorkspaceRuntime(id, options.takeOver === true, onStage);
   let disposal: Promise<void> | undefined;
   const dispose = () => (disposal ??= runtime.dispose());
-  // Disposing cancels a storage request that is still queued behind another tab.
-  options.signal?.addEventListener("abort", () => void dispose().catch(() => {}), { once: true });
-  try {
-    options.signal?.throwIfAborted();
+  // A close while booting disposes at once; after boot, the session owns disposal.
+  const path = await bootUntilHandedOver(options.signal, dispose, async () => {
     runtime.filesystem.onOwnershipLost = () => onStage("moved");
     await runtime.filesystem.mkdirp(PROJECT_ROOT);
     onStage("programs");
-    const path = await installPrograms(runtime, options.ports);
+    const programs = await installPrograms(runtime, options.ports);
     await runtime.filesystem.flush();
+    return programs;
+  });
+  try {
     onStage("ready");
-    return {
-      id,
-      runtime,
-      shell: {
-        wasmUrl: runtimeAssets.shellGuest,
-        workerUrl: runtimeAssets.shellWorker,
-        cwd: PROJECT_ROOT,
-        env: { PATH: path, HOME: "/home/guest", TERM: "xterm-256color", LANG: "C.UTF-8", ...phoneEnv() },
-      },
-      dispose,
-    };
   } catch (error) {
+    // Nobody receives the runtime when the report fails, so nobody else would dispose it.
     await dispose().catch(() => {});
     throw error;
   }
+  return {
+    id,
+    runtime,
+    shell: {
+      wasmUrl: runtimeAssets.shellGuest,
+      workerUrl: runtimeAssets.shellWorker,
+      cwd: PROJECT_ROOT,
+      env: { PATH: path, HOME: "/home/guest", TERM: "xterm-256color", LANG: "C.UTF-8", ...phoneEnv() },
+    },
+    dispose,
+  };
 }

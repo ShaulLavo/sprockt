@@ -6,6 +6,8 @@ test("messages built here are recognized as ours", () => {
   expect(isFrameMessage(frameMessage({ type: "started", href: "https://x/" }))).toBe(true);
   expect(isFrameMessage(frameMessage({ type: "location", href: "https://x/", title: "Home" }))).toBe(true);
   expect(isFrameMessage(frameMessage({ type: "error", message: "boom" }))).toBe(true);
+  expect(isFrameMessage(frameMessage({ type: "hello", id: 3 }))).toBe(true);
+  expect(isFrameCommand(frameCommand({ command: "hello", id: 3 }))).toBe(true);
   expect(isFrameCommand(frameCommand({ command: "reload" }))).toBe(true);
   expect(isFrameCommand(frameCommand({ command: "navigate", href: "https://x/about" }))).toBe(true);
 });
@@ -25,6 +27,8 @@ test("anything a previewed page could post by itself is not taken for ours", () 
   expect(isFrameMessage({ source: "sprockt-preview", type: "location", href: "https://x/" })).toBe(false);
   expect(isFrameMessage({ source: "sprockt-preview", type: "error", message: 5 })).toBe(false);
   expect(isFrameCommand({ source: "sprockt-preview", command: "navigate" })).toBe(false);
+  expect(isFrameMessage({ source: "sprockt-preview", type: "hello", id: "3" })).toBe(false);
+  expect(isFrameCommand({ source: "sprockt-preview", command: "hello" })).toBe(false);
   expect(isFrameCommand({ source: "sprockt-preview", command: "close" })).toBe(false);
 });
 

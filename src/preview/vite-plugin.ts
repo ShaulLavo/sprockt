@@ -3,16 +3,28 @@
 // module service workers are not available in every browser we support, and the client script
 // has to run before the previewed page's own scripts.
 //
-// A build without previews publishes neither. In the worker's place it puts one that serves
-// nothing and removes itself (sw-off.ts), for browsers that still hold an earlier build's worker.
+// A build without mounted previews (none at all, or isolated ones) publishes neither. In the
+// worker's place it puts one that serves nothing and removes itself (sw-off.ts), for browsers
+// that still hold an earlier build's worker.
 import { resolve } from "node:path";
 import { build, type Plugin } from "vite";
 //
-// A build with previews also publishes `/preview-mode.json`, which says so. The service worker
-// asks for it to learn whether the deployed build still has previews (retirement.ts); a build
-// without them has no such file.
-import { previewKind } from "./kind";
-import { CLIENT_SCRIPT_PATH, PREVIEW_MODE_PATH, SERVICE_WORKER_PATH } from "./paths";
+// A build with mounted previews also publishes `/preview-mode.json`, which says so. The service
+// worker asks for it to learn whether the deployed build still has them (retirement.ts); a
+// build without them has no such file.
+//
+// A build with isolated previews publishes the page that shows one in a tab of its own
+// (`/preview-frame`, frame-page-html.ts) and its script, built the same way: one classic script
+// that shares no chunk with the app, so the app's own page loads what it always loaded.
+import { framePageHtml } from "./frame-page-html";
+import { previewDomain, previewKind, type PreviewKind } from "./kind";
+import {
+  CLIENT_SCRIPT_PATH,
+  FRAME_PAGE_PATH,
+  FRAME_PAGE_SCRIPT_PATH,
+  PREVIEW_MODE_PATH,
+  SERVICE_WORKER_PATH,
+} from "./paths";
 import { MOUNTED_MODE } from "./retirement";
 
 type Entries = Readonly<Record<string, string>>;
@@ -24,11 +36,19 @@ const ENTRIES: Entries = {
 
 const ENTRIES_OFF: Entries = { [SERVICE_WORKER_PATH]: "src/preview/sw-off.ts" };
 
+/** Isolated previews: the page that shows one in a tab of its own has one script. */
+const ENTRIES_ISOLATED: Entries = { ...ENTRIES_OFF, [FRAME_PAGE_SCRIPT_PATH]: "src/preview/frame-page.ts" };
+
 const MODE_FILE = `${JSON.stringify(MOUNTED_MODE)}\n`;
 
-/** What a build publishes at the preview scripts' addresses, by whether it has previews. */
-export function publishedEntries(kind: "mounted" | "none"): Entries {
-  return kind === "mounted" ? ENTRIES : ENTRIES_OFF;
+/**
+ * What a build publishes at the preview scripts' addresses. Only mounted previews have a
+ * service worker of ours: isolated ones are served by their own hosts, so a build with them
+ * takes the mounted worker down exactly as a build with no previews does.
+ */
+export function publishedEntries(kind: PreviewKind): Entries {
+  if (kind === "mounted") return ENTRIES;
+  return kind === "isolated" ? ENTRIES_ISOLATED : ENTRIES_OFF;
 }
 
 async function bundle(root: string, entry: string, minify: boolean): Promise<string> {
@@ -53,17 +73,22 @@ async function bundle(root: string, entry: string, minify: boolean): Promise<str
 
 export function previewScripts(): Plugin {
   let root = process.cwd();
-  let kind: "mounted" | "none" = "none";
+  let kind: PreviewKind = "none";
+  let domain: string | undefined;
   const cache = new Map<string, Promise<string>>();
   return {
     name: "sprockt:preview-scripts",
     configResolved(config) {
       root = config.root;
       // The same rule, from the same settings, as the app's own `import.meta.env` check.
-      kind = previewKind({
+      const settings = {
         DEV: config.env.DEV === true,
         VITE_SPROCKT_PREVIEWS: config.env.VITE_SPROCKT_PREVIEWS,
-      });
+        VITE_SPROCKT_PREVIEW_DOMAIN: config.env.VITE_SPROCKT_PREVIEW_DOMAIN,
+      };
+      // A malformed domain fails the build here, not in a visitor's browser.
+      domain = previewDomain(settings);
+      kind = previewKind(settings);
     },
     async generateBundle() {
       const published = publishedEntries(kind);
@@ -72,8 +97,15 @@ export function previewScripts(): Plugin {
       for (const [index, path] of paths.entries()) {
         this.emitFile({ type: "asset", fileName: path.slice(1), source: sources[index] ?? "" });
       }
-      if (kind !== "mounted") return;
-      this.emitFile({ type: "asset", fileName: PREVIEW_MODE_PATH.slice(1), source: MODE_FILE });
+      if (kind === "mounted")
+        this.emitFile({ type: "asset", fileName: PREVIEW_MODE_PATH.slice(1), source: MODE_FILE });
+      // The page is a file of its own name, which the hosts serve at `/preview-frame`.
+      if (kind === "isolated" && domain)
+        this.emitFile({
+          type: "asset",
+          fileName: `${FRAME_PAGE_PATH.slice(1)}.html`,
+          source: framePageHtml(domain),
+        });
     },
     configureServer(server) {
       server.watcher.on("change", () => cache.clear());

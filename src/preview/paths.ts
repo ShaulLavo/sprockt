@@ -14,6 +14,14 @@ export const CLIENT_SCRIPT_PATH = "/preview-client.js";
  */
 export const PREVIEW_MODE_PATH = "/preview-mode.json";
 
+/**
+ * The page on the IDE's origin that shows an isolated preview in a tab of its own
+ * (frame-page.ts), and its one script. A tab opened on a preview origin itself is refused: it
+ * cannot reach the IDE tab in every browser.
+ */
+export const FRAME_PAGE_PATH = "/preview-frame";
+export const FRAME_PAGE_SCRIPT_PATH = "/preview-frame.js";
+
 export interface MountedLocation {
   readonly workspace: string;
   readonly port: number;
@@ -121,23 +129,55 @@ export function mountedPath(workspace: string, port: number, path: string): stri
   return isUnderMount(mounted, workspace, port) ? mounted : `${mount}/`;
 }
 
+/** Whether an address names the person's own machine: a loopback host, on any port. */
+export const isLoopbackAddress = (url: URL): boolean => loopbackPort(url) !== undefined;
+
+/** One server of one workspace: the pair every route of a mounted preview is held to. */
+export interface PreviewHome {
+  readonly workspace: string;
+  readonly port: number;
+}
+
+/** What becomes of a `Location` header a previewed server sent. */
+export type RedirectRule =
+  /** Right as it is: a path already in the server's own mount, or another site. */
+  | { readonly action: "keep" }
+  /** The same place on the server, under its mount. */
+  | { readonly action: "mount"; readonly location: string }
+  /** It leads to another server of the workspace, which a server may not send its page to. */
+  | { readonly action: "refuse" };
+
 /**
- * The `Location` to send instead of the one a server on `port` sent in answer to a request for
- * `from`: the same place in the workspace, under its server's mount. Undefined when the header
- * is right as it is: it already names a path in the mount, or it leads to another site. A
- * loopback address never passes as it is: it becomes the mount of the server at that port.
+ * What to do with the `Location` a server (`home`) sent in answer to a request for `from`. A
+ * redirect only ever leads to that same server, or away to another site:
+ *
+ * - a path, or the server's own loopback address, becomes the same place under its mount;
+ * - an address on the IDE's own origin is a path on the server too, unless it already is in
+ *   the server's mount: followed as written it would show the IDE, or another server's mount;
+ * - a loopback address with another port means another server of the workspace (or the
+ *   person's own machine, if followed as written). It is refused: the pair of workspace and
+ *   port a page was loaded from is the only one it is served from.
  */
 export function mountedRedirect(
-  workspace: string,
-  port: number,
+  home: PreviewHome,
   location: string,
   from: string,
-): string | undefined {
+  ideOrigin: string,
+): RedirectRule {
+  const mount = (path: string): RedirectRule => ({
+    action: "mount",
+    location: mountedPath(home.workspace, home.port, path),
+  });
   const mounted = location.startsWith("/") && !location.startsWith("//");
-  if (mounted && isUnderMount(location, workspace, port)) return undefined;
-  const place = guestPlace(location, from, port);
-  if (place === undefined || place === "elsewhere") return undefined;
-  return mountedPath(workspace, place.port, place.path);
+  if (mounted && isUnderMount(location, home.workspace, home.port)) return { action: "keep" };
+  const place = guestPlace(location, from, home.port);
+  if (place === undefined) return { action: "keep" };
+  if (place !== "elsewhere") return place.port === home.port ? mount(place.path) : { action: "refuse" };
+  // Resolved as the browser will resolve it: `//host/path` takes the scheme of our own page.
+  const absolute = URL.parse(location, ideOrigin);
+  if (absolute?.origin !== ideOrigin) return { action: "keep" };
+  if (isUnderMount(absolute.pathname, home.workspace, home.port)) return { action: "keep" };
+  return mount(pathOf(absolute));
 }
 
 /** The workspace a path under `/__preview/` belongs to, or undefined for any other path. */

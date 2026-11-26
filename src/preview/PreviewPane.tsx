@@ -7,9 +7,19 @@ import { fill } from "../ui/format";
 import { Icon } from "../ui/icons";
 import { STATUS_SLOT } from "../workbench/slots";
 import { useWorkspace } from "../workspace/session";
-import { frameCommand, isFrameMessage, type FrameMessage } from "./bridge";
+import { frameCommand, type FrameMessage } from "./bridge";
 import { ui } from "./copy";
-import { canGoBack, canGoForward, currentPath, emptyHistory, stepped, visited } from "./history";
+import { createGreeting } from "./greeting";
+import {
+  canGoBack,
+  canGoForward,
+  currentPath,
+  emptyHistory,
+  replaced,
+  stepped,
+  visited,
+  withoutFragment,
+} from "./history";
 import { BackIcon, DesktopIcon, ExternalIcon, ForwardIcon, PhoneIcon, PlayIcon, TabletIcon } from "./icons";
 import { normalizePreviewPath } from "./paths";
 import "./preview.css";
@@ -53,20 +63,27 @@ export function PreviewPane() {
   const [noScript, setNoScript] = createSignal(false);
   const [frame, setFrame] = createSignal<HTMLIFrameElement>();
   /** Whether the document in the frame runs our client script and so understands commands. */
-  let bridged = false;
-  /** Whether the document that is loading has announced itself yet. */
-  let announced = false;
+  const greeting = createGreeting();
 
-  // A document that finished loading without a word from our script (an image, a download, a
-  // page of another charset) cannot take commands: the frame is steered by its `src` again.
-  function onFrameLoad(): void {
-    if (!announced) bridged = false;
-    announced = false;
+  // Every document that finishes loading is asked whether it takes commands. One that says
+  // nothing (an image, a download, a refusal, a page of another charset, any page of a
+  // transport whose pages take none) is steered by the frame's `src`.
+  function onFrameLoad(event: Event): void {
+    const id = greeting.ask();
+    const element = event.currentTarget;
+    const origin = element instanceof HTMLIFrameElement ? URL.parse(element.src)?.origin : undefined;
+    if (!preview.takesCommands || !(element instanceof HTMLIFrameElement) || !origin) return;
+    element.contentWindow?.postMessage(frameCommand({ command: "hello", id }), origin);
   }
 
   function mountFrame(element: HTMLIFrameElement): void {
     setFrame(element);
-    onCleanup(() => setFrame(undefined));
+    // The transport hears only this frame, and only from an origin it serves.
+    const unwatch = preview.watch(element, onFrameMessage);
+    onCleanup(() => {
+      unwatch();
+      setFrame(undefined);
+    });
   }
 
   onCleanup(preview.subscribe(setServers));
@@ -108,7 +125,7 @@ export function PreviewPane() {
     const element = frame();
     if (active === undefined || !element) return;
     const href = preview.frameUrl(active, target);
-    if (bridged)
+    if (greeting.understood)
       element.contentWindow?.postMessage(frameCommand({ command: "navigate", href }), new URL(href).origin);
     else element.src = href;
   }
@@ -116,7 +133,8 @@ export function PreviewPane() {
   // A server appeared, was picked, or came back: start over at its root.
   createEffect(
     on([port, frame, usable], ([active, element, canLoad]) => {
-      bridged = false;
+      // Whatever answered before belongs to another server or another frame.
+      greeting.ask();
       setHistory(emptyHistory);
       setErrors([]);
       setDraft(undefined);
@@ -129,23 +147,13 @@ export function PreviewPane() {
       setErrors((list) => list.concat([message.message]).slice(-ERROR_LIMIT));
       return;
     }
+    if (message.type === "hello") return greeting.answer(message.id);
     const place = preview.locate(message.href);
     if (!place || place.port !== port()) return;
-    bridged = true;
-    announced = true;
     if (message.type === "started") setErrors([]);
     setHistory((current) => visited(current, place.path));
     setDraft(undefined);
   }
-
-  function onMessage(event: MessageEvent<unknown>): void {
-    const active = port();
-    if (active === undefined || event.source !== frame()?.contentWindow) return;
-    if (!preview.ownsOrigin(event.origin, active) || !isFrameMessage(event.data)) return;
-    onFrameMessage(event.data);
-  }
-  addEventListener("message", onMessage);
-  onCleanup(() => removeEventListener("message", onMessage));
 
   function step(delta: -1 | 1): void {
     const next = stepped(history(), delta);
@@ -160,9 +168,13 @@ export function PreviewPane() {
     const active = port();
     if (!element || active === undefined) return;
     const href = preview.frameUrl(active, path());
-    if (bridged)
-      element.contentWindow?.postMessage(frameCommand({ command: "reload" }), new URL(href).origin);
-    else element.src = href;
+    if (greeting.understood)
+      return element.contentWindow?.postMessage(frameCommand({ command: "reload" }), new URL(href).origin);
+    // A page that takes no commands is reloaded by its address. One that ends in a fragment
+    // would only scroll there, so the page is asked for without it, in the same history entry.
+    const target = withoutFragment(path());
+    setHistory((current) => replaced(current, target));
+    element.src = preview.frameUrl(active, target);
   }
 
   function submitUrl(event: SubmitEvent): void {
@@ -174,7 +186,9 @@ export function PreviewPane() {
 
   function openInNewTab(): void {
     const active = port();
-    if (active !== undefined) window.open(preview.tabUrl(active, path()), "_blank", "noopener");
+    // Another tab's port can be known before this tab's transport can name its address.
+    if (active === undefined || !usable()) return;
+    window.open(preview.tabUrl(active, path()), "_blank", "noopener");
   }
 
   async function toggleDevServer(): Promise<void> {
@@ -308,7 +322,7 @@ export function PreviewPane() {
           class="icon-button"
           aria-label={ui.openInTab}
           data-testid="preview-open"
-          disabled={port() === undefined}
+          disabled={port() === undefined || !usable()}
           onClick={openInNewTab}
         >
           <ExternalIcon />
@@ -362,6 +376,8 @@ export function PreviewPane() {
             class="preview-frame"
             title={ui.preview}
             data-testid="preview-frame"
+            // A page on its own origin has SharedArrayBuffer only if its embedder allows it.
+            allow="cross-origin-isolated"
             onLoad={onFrameLoad}
             ref={mountFrame}
           />

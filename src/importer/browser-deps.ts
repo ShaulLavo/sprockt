@@ -1,6 +1,6 @@
 // The real dependencies of `createWorkspaceWithFiles` in the browser, and the hand-off to the
 // workbench once the new workspace is written.
-import { deleteWorkspace, storedWorkspaces } from "waffle";
+import { storedWorkspaces } from "waffle";
 import { isWorkspaceId } from "../workspace/paths";
 import { openWorkspace } from "../workspace/session";
 import { replaceRoute } from "./navigation";
@@ -8,7 +8,12 @@ import type { NewWorkspaceDeps } from "./new-workspace";
 
 export const browserWorkspaceDeps: NewWorkspaceDeps = {
   open: (id) => openWorkspace(id),
-  remove: (name) => deleteWorkspace({ mode: "fast", name }),
+  // The one deletion every workspace goes through (workspace/storage-lifecycle.ts): the IDE's
+  // own records of the storage go in the same step, and stay when the storage is busy.
+  remove: async (name) => {
+    const { deleteIdleWorkspaceStorage } = await import("../landing/storage-discovery");
+    return deleteIdleWorkspaceStorage(name);
+  },
   exists: async (name) => (await storedWorkspaces("fast")).includes(name),
 };
 

@@ -8,8 +8,12 @@ import { TAB_POLICY } from "../src/runtime/tab-policy";
 test.skip(TAB_POLICY !== "attach", "tabs share a workspace only with the attach policy");
 
 test.beforeEach(({ browserName }) => {
-  // Bun's browser engine traps in Playwright's WebKit (ARCHITECTURE.md "Known gaps").
-  test.fixme(browserName === "webkit", "Bun's browser engine traps in WebKit");
+  // On the mounted transport, like e2e/preview.spec.ts: left to Chromium and Firefox for CI
+  // time. WebKit runs the two-tab test on the isolated one (e2e/isolated-preview.spec.ts).
+  test.skip(
+    browserName === "webkit",
+    "mounted previews run in Chromium and Firefox; WebKit runs the isolated ones",
+  );
 });
 
 const SERVER = `

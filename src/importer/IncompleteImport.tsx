@@ -1,5 +1,5 @@
 import { createResource, createSignal, Show } from "solid-js";
-import { deleteWorkspace, openIdleWorkspace } from "waffle";
+import { openIdleWorkspace } from "waffle";
 import { storageName } from "../workspace/paths";
 import { COPY, fill } from "./copy";
 import { readIncomplete, retryPath } from "./incomplete";
@@ -23,7 +23,10 @@ export function IncompleteImport(props: { id: string; onDeleted: () => void }) {
 
   async function remove(): Promise<void> {
     setError(undefined);
-    const result = await deleteWorkspace({ mode: "fast", name: storageName(props.id) }).catch(() => "failed");
+    // The one deletion every workspace goes through: it forgets the IDE's own records of the
+    // storage in the same step, under the storage's locks (workspace/storage-lifecycle.ts).
+    const { deleteIdleWorkspaceStorage } = await import("../landing/storage-discovery");
+    const result = await deleteIdleWorkspaceStorage(storageName(props.id)).catch(() => "failed");
     if (result === "deleted" || result === "missing") {
       props.onDeleted();
       return;

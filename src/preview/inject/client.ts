@@ -73,8 +73,10 @@ function installBridge(pane: Window): void {
 
   addEventListener("message", (event) => {
     if (event.source !== pane || event.origin !== target || !isFrameCommand(event.data)) return;
-    if (event.data.command === "reload") location.reload();
-    else location.assign(event.data.href);
+    const command = event.data;
+    if (command.command === "hello") post({ type: "hello", id: command.id });
+    else if (command.command === "reload") location.reload();
+    else location.assign(command.href);
   });
 }
 

@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test";
-import { canGoBack, canGoForward, currentPath, emptyHistory, stepped, visited } from "./history";
+import {
+  canGoBack,
+  canGoForward,
+  currentPath,
+  emptyHistory,
+  replaced,
+  stepped,
+  visited,
+  withoutFragment,
+} from "./history";
 
 const visit = (paths: readonly string[]) => paths.reduce(visited, emptyHistory);
 
@@ -31,6 +40,24 @@ test("a new place after going back replaces what lay ahead", () => {
   const history = visited(stepped(visit(["/", "/about", "/contact"]), -1), "/pricing");
   expect(history.entries).toEqual(["/", "/about", "/pricing"]);
   expect(canGoForward(history)).toBe(false);
+});
+
+test("a reload by address asks for the page without its fragment", () => {
+  expect(withoutFragment("/about?tab=1#team")).toBe("/about?tab=1");
+  expect(withoutFragment("/about")).toBe("/about");
+  expect(withoutFragment("/#a#b")).toBe("/");
+});
+
+test("replacing the current entry adds nothing and keeps what lies ahead", () => {
+  const history = stepped(visit(["/", "/about#team", "/contact"]), -1);
+  const reloaded = replaced(history, "/about");
+  expect(reloaded.entries).toEqual(["/", "/about", "/contact"]);
+  expect(currentPath(reloaded)).toBe("/about");
+  expect(canGoForward(reloaded)).toBe(true);
+  // The page then reports the same place, which is no new entry.
+  expect(visited(reloaded, "/about")).toBe(reloaded);
+  expect(replaced(emptyHistory, "/about")).toBe(emptyHistory);
+  expect(replaced(reloaded, "/about")).toBe(reloaded);
 });
 
 test("stepping never leaves the list", () => {

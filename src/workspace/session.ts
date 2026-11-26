@@ -8,6 +8,7 @@ import { bootWorkspace, type BootOptions, type BootStage, type WorkspaceRuntime 
 import { createTerminalStore, type TerminalStore } from "../terminal/store";
 import { createCommands, createStatusItems, type Commands, type StatusItems } from "../workbench/slots";
 import { tearDownAll } from "./lifecycle";
+import { withServerEnv } from "./shell-env";
 
 export interface WorkspaceSession extends WorkspaceRuntime {
   readonly files: FileService;
@@ -29,7 +30,12 @@ export async function openWorkspace(
 ): Promise<WorkspaceSession> {
   let moved = false;
   let revoke = (): void => void (moved = true);
-  const preview = createPreviewTransport(id);
+  // The transport exists before the runtime it serves, and learns when the storage is open:
+  // only a tab that holds the storage open may claim the workspace's preview identity.
+  const opened = Promise.withResolvers<void>();
+  // A workspace that never opened has no identity to claim; nobody waits for one.
+  opened.promise.catch(() => {});
+  const preview = createPreviewTransport(id, opened.promise);
   const booted = await bootWorkspace(
     id,
     (stage) => {
@@ -46,24 +52,28 @@ export async function openWorkspace(
       },
     },
   ).catch(async (error: unknown) => {
+    opened.reject(error);
     await preview.dispose();
     throw error;
   });
+  opened.resolve();
   const files = createFileService(booted.runtime, booted.id);
   const terminals = createTerminalStore();
   // Revoking saves first leaves the editor's unsaved text for the new owner; then this tab's
   // shells stop and its runtime goes, so nothing here keeps running against storage it lost.
+  // The previews go with them: the preview identity is for a tab that holds the storage.
   revoke = () => {
     files.revoke(movedError());
     void terminals
       .shutdown()
-      .then(() => booted.dispose())
+      .then(() => tearDownAll([() => preview.dispose(), () => booted.dispose()]))
       .catch((error: unknown) => console.error("Releasing a workspace taken by another tab failed", error));
   };
   if (moved) revoke();
   terminals.create();
   return {
     ...booted,
+    shell: withServerEnv(booted.shell, preview.serverEnv),
     files,
     preview,
     terminals,
