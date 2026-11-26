@@ -479,12 +479,13 @@ where the bytes live.
    - Waffle returns a failed change to its caller and keeps the same error to throw at the next
      flush. FileService retries a flush that throws an error its own operation already reported,
      and lets any other error fail the save state; Waffle should report a failure once.
+
 6. **Only Bun's listeners are previewed, and other tabs see only the dev-server task's.** Ports
    are reported by bun-wasm's adapter, so a server started by another kind of program would not
    appear. Other tabs learn of ports through the dev-server task's lease: a server started by
    hand in a terminal shows in its own tab only, unless that tab also runs the task. The
-   two-tab tests (`e2e/dev-server-tabs.spec.ts`) run only with the attach policy (gap 1); they
-   pass when it is switched on locally.
+   two-tab tests are in `e2e/dev-server-tabs.spec.ts`; the test for a tab that takes a
+   workspace over runs only with the takeover policy.
 7. **`bun --hot` in bun-wasm is narrower than Bun's, and there is no `bun --watch`.** bun-wasm
    refuses `--hot` for a file with no `import` or `export` ("--hot requires an ESM graph") and
    for a server with routes or WebSocket handlers ("--hot does not support routes, WebSockets,
@@ -498,7 +499,7 @@ where the bytes live.
    that (a crashed tab) leaves the connection open on the server; closing it when the peer
    port goes away belongs in Waffle's router.
 
-6. **A save is unsaved until storage holds it.** Waffle acknowledges a write from memory. If its
+9. **A save is unsaved until storage holds it.** Waffle acknowledges a write from memory. If its
    flush fails, or the files come back from storage (a hosting tab closed) without it, the
    editor keeps the buffer's text as unsaved and shows a conflict against what storage holds,
    instead of reloading the older text. A flush that the new hosting tab answers before the
