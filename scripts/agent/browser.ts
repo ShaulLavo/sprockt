@@ -6,6 +6,7 @@ import {
   type Browser,
   type BrowserContext,
   type BrowserType,
+  type Page,
   type Response,
 } from "@playwright/test";
 import {
@@ -40,6 +41,19 @@ async function resolveTarget(args: ParsedArgs): Promise<PreviewServerHandle> {
     };
   }
   return startThrowawayPreviewServer(REPO_ROOT);
+}
+
+async function verifyNonProductionUrl(url: string, scenarioName: string): Promise<void> {
+  if (isProductionUrl(url)) {
+    throw new Error(`Refusing writing scenario "${scenarioName}" against production URL ${url}.`);
+  }
+  const response = await fetch(url, { method: "HEAD", redirect: "follow" }).catch(() => null);
+  const finalUrl = response?.url;
+  if (finalUrl && isProductionUrl(finalUrl)) {
+    throw new Error(
+      `Refusing writing scenario "${scenarioName}": ${url} redirects to production URL ${finalUrl}.`,
+    );
+  }
 }
 
 function collectDoctorProblems(
@@ -79,63 +93,85 @@ function evaluateDoctor(
   return "FAIL";
 }
 
-async function installProductionGuard(context: BrowserContext, scenarioName: string): Promise<void> {
+async function captureFailureQuietly(evidence: EvidenceSession, page: Page | undefined): Promise<void> {
+  if (!page) return;
+  try {
+    await evidence.capture(page, "failure-state");
+  } catch {
+    // Page may already be closed or crashed.
+  }
+}
+
+function assertPageNotProduction(page: Page, scenarioName: string): void {
+  if (isProductionUrl(page.url())) {
+    throw new Error(
+      `Refusing writing scenario "${scenarioName}": navigated to production URL ${page.url()}.`,
+    );
+  }
+}
+
+async function installProductionGuard(context: BrowserContext): Promise<void> {
   await context.route("**/*", async (route) => {
     const req = route.request();
     const isMainDoc = req.isNavigationRequest() && req.frame().parentFrame() === null;
     if (isMainDoc && isProductionUrl(req.url())) {
       await route.abort("blockedbyclient");
-      throw new Error(
-        `Refusing writing scenario "${scenarioName}" after redirect to production URL ${req.url()}.`,
-      );
+      return;
     }
     await route.continue();
+  });
+  context.on("page", (p) => {
+    p.on("framenavigated", (frame) => {
+      if (frame === p.mainFrame() && isProductionUrl(frame.url())) {
+        void p.close().catch(() => {});
+      }
+    });
   });
 }
 
 async function runLook(args: ParsedArgs, browser: Browser, target: PreviewServerHandle): Promise<boolean> {
   const label = `${args.doctor ? "doctor-" : ""}${args.viewport.label}-${args.scheme}-${args.engine}`;
   const evidence = createEvidenceSession("look", label, args.evidenceRoot);
-  const context = await browser.newContext({
-    viewport: { width: args.viewport.width, height: args.viewport.height },
-    isMobile: args.viewport.isMobile,
-    hasTouch: args.viewport.hasTouch,
-    colorScheme: args.scheme,
-  });
+  let context: BrowserContext | undefined;
+  let page: Page | undefined;
   let status: "PASS" | "FAIL" = "PASS";
   let layout: LayoutSnapshot | undefined;
   try {
-    const page = await context.newPage();
-    evidence.attach(page);
-    try {
-      const response = await page.goto(target.url, { waitUntil: "networkidle", timeout: args.timeoutMs });
-      await page.evaluate(() => document.fonts.ready);
-      layout = await evidence.snapshotLayout(page);
-      evidence.writeJson("layout.json", layout);
-      await evidence.capture(page, "viewport", { selector: args.selector });
-      if (!args.selector) await evidence.capture(page, "full-page", { fullPage: true });
-      if (args.doctor) status = evaluateDoctor(evidence, response, layout);
-    } catch (error) {
-      status = "FAIL";
-      const message = error instanceof Error ? error.message : String(error);
-      evidence.notes.push(`Look failed: ${message}`);
-      await evidence.capture(page, "failure-state").catch(() => {});
-    }
-    if (target.owned) evidence.writeText("server.log", target.logs());
-    const summary = evidence.finalize(status, {
-      url: target.url,
-      engine: args.engine,
-      viewport: `${args.viewport.width}x${args.viewport.height}`,
-      scheme: args.scheme,
-      appSurface: layout?.appSurface ?? "unknown",
-      crossOriginIsolated: layout?.crossOriginIsolated ?? false,
-      overflowX: layout?.overflowX ?? -1,
+    context = await browser.newContext({
+      viewport: { width: args.viewport.width, height: args.viewport.height },
+      isMobile: args.viewport.isMobile,
+      hasTouch: args.viewport.hasTouch,
+      colorScheme: args.scheme,
     });
-    console.log(summary);
-    return status === "PASS";
+    page = await context.newPage();
+    evidence.attach(page);
+    const response = await page.goto(target.url, { waitUntil: "networkidle", timeout: args.timeoutMs });
+    await page.evaluate(() => document.fonts.ready);
+    layout = await evidence.snapshotLayout(page);
+    evidence.writeJson("layout.json", layout);
+    await evidence.capture(page, "viewport", { selector: args.selector });
+    if (!args.selector) await evidence.capture(page, "full-page", { fullPage: true });
+    if (args.doctor) status = evaluateDoctor(evidence, response, layout);
+  } catch (error) {
+    status = "FAIL";
+    const message = error instanceof Error ? error.message : String(error);
+    evidence.notes.push(`Look failed: ${message}`);
+    await captureFailureQuietly(evidence, page);
   } finally {
-    await context.close();
+    await context?.close();
   }
+  if (target.owned) evidence.writeText("server.log", target.logs());
+  const summary = evidence.finalize(status, {
+    url: target.url,
+    engine: args.engine,
+    viewport: `${args.viewport.width}x${args.viewport.height}`,
+    scheme: args.scheme,
+    appSurface: layout?.appSurface ?? "unknown",
+    crossOriginIsolated: layout?.crossOriginIsolated ?? false,
+    overflowX: layout?.overflowX ?? -1,
+  });
+  console.log(summary);
+  return status === "PASS";
 }
 
 async function runScenario(
@@ -148,60 +184,59 @@ async function runScenario(
     const names = SCENARIOS.map((item) => item.name).join(", ");
     throw new Error(`Unknown scenario "${args.scenarioName}". Available: ${names}`);
   }
-  if (args.url && isProductionUrl(args.url) && !scenario.readOnly) {
-    throw new Error(`Refusing writing scenario "${scenario.name}" against production URL ${args.url}.`);
+  if (args.url && !scenario.readOnly) {
+    await verifyNonProductionUrl(args.url, scenario.name);
   }
   const effectiveViewport: ViewportSpec =
     args.viewport === VIEWPORT_PRESETS.desktop && scenario.defaultViewport === "phone"
       ? VIEWPORT_PRESETS.phone
       : args.viewport;
   const evidence = createEvidenceSession("scenario", `${scenario.name}-${args.engine}`, args.evidenceRoot);
-  const context = await browser.newContext({
-    viewport: { width: effectiveViewport.width, height: effectiveViewport.height },
-    isMobile: effectiveViewport.isMobile,
-    hasTouch: effectiveViewport.hasTouch,
-    colorScheme: args.scheme,
-  });
-  if (!scenario.readOnly) {
-    await installProductionGuard(context, scenario.name);
-  }
+  let context: BrowserContext | undefined;
+  let page: Page | undefined;
   let status: "PASS" | "FAIL" = "PASS";
   try {
-    const page = await context.newPage();
-    evidence.attach(page);
-    try {
-      await scenario.run({
-        browser,
-        page,
-        baseUrl: target.url,
-        args: { ...args, viewport: effectiveViewport },
-        evidence,
-      });
-    } catch (error) {
-      status = "FAIL";
-      const message = error instanceof Error ? error.message : String(error);
-      evidence.notes.push(`Scenario failed: ${message}`);
-      await evidence.capture(page, "failure-state").catch(() => {});
-    }
-    if (evidence.observed.pageErrors.length > 0 || evidence.observed.consoleErrors.length > 0) {
-      status = "FAIL";
-      evidence.notes.push(
-        `Runtime errors observed: ${evidence.observed.pageErrors.length} pageErrors, ${evidence.observed.consoleErrors.length} consoleErrors.`,
-      );
-    }
-    if (target.owned) evidence.writeText("server.log", target.logs());
-    const summary = evidence.finalize(status, {
-      scenario: scenario.name,
-      url: target.url,
-      engine: args.engine,
-      viewport: `${effectiveViewport.width}x${effectiveViewport.height}`,
-      scheme: args.scheme,
+    context = await browser.newContext({
+      viewport: { width: effectiveViewport.width, height: effectiveViewport.height },
+      isMobile: effectiveViewport.isMobile,
+      hasTouch: effectiveViewport.hasTouch,
+      colorScheme: args.scheme,
     });
-    console.log(summary);
-    return status === "PASS";
+    if (!scenario.readOnly) await installProductionGuard(context);
+    page = await context.newPage();
+    evidence.attach(page);
+    await scenario.run({
+      browser,
+      page,
+      baseUrl: target.url,
+      args: { ...args, viewport: effectiveViewport },
+      evidence,
+    });
+    if (!scenario.readOnly) assertPageNotProduction(page, scenario.name);
+  } catch (error) {
+    status = "FAIL";
+    const message = error instanceof Error ? error.message : String(error);
+    evidence.notes.push(`Scenario failed: ${message}`);
+    await captureFailureQuietly(evidence, page);
   } finally {
-    await context.close();
+    await context?.close();
   }
+  if (evidence.observed.pageErrors.length > 0 || evidence.observed.consoleErrors.length > 0) {
+    status = "FAIL";
+    evidence.notes.push(
+      `Runtime errors observed: ${evidence.observed.pageErrors.length} pageErrors, ${evidence.observed.consoleErrors.length} consoleErrors.`,
+    );
+  }
+  if (target.owned) evidence.writeText("server.log", target.logs());
+  const summary = evidence.finalize(status, {
+    scenario: scenario.name,
+    url: target.url,
+    engine: args.engine,
+    viewport: `${effectiveViewport.width}x${effectiveViewport.height}`,
+    scheme: args.scheme,
+  });
+  console.log(summary);
+  return status === "PASS";
 }
 
 async function main(): Promise<void> {
@@ -226,12 +261,15 @@ async function main(): Promise<void> {
     return;
   }
 
-  const target = await resolveTarget(args);
+  let target: PreviewServerHandle | undefined;
   let browser: Browser | undefined;
   let cleanupPromise: Promise<void> | undefined;
   const cleanup = () => {
     cleanupPromise ??= (async () => {
-      await Promise.allSettled([browser ? browser.close() : Promise.resolve(), target.stop()]);
+      await Promise.allSettled([
+        browser ? browser.close() : Promise.resolve(),
+        target ? target.stop() : Promise.resolve(),
+      ]);
     })();
     return cleanupPromise;
   };
@@ -241,14 +279,15 @@ async function main(): Promise<void> {
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   try {
+    target = await resolveTarget(args);
     browser = await pickBrowserType(args.engine).launch({ headless: !args.headed });
     const ok =
       args.verb === "look" ? await runLook(args, browser, target) : await runScenario(args, browser, target);
     if (!ok) process.exitCode = 1;
   } finally {
+    await cleanup();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
-    await cleanup();
   }
 }
 

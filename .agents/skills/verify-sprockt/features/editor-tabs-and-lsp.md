@@ -23,7 +23,7 @@ bun run agent:browser scenario workbench-tabs-and-explorer
 Verify:
 
 - Before `node_modules` is installed, `CSS.highlights` contains zero `lsp-plugin-error` ranges and the status bar shows a quiet `Install deps for TS` indicator instead of a wall of red squiggles.
-- After **Start dev server** (`bun install`) finishes, `Install deps for TS` clears and `tsrs-lsp` activates cleanly with zero error ranges.
+- After **Start dev server** (`bun install`) finishes, `Install deps for TS` clears and `CSS.highlights` remains at zero `lsp-plugin-error` ranges. Positive LSP diagnostic, hover, and completion checks live in `e2e/lsp.spec.ts`.
 
 ## Gotchas
 

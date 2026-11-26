@@ -49,11 +49,12 @@ export const workbenchTabsAndExplorerScenario: AgentScenario = {
     const expectedText = "verified via agent:browser";
     await page.keyboard.type(expectedText);
     await page.waitForFunction(
-      async ({ path, text }) => {
+      async ({ path, text, saveSel }) => {
         const content = await globalThis.sprockt?.workspace?.files.read(path);
-        return content === text;
+        const saveState = document.querySelector(saveSel)?.textContent?.trim();
+        return content === text && saveState === "saved";
       },
-      { path: createdPath ?? "notes.txt", text: expectedText },
+      { path: createdPath ?? "notes.txt", text: expectedText, saveSel: SELECTORS.workbench.saveState },
       { timeout: 10_000 },
     );
     await evidence.capture(page, "created-and-typed-file");

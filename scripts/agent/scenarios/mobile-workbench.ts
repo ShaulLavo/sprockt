@@ -52,11 +52,13 @@ export const mobileWorkbenchScenario: AgentScenario = {
 
     const initialTheme = await page.evaluate(() => ({
       attr: document.documentElement.getAttribute("data-theme"),
-      scheme: getComputedStyle(document.documentElement).colorScheme,
+      prefersDark: window.matchMedia("(prefers-color-scheme: dark)").matches,
     }));
+    const startsLight =
+      initialTheme.attr === "light" || (initialTheme.attr === null && !initialTheme.prefersDark);
     assertCondition(
-      initialTheme.attr !== "dark",
-      `mobile-workbench must start in light mode to test Light->Dark transition (got data-theme="${initialTheme.attr}")`,
+      startsLight,
+      `mobile-workbench must start in light mode to test Light->Dark transition (data-theme="${initialTheme.attr}", prefersDark=${initialTheme.prefersDark})`,
     );
 
     await page.locator(SELECTORS.workbench.paneButton("Files")).tap();

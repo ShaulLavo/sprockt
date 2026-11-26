@@ -80,11 +80,9 @@ function stopChildProcess(child: ChildProcess): Promise<void> {
       if (settled) return;
       settled = true;
       clearTimeout(killTimer);
-      clearTimeout(safetyTimer);
       done();
     };
     const killTimer = setTimeout(() => sendSignalSafe(child, "SIGKILL"), 3000);
-    const safetyTimer = setTimeout(finish, 8000);
     child.once("exit", finish);
     child.once("close", finish);
     sendSignalSafe(child, "SIGTERM");

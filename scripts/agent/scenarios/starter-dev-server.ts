@@ -6,12 +6,12 @@ const STARTER_EXPECTATIONS: Readonly<
   Record<string, { readonly heading: string; readonly entryFile?: string }>
 > = {
   "vite-react": { heading: "Hello from bun.wasm", entryFile: "App.tsx" },
-  vanilla: { heading: "TypeScript + Vite", entryFile: "main.ts" },
-  sveltekit: { heading: "SvelteKit", entryFile: "+page.svelte" },
-  hono: { heading: "Hono", entryFile: "index.ts" },
-  "bun-sqlite": { heading: "SQLite", entryFile: "server.ts" },
-  astro: { heading: "Astro", entryFile: "index.astro" },
-  "next-app": { heading: "Next.js", entryFile: "page.tsx" },
+  vanilla: { heading: "Hello from vanilla TypeScript", entryFile: "main.ts" },
+  sveltekit: { heading: "Hello from sveltekit", entryFile: "+page.svelte" },
+  hono: { heading: "Hello from hono", entryFile: "server.ts" },
+  "bun-sqlite": { heading: "Bun.serve + bun:sqlite", entryFile: "server.ts" },
+  astro: { heading: "Hello from astro", entryFile: "index.astro" },
+  "next-app": { heading: "Next.js App Router", entryFile: "page.tsx" },
 };
 
 /** Reads real `lsp-plugin-error` highlight ranges painted by Singapore via `CSS.highlights`. */
@@ -144,11 +144,8 @@ export const starterDevServerScenario: AgentScenario = {
       evidence.notes.push("Preview interactive counter incremented from 0 to 1.");
 
       await editAppHeadingInEditor(page);
-      const updatedBody = await waitForPreviewContent(page, "Hello from bun.wasm live", 30_000);
-      assertCondition(
-        updatedBody.includes("count is 1"),
-        `Expected HMR to preserve React counter "count is 1" without full reload, got: ${updatedBody}`,
-      );
+      await waitForPreviewContent(page, "Hello from bun.wasm live", 30_000);
+      await frame.getByRole("button", { name: "count is 1", exact: true }).waitFor({ timeout: 5_000 });
       await page.waitForTimeout(1000);
       const postInstallStatus = (await page.locator(SELECTORS.workbench.statusBar).innerText()).trim();
       const postInstallErrors = await readLspErrorRanges(page);
