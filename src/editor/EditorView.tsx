@@ -226,7 +226,7 @@ class SessionBinding {
       const offset = revealOffset(current.buffer, { ...request, line: request.line });
       instance.jumpTo(offset, undefined, "go-to-line");
     }
-    if (shouldAutoFocusEditor()) instance.focus();
+    if (request.focus ?? shouldAutoFocusEditor()) instance.focus();
   }
 }
 

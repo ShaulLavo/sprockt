@@ -20,6 +20,7 @@ import { EDITOR_COPY } from "./copy";
 import "./editor.css";
 import { originalPath } from "./buffers";
 import { EditorView } from "./EditorView";
+import { shouldAutoFocusEditor } from "./focus-policy";
 import type { EditorStore } from "./store";
 import { adjacentTab } from "./tabs";
 import { TabBar } from "./TabBar";
@@ -244,7 +245,7 @@ export function EditorPane(props: { store: EditorStore }) {
   }, []);
 
   const open = (path: string, location: { line?: number; column?: number }) =>
-    store.open(path, { ...location, focus: true });
+    store.open(path, { ...location, focus: shouldAutoFocusEditor() });
 
   return (
     <section ref={pane} className="pane editor-pane" aria-label={EDITOR_COPY.editor}>

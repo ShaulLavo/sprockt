@@ -228,57 +228,66 @@ test("terminal updates its theme live across light and dark toggles, even when h
   await expect.poll(() => terminalCanvasBackground(page)).toBe("rgb(10, 13, 20)");
 });
 
-test("switching file tabs on mobile never focuses the editor, while desktop keyboard activation still does", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await newWorkspace(page);
-  await writeFile(page, "alpha.ts", "export const alpha = 1;\n");
-  await writeFile(page, "beta.ts", "export const beta = 2;\n");
+function dispatchCancelledMouseDrag(): void {
+  window.dispatchEvent(new PointerEvent("pointermove", { pointerType: "mouse", pointerId: 1, clientX: 40 }));
+  window.dispatchEvent(
+    new PointerEvent("pointercancel", { pointerType: "mouse", pointerId: 1, clientX: 40 }),
+  );
+}
 
-  await page.getByTestId("file-tree").getByRole("button", { name: "alpha.ts", exact: true }).click();
-  await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
-  await expect.poll(() => editorHasFocus(page)).toBe(false);
+test.describe("mobile and hybrid touch tab activation", () => {
+  test.use({ hasTouch: true });
 
-  await page.getByTestId("pane-switcher").getByRole("button", { name: "Files" }).click();
-  await page.getByTestId("file-tree").getByRole("button", { name: "beta.ts", exact: true }).click();
-  await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
-  await expect.poll(() => editorHasFocus(page)).toBe(false);
+  test("switching file tabs on mobile never focuses the editor, while desktop keyboard activation still does", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await newWorkspace(page);
+    await writeFile(page, "alpha.ts", "export const alpha = 1;\n");
+    await writeFile(page, "beta.ts", "export const beta = 2;\n");
 
-  // Switching tabs on mobile must not focus the editor or trigger the soft keyboard.
-  await page.locator('[data-testid="editor-tab"][data-path="alpha.ts"]').click();
-  await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
-  expect(await editorHasFocus(page)).toBe(false);
+    await page.getByTestId("file-tree").getByRole("button", { name: "alpha.ts", exact: true }).tap();
+    await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
+    await expect.poll(() => editorHasFocus(page)).toBe(false);
 
-  // An explicit tap directly on the editor text surface focuses the editor for real editing.
-  await page.getByTestId("editor").click();
-  await expect.poll(() => editorHasFocus(page)).toBe(true);
+    await page.getByTestId("pane-switcher").getByRole("button", { name: "Files" }).tap();
+    await page.getByTestId("file-tree").getByRole("button", { name: "beta.ts", exact: true }).tap();
+    await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
+    await expect.poll(() => editorHasFocus(page)).toBe(false);
 
-  // Tapping another file tab afterwards leaves the editor unfocused again.
-  await page.locator('[data-testid="editor-tab"][data-path="beta.ts"]').click();
-  await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
-  await expect.poll(() => editorHasFocus(page)).toBe(false);
+    // Switching tabs on mobile must not focus the editor or trigger the soft keyboard.
+    await page.locator('[data-testid="editor-tab"][data-path="alpha.ts"]').tap();
+    await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
+    expect(await editorHasFocus(page)).toBe(false);
 
-  // Hybrid desktop check: a cancelled mouse drag + Enter must still focus on Enter AND must not
-  // swallow the next touch tap on another tab.
-  await page.setViewportSize({ width: 1440, height: 900 });
-  const alphaTab = page.locator('[data-testid="editor-tab"][data-path="alpha.ts"]');
-  const betaTab = page.locator('[data-testid="editor-tab"][data-path="beta.ts"]');
-  await betaTab.dispatchEvent("pointerdown", { pointerType: "mouse", pointerId: 1, button: 0, clientX: 20 });
-  await page.evaluate(() => {
-    window.dispatchEvent(
-      new PointerEvent("pointermove", { pointerType: "mouse", pointerId: 1, clientX: 40 }),
-    );
-    window.dispatchEvent(
-      new PointerEvent("pointercancel", { pointerType: "mouse", pointerId: 1, clientX: 40 }),
-    );
+    // An explicit tap directly on the editor text surface focuses the editor for real editing.
+    await page.getByTestId("editor").tap();
+    await expect.poll(() => editorHasFocus(page)).toBe(true);
+
+    // Tapping another file tab afterwards leaves the editor unfocused again.
+    await page.locator('[data-testid="editor-tab"][data-path="beta.ts"]').tap();
+    await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
+    await expect.poll(() => editorHasFocus(page)).toBe(false);
+
+    // Hybrid desktop check: a cancelled mouse drag + Enter must still focus on Enter AND must not
+    // swallow the next real touch tap on another tab (which opens it with the editor unfocused).
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const alphaTab = page.locator('[data-testid="editor-tab"][data-path="alpha.ts"]');
+    const betaTab = page.locator('[data-testid="editor-tab"][data-path="beta.ts"]');
+    await betaTab.dispatchEvent("pointerdown", {
+      pointerType: "mouse",
+      pointerId: 1,
+      button: 0,
+      clientX: 20,
+    });
+    await page.evaluate(dispatchCancelledMouseDrag);
+    await alphaTab.focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
+    await expect.poll(() => editorHasFocus(page)).toBe(true);
+
+    await betaTab.tap();
+    await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
+    await expect.poll(() => editorHasFocus(page)).toBe(false);
   });
-  await alphaTab.focus();
-  await page.keyboard.press("Enter");
-  await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
-  await expect.poll(() => editorHasFocus(page)).toBe(true);
-
-  await betaTab.dispatchEvent("pointerdown", { pointerType: "touch", pointerId: 2, button: 0 });
-  await betaTab.click();
-  await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
 });

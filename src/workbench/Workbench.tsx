@@ -11,6 +11,7 @@ import { createMultiHotkeyHandler, detectPlatform } from "@shaulavo/hotkeys";
 import { debugHandle } from "../app/debug";
 import { navigate } from "../app/router";
 import { EditorPane } from "../editor/EditorPane";
+import { shouldAutoFocusEditor } from "../editor/focus-policy";
 import { createEditorStore, type EditorStore } from "../editor/store";
 import { Explorer } from "../explorer/Explorer";
 import { attachAfterImport } from "../importer/after-import";
@@ -405,7 +406,9 @@ function PanesBody(props: { session: WorkspaceSession; frame: FrameState; panes:
           collapsed={!terminalOpen && !phone}
           shown={!phone || pane === "terminal"}
           onToggleCollapsed={panes.toggleTerminal}
-          onOpenFile={(path, location) => panes.explorerStore.open(path, { ...location, focus: true })}
+          onOpenFile={(path, location) =>
+            panes.explorerStore.open(path, { ...location, focus: shouldAutoFocusEditor() })
+          }
         />
       </div>
       <StatusBar tabs={panes.tabs} />

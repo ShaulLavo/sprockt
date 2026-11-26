@@ -1,6 +1,6 @@
-// Focus rules for opening and switching files: desktop mouse/keyboard interactions focus the
-// editor immediately, while touch/mobile navigation keeps the soft keyboard closed until the user
-// explicitly taps the editor text surface.
+// Focus rules for opening and switching files: desktop mouse and explicit keyboard interactions
+// focus the editor immediately, while touch/mobile navigation keeps the soft keyboard closed until
+// the user explicitly taps the editor text surface.
 
 export type MediaMatcher = (query: string) => { readonly matches: boolean };
 
@@ -16,5 +16,6 @@ export function isTouchOrMobile(
 
 /** Whether switching or revealing a file should automatically move keyboard focus into the editor. */
 export function shouldAutoFocusEditor(pointerType?: string, match?: MediaMatcher): boolean {
+  if (pointerType === "keyboard") return true;
   return !isTouchOrMobile(pointerType, match);
 }

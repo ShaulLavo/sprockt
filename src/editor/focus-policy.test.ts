@@ -12,11 +12,16 @@ describe("editor focus policy", () => {
     expect(shouldAutoFocusEditor("touch", desktop)).toBe(false);
   });
 
-  test("never auto-focuses on coarse-pointer or phone-width viewports", () => {
+  test("never auto-focuses for pointer taps on coarse-pointer or phone-width viewports", () => {
     const coarse = matcher({ "(pointer: coarse)": true, "(max-width: 768px)": false });
     const narrow = matcher({ "(pointer: coarse)": false, "(max-width: 768px)": true });
     expect(shouldAutoFocusEditor("mouse", coarse)).toBe(false);
     expect(shouldAutoFocusEditor(undefined, narrow)).toBe(false);
+  });
+
+  test("auto-focuses on explicit keyboard activation even on hybrid touch devices", () => {
+    const hybrid = matcher({ "(pointer: coarse)": true, "(max-width: 768px)": false });
+    expect(shouldAutoFocusEditor("keyboard", hybrid)).toBe(true);
   });
 
   test("auto-focuses on desktop mouse and keyboard navigation", () => {

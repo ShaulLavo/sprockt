@@ -23,11 +23,12 @@ export interface OpenOptions {
   readonly focus?: boolean;
 }
 
-/** A request to focus the editor, at a line when given; `seq` makes a repeat a new request. */
+/** A request to focus or reveal a line in the editor; `seq` makes a repeat a new request. */
 export interface RevealRequest {
   readonly path: string;
   readonly line?: number;
   readonly column?: number;
+  readonly focus?: boolean;
   readonly seq: number;
 }
 
@@ -594,7 +595,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
       releaseClosed();
       if (options.line === undefined && !options.focus) return;
       revealSeq += 1;
-      setReveal({ path, line: options.line, column: options.column, seq: revealSeq });
+      setReveal({ path, line: options.line, column: options.column, focus: options.focus, seq: revealSeq });
     },
     close: closeOne,
     move: (from, to) => commit(moveTab(tabs(), from, to), active()),
