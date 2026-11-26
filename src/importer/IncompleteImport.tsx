@@ -1,6 +1,5 @@
 import { createResource, createSignal, Show } from "solid-js";
 import { deleteWorkspace, openIdleWorkspace } from "waffle";
-import { forgetPreviewIdentity } from "../preview/identity";
 import { storageName } from "../workspace/paths";
 import { COPY, fill } from "./copy";
 import { readIncomplete, retryPath } from "./incomplete";
@@ -27,6 +26,8 @@ export function IncompleteImport(props: { id: string; onDeleted: () => void }) {
     const result = await deleteWorkspace({ mode: "fast", name: storageName(props.id) }).catch(() => "failed");
     if (result === "deleted" || result === "missing") {
       // A workspace created again under this id must not get this one's preview origins.
+      // Loaded here: the landing page's own bundle stays as it was.
+      const { forgetPreviewIdentity } = await import("../preview/identity-store");
       await forgetPreviewIdentity(storageName(props.id));
       props.onDeleted();
       return;

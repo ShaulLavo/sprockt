@@ -1,7 +1,6 @@
 // The real dependencies of `createWorkspaceWithFiles` in the browser, and the hand-off to the
 // workbench once the new workspace is written.
 import { deleteWorkspace, storedWorkspaces } from "waffle";
-import { forgetPreviewIdentity } from "../preview/identity";
 import { isWorkspaceId } from "../workspace/paths";
 import { openWorkspace } from "../workspace/session";
 import { replaceRoute } from "./navigation";
@@ -13,6 +12,7 @@ export const browserWorkspaceDeps: NewWorkspaceDeps = {
   // not get this one's preview origins.
   remove: async (name) => {
     const result = await deleteWorkspace({ mode: "fast", name });
+    const { forgetPreviewIdentity } = await import("../preview/identity-store");
     await forgetPreviewIdentity(name);
     return result;
   },

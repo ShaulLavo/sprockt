@@ -8,9 +8,9 @@
 // - The key is part of the identity, so two workspaces never derive the same host names,
 //   whatever else is equal.
 // - Every tab of a workspace reads the same nonce, so every tab derives the same names.
-// - Deleting a workspace forgets its nonce (`forgetPreviewIdentity`, called where storage is
-//   deleted), so a workspace created again under the same id gets new names, and never the
-//   cookies or the storage its predecessor's pages left on their origins.
+// - Deleting a workspace forgets its nonce (`forgetPreviewIdentity` in identity-store.ts,
+//   called where storage is deleted), so a workspace created again under the same id gets new
+//   names, and never the cookies or the storage its predecessor's pages left on their origins.
 import { storageName } from "../workspace/paths";
 import { browserIdentityStore, type IdentityStore } from "./identity-store";
 
@@ -22,19 +22,4 @@ export async function previewIdentity(
   const key = storageName(workspace);
   const nonce = await store.claim(key, crypto.randomUUID());
   return `${key}\n${nonce}`;
-}
-
-/**
- * Forgets the nonce of the workspace whose storage has this name. Called after the storage is
- * gone: forgetting first would give a workspace that could not be deleted new host names under
- * its open tabs.
- */
-export async function forgetPreviewIdentity(
-  storage: string,
-  store: IdentityStore = browserIdentityStore(),
-): Promise<void> {
-  // A nonce that could not be removed only means the next workspace of this id keeps its names.
-  await store.forget(storage).catch((error: unknown) => {
-    console.error("Forgetting a workspace's preview identity failed", error);
-  });
 }

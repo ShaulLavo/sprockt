@@ -163,7 +163,7 @@ export function deleteStoredWorkspace(id: string): Promise<"deleted" | "missing"
     removeWorkspaceHint(id);
     // The preview identity goes with the storage: a workspace made again under this id must
     // not get this one's preview origins. Loaded here, so the cold landing page does not.
-    const { forgetPreviewIdentity } = await import("../preview/identity");
+    const { forgetPreviewIdentity } = await import("../preview/identity-store");
     await forgetPreviewIdentity(storageName(id));
     return result;
   });

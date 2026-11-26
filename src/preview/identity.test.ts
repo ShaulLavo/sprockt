@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { previewOrigin, previewOriginId } from "bun-wasm/preview-origins";
-import { forgetPreviewIdentity, previewIdentity } from "./identity";
-import type { IdentityStore } from "./identity-store";
+import { previewIdentity } from "./identity";
+import { forgetPreviewIdentity, type IdentityStore } from "./identity-store";
 
 /** The IDE's own store, shared by every "tab": a claim is one step, as a transaction makes it. */
 function sharedStore(): IdentityStore & { readonly nonces: Map<string, string> } {
