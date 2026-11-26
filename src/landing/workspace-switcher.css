@@ -31,15 +31,13 @@
   color: var(--fg-muted);
 }
 
-/* Saved workspaces: a card of the real workbench on the lit ground (#4's import log panel) */
+/* Saved workspaces: crisp Sheet and Biro card directly on the page surface */
 .lp-recent-col {
-  padding: 14px 16px 6px;
-  border-radius: 8px;
-  background: var(--bg-elevated);
+  padding: 16px 18px 8px;
+  border: 1px solid var(--lp-line);
+  border-radius: var(--lp-r, 8px);
+  background: var(--lp-card, var(--bg-elevated));
   color: var(--fg);
-  box-shadow:
-    0 0 0 1px light-dark(rgb(17 17 17 / 0.1), rgb(233 237 243 / 0.1)),
-    0 24px 60px -28px light-dark(rgb(17 24 40 / 0.45), rgb(0 0 0 / 0.8));
 }
 
 .lp-recent-head {

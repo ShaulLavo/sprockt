@@ -1,14 +1,10 @@
-// The four feature cards combining #4 "Sheet and Biro"'s crisp workbench fragments with #2
-// "Precision Sheet"'s per-card distinct painterly-landscape textures (sky blue, warm sand, sage
-// meadow, deep coastal teal — harmonized for both light and Night Shift dark).
-import { Fragment, useEffect, useRef, type ReactNode } from "react";
+// The four feature cards combining Sheet and Biro's crisp workbench fragments over one unified
+// architectural drafting-plate ground (slate-paper wash + hairline dot grid + quiet tonal glow).
+import { Fragment, type ReactNode } from "react";
 import { LANDING_COPY } from "./copy";
-import {
-  painterlyFallbackCSS,
-  renderPainterlyLandscape,
-  type FeatureCardTone,
-} from "./effects/painterly-landscape";
 import { BrandLogoTile } from "./logos";
+
+export type FeatureCardTone = "check" | "complete" | "terminal" | "store";
 
 type Tok = readonly [cls: string, text: string];
 type Line = readonly [n: number, tokens: readonly Tok[]];
@@ -286,63 +282,25 @@ function StorePanel() {
   );
 }
 
-function PainterlyBackdrop(props: { readonly tone: FeatureCardTone; readonly scheme: "light" | "dark" }) {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const host = hostRef.current;
-    const canvas = canvasRef.current;
-    if (!host || !canvas) return;
-
-    const paint = () => {
-      const w = host.clientWidth || 560;
-      const h = host.clientHeight || 420;
-      const ok = renderPainterlyLandscape(canvas, props.tone, props.scheme, w, h);
-      if (ok) {
-        canvas.style.opacity = "1";
-        host.style.background = "";
-      } else {
-        canvas.style.opacity = "0";
-        host.style.background = painterlyFallbackCSS(props.tone, props.scheme);
-      }
-    };
-
-    paint();
-    const ro = new ResizeObserver(paint);
-    ro.observe(host);
-    return () => ro.disconnect();
-  }, [props.tone, props.scheme]);
-
-  return (
-    <div ref={hostRef} className="lp-panel-bg" data-card-tone={props.tone} aria-hidden="true">
-      <canvas ref={canvasRef} className="lp-panel-canvas" aria-hidden="true" />
-      <div className="lp-panel-grain" aria-hidden="true" />
-    </div>
-  );
-}
-
 function FeatureCard(props: {
   readonly title: string;
   readonly body: string;
   readonly fade: "b" | "br";
   readonly tone: FeatureCardTone;
-  readonly scheme: "light" | "dark";
   readonly children: ReactNode;
 }) {
   return (
     <article className="lp-card" data-testid={`feature-card-${props.tone}`}>
       <h3>{props.title}</h3>
       <p>{props.body}</p>
-      <div className="lp-panel" data-card-tone={props.tone} aria-hidden="true">
-        <PainterlyBackdrop tone={props.tone} scheme={props.scheme} />
+      <div className="lp-panel lp-plate" data-card-tone={props.tone} aria-hidden="true">
         <div className={`lp-stage lp-fade-${props.fade}`}>{props.children}</div>
       </div>
     </article>
   );
 }
 
-export function FeatureCards(props: { readonly scheme: "light" | "dark" }) {
+export function FeatureCards() {
   return (
     <div className="lp-cards">
       <FeatureCard
@@ -350,7 +308,6 @@ export function FeatureCards(props: { readonly scheme: "light" | "dark" }) {
         body={LANDING_COPY.featureCheckBody}
         fade="br"
         tone="check"
-        scheme={props.scheme}
       >
         <CheckPanel />
       </FeatureCard>
@@ -359,7 +316,6 @@ export function FeatureCards(props: { readonly scheme: "light" | "dark" }) {
         body={LANDING_COPY.featureCompleteBody}
         fade="b"
         tone="complete"
-        scheme={props.scheme}
       >
         <CompletePanel />
       </FeatureCard>
@@ -368,7 +324,6 @@ export function FeatureCards(props: { readonly scheme: "light" | "dark" }) {
         body={LANDING_COPY.featureTermBody}
         fade="b"
         tone="terminal"
-        scheme={props.scheme}
       >
         <TerminalPanel />
       </FeatureCard>
@@ -377,7 +332,6 @@ export function FeatureCards(props: { readonly scheme: "light" | "dark" }) {
         body={LANDING_COPY.featureStoreBody}
         fade="b"
         tone="store"
-        scheme={props.scheme}
       >
         <StorePanel />
       </FeatureCard>
