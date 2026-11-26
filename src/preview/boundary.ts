@@ -1,11 +1,15 @@
 // Which server a request reaching the preview service worker belongs to. The worker used to
-// take that from the request's address alone, so a previewed page could ask for another
-// workspace's mount, or another server's, and be answered from there. The page that asks is
-// what decides: a previewed page is served by the one server it was loaded from, and by no other.
+// take that from the request's address alone, so a previewed page that asked for another
+// workspace's mount, or another server's, was answered from there. Where the worker can tell
+// which page asks, the page decides: it is served by the one server it was loaded from.
 //
-// This holds the worker to that pair. It does not make mounted previews safe for untrusted
-// code: a mounted page shares the IDE's origin and can reach its storage without asking the
-// worker anything. That is what isolated previews are for (transport.ts).
+// This is defence in depth, not a boundary. Mounted previews are for trusted code only
+// (mounted.ts). A service worker sees a page load only when the address it goes to is in its
+// scope, and it never learns for certain who started one: a page can send its frame or a new
+// tab to another mount with no referrer, or to any page of the IDE, and nothing here stops
+// that. And the previewed code shares the IDE's origin, so it needs no request at all to read
+// the IDE's storage. What these checks do is keep an honest project's mistakes (a redirect to
+// the wrong port, a stray absolute link) from landing in another server or in the IDE.
 import { parseMountedUrl, PREVIEW_PREFIX, type MountedLocation, type PreviewHome } from "./paths";
 
 export type Route =

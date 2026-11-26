@@ -2,14 +2,18 @@
 // The pane only ever asks this interface for URLs and for what a frame's page reports.
 //
 // A transport belongs to one workspace, and every route it builds is keyed by that workspace
-// and the port, never by the port alone: two workspaces with a server on the same port must
-// not receive each other's HTTP or WebSocket traffic.
+// and the port, never by the port alone, so that two workspaces with a server on the same
+// port are routed apart.
+//
+// Only `isolated` keeps previewed code apart from the IDE, from other workspaces and from
+// other servers: each server gets an origin of its own (`<id>-<port>-pv.<preview domain>`).
+// It is what a public build has.
 //
 // `mounted` serves `/__preview/<workspace>/<port>/` on the IDE's own origin through a service
-// worker. The previewed code then shares the IDE's origin and can reach its storage, so
-// `mounted` is a development stopgap for trusted local projects and is never in a public
-// build. `isolated` gives each server an origin of its own (`<id>-<port>-pv.sprockt.dev`);
-// that is what keeps a previewed project away from the IDE, and it is what a public build has.
+// worker. It isolates nothing: the previewed code shares the IDE's origin, can read its
+// storage and every workspace's, and can send a frame anywhere on it. It is for trusted code
+// only (development, the test build, the owner's private preview) and is never in a public
+// build; a build that names a preview domain and asks for it is refused (kind.ts).
 import type { PreviewServer as PreviewBackend } from "waffle/browser/preview";
 import type { FrameMessage } from "./bridge";
 

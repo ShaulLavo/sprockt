@@ -2,9 +2,13 @@
 // `/__preview/<workspace>/<port>/…`, and every request a previewed page makes on our origin, by
 // asking a tab that has that workspace open. Waffle does the routing; this file sets our
 // policy: which tabs may answer, what is added to HTML, and the isolation headers.
+//
+// For trusted code only (mounted.ts). The checks on who asks for what (boundary.ts) and on
+// where redirects lead are defence in depth: they do not isolate a workspace, a port or the
+// IDE from a previewed page, which shares their origin.
 import { createPreviewServiceWorker, type PreviewClient } from "waffle/browser/service-worker";
 import { routeRequest, socketAllowed } from "./boundary";
-import { HOST_QUERY, isHostAnnouncement, isPreviewsOff, type HostAsk } from "./host-protocol";
+import { HOST_QUERY, isHostAnnouncement, isPreviewsOff, PREVIEWS_OFF, type HostAsk } from "./host-protocol";
 import { clientScriptTag, injectTag, isHtml, isUtf8 } from "./html";
 import { isolationHeaders } from "./isolation";
 import {
@@ -142,10 +146,33 @@ const retirement = createRetirement({
   unregister: () => self.registration.unregister(),
 });
 
+/**
+ * Tells every open tab that the workspace is not served now. A tab that runs a server ends the
+ * sockets and responses it still carries for previewed pages (tunnels.ts): this worker handed
+ * those over when they started and cannot reach them any more.
+ */
+async function tellTabsToStop(): Promise<void> {
+  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  // A service worker's client takes no target origin: it is one tab of our own origin.
+  // oxlint-disable-next-line unicorn/require-post-message-target-origin
+  for (const client of windows) client.postMessage({ type: PREVIEWS_OFF });
+}
+
 async function retire(): Promise<void> {
   routers.clear();
   hosts.clear();
   await retirement.retire();
+  await tellTabsToStop();
+}
+
+/**
+ * Whether the workspace may answer now (retirement.ts). When it may not, because previews are
+ * gone or because nobody can say that they are still on, the tabs are told as well.
+ */
+async function mayServe(navigation: boolean): Promise<boolean> {
+  const allowed = await retirement.allowed(navigation);
+  if (!allowed) await tellTabsToStop();
+  return allowed;
 }
 
 /**
@@ -155,7 +182,7 @@ async function retire(): Promise<void> {
 async function answer(request: Request, clientId: string): Promise<Response> {
   // The deploy is asked for every request: a page that is still open gets nothing more from
   // the workspace once previews are gone, or while nobody can say that they are still on.
-  if (!(await retirement.allowed(request.mode === "navigate"))) return fetch(request);
+  if (!(await mayServe(request.mode === "navigate"))) return fetch(request);
   // The page that asks decides which server answers, not the address it asks for (boundary.ts).
   const route = routeRequest(request.url, location.origin, await sourceOf(request, clientId));
   if (route.to === "network") return fetch(request);
@@ -168,7 +195,7 @@ async function answer(request: Request, clientId: string): Promise<Response> {
 /** Hands a previewed page's socket to its own server, or refuses it as a closed port would. */
 async function connect(socket: MessagePort, port: number, pageUrl: string): Promise<void> {
   const page = socketAllowed(pageUrl, location.origin, port);
-  const allowed = page !== undefined && (await retirement.allowed(false));
+  const allowed = page !== undefined && (await mayServe(false));
   const routed = allowed ? routerFor(page.workspace).socket(port, pageUrl, socket) : undefined;
   if (routed) return routed;
   // A message port has no target origin: it reaches its other end only.

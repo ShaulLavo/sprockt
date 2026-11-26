@@ -11,6 +11,8 @@
 //   every socket: no earlier answer is trusted, however recent. A deploy that says no retires
 //   the worker, and a deploy that cannot be asked (offline, a server error) is not served
 //   for: the worker answers from the workspace only when the deploy has just said it may.
+import { freshly } from "./fresh";
+
 export const RETIRED_CACHE = "sprockt-preview-worker";
 export const RETIRED_KEY = "/__preview/__retired";
 
@@ -59,7 +61,7 @@ export interface Retirement {
 }
 
 /** What the deploy says: previews on, previews off, or no answer (offline, a server error). */
-async function deployAllows(fetchMode: () => Promise<Response>): Promise<boolean | undefined> {
+export async function deployAllows(fetchMode: () => Promise<Response>): Promise<boolean | undefined> {
   const response = await fetchMode().catch(() => undefined);
   if (!response || response.status >= 500) return undefined;
   if (!response.ok) return false;
@@ -70,19 +72,9 @@ async function deployAllows(fetchMode: () => Promise<Response>): Promise<boolean
   );
 }
 
-/** One question to the deploy, and the requests it answers: those that had arrived when it was asked. */
-interface Question {
-  readonly covers: number;
-  readonly answer: Promise<boolean>;
-}
-
 export function createRetirement(options: RetirementOptions): Retirement {
   // Read once, when the worker starts: this is what a restart cannot forget.
   let retired: Promise<boolean> = options.flag.has().catch(() => false);
-  /** How many requests have asked so far; each one's number is its place in that order. */
-  let arrivals = 0;
-  let asking: Question | undefined;
-  let next: Promise<boolean> | undefined;
 
   async function retire(): Promise<void> {
     retired = Promise.resolve(true);
@@ -98,42 +90,20 @@ export function createRetirement(options: RetirementOptions): Retirement {
     return verdict === true;
   }
 
-  /** Asks the deploy now, for every request that has arrived by now. */
-  function ask(): Promise<boolean> {
-    const question: Question = { covers: arrivals, answer: check() };
-    asking = question;
-    const forget = (): void => {
-      if (asking === question) asking = undefined;
-    };
-    question.answer.then(forget, forget);
-    return question.answer;
-  }
-
   /**
-   * The deploy's word for the request that arrived as number `arrival`: from a question asked
-   * after it arrived, never from an earlier one. Requests that arrive while a question is out
-   * wait for it and then share the next one, so the deploy is asked one question at a time.
+   * The deploy's word for one request: from a question asked after the request arrived, never
+   * from an earlier one (fresh.ts).
    */
-  function verified(arrival: number): Promise<boolean> {
-    if (!asking) return ask();
-    if (asking.covers >= arrival) return asking.answer;
-    next ??= asking.answer.then(() => {
-      next = undefined;
-      return ask();
-    });
-    return next;
-  }
+  const verified = freshly(check);
 
   return {
     retire,
     async allowed(navigation) {
-      arrivals += 1;
-      const arrival = arrivals;
       // Retired stays retired, with one way back: a build with previews clears the flag before
       // it registers the worker again (mounted.ts), and a navigation reads the flag anew.
       if (navigation && (await retired)) retired = options.flag.has().catch(() => true);
       if (await retired) return false;
-      const allowed = await verified(arrival);
+      const allowed = await verified();
       // It may have been retired by a message while the deploy was being asked.
       return allowed && !(await retired);
     },

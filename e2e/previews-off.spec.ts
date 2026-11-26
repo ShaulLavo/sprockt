@@ -36,6 +36,39 @@ Bun.serve({
 });
 `;
 
+/**
+ * The guest page with a WebSocket that stays open: it says hello when it opens, and the page
+ * keeps what the server echoes and whether the socket is still open.
+ */
+const SOCKET_SERVER = `
+const PAGE = "<!doctype html><html><head><title>Guest</title></head><body><h1>Guest page</h1><script>" +
+  "window.echoes = []; window.socketState = 'connecting';" +
+  "window.socket = new WebSocket('ws://' + location.host + '/ws');" +
+  "socket.onopen = () => { window.socketState = 'open'; socket.send('hello'); };" +
+  "socket.onmessage = (event) => window.echoes.push(event.data);" +
+  "socket.onclose = () => { window.socketState = 'closed'; };" +
+  "</script></body></html>";
+Bun.serve({
+  port: 3000,
+  fetch(request, server) {
+    if (new URL(request.url).pathname === "/ws") return server.upgrade(request) ? undefined : new Response("no upgrade", { status: 400 });
+    return new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } });
+  },
+  websocket: {
+    message(socket, message) {
+      socket.send(String(message).toUpperCase());
+    },
+  },
+});
+`;
+
+/** What the guest page above keeps about its socket. */
+interface SocketPage {
+  echoes: string[];
+  socketState: string;
+  socket: WebSocket;
+}
+
 /** How many service workers this origin has registered. */
 const registrations = (page: Page) =>
   page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
@@ -44,9 +77,9 @@ const registrations = (page: Page) =>
  * The build with previews: a workspace in `page` runs a server, and its address works in a tab
  * of its own. Returns that address. `page` stays open and keeps hosting the server.
  */
-async function hostAGuest(page: Page, context: BrowserContext): Promise<string> {
+async function hostAGuest(page: Page, context: BrowserContext, server = SERVER): Promise<string> {
   const id = await newWorkspace(page);
-  await writeFile(page, "server.ts", SERVER);
+  await writeFile(page, "server.ts", server);
   await runInTerminal(page, "bun server.ts");
   await expect(page.frameLocator("[data-testid=preview-frame]").getByRole("heading")).toHaveText(
     "Guest page",
@@ -139,6 +172,30 @@ test.describe("with a tab of the earlier build still open", () => {
     await deployWithoutPreviews(context, "off-old-worker");
     expect(await again()).not.toContain("Guest page");
     await expect.poll(() => registrations(open)).toBe(0);
+    await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "ready");
+  });
+
+  test("a WebSocket that was open when the deploy changed is closed, and carries nothing more", async ({
+    page,
+    context,
+  }) => {
+    const address = await hostAGuest(page, context, SOCKET_SERVER);
+    const open = await context.newPage();
+    await open.goto(address);
+    const socket = () =>
+      open.evaluate(() => {
+        const guest = window as unknown as SocketPage;
+        return { state: guest.socketState, echoes: guest.echoes };
+      });
+    await expect.poll(socket).toEqual({ state: "open", echoes: ["HELLO"] });
+
+    // The deploy changes. No page is loaded, the worker file is still the old one, and the
+    // socket was handed to the tab that runs the server long ago: the worker is out of it.
+    await deployWithoutPreviews(context, "off-old-worker");
+    await open.evaluate(() => (window as unknown as SocketPage).socket.send("after the deploy changed"));
+    // The tab that runs the server asks the deploy before it passes the frame on. It does not
+    // pass it on: the server never sees it, nothing is echoed, and the socket ends.
+    await expect.poll(socket).toEqual({ state: "closed", echoes: ["HELLO"] });
     await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "ready");
   });
 

@@ -231,6 +231,70 @@ test("two workspaces on the same port have different origins and never see each 
   await expectPreviewText(page, "#where", first.origin);
 });
 
+test("a program in a workspace cannot choose its preview origin", async ({ page, context }) => {
+  // An earlier version kept the identity in this file, inside the workspace, where every
+  // program can write. Two workspaces that write the same value there must still be apart.
+  const forged = "11111111-1111-4111-8111-111111111111";
+  const start = `mkdir -p /.sprockt && echo ${forged} > /.sprockt/preview-identity && bun server.ts`;
+
+  await newWorkspace(page);
+  await writeSite(page);
+  await runInTerminal(page, start);
+  await heading(page, "Hello from Bun.serve");
+  const first = new URL((await frameSrc(page)) ?? "");
+
+  const other = await context.newPage();
+  await newWorkspace(other);
+  await writeFile(other, "probe.js", PROBE);
+  await writeFile(other, "server.ts", OTHER_SERVER);
+  await runInTerminal(other, start);
+  await heading(other, "Other workspace");
+  const second = new URL((await frameSrc(other)) ?? "");
+
+  expect(first.host).toMatch(hostOf(3000));
+  expect(second.host).toMatch(hostOf(3000));
+  expect(second.origin).not.toBe(first.origin);
+  // Each still shows its own server, with its own cookie jar.
+  await page.getByRole("button", { name: "Reload preview" }).click();
+  await heading(page, "Hello from Bun.serve");
+  await expectPreviewText(page, "#api", `host ${first.host} cookie visit=1`);
+  await heading(other, "Other workspace");
+});
+
+test("a workspace deleted and created again under the same id gets a new preview origin", async ({
+  page,
+  context,
+}) => {
+  const id = await serve(page);
+  const before = await frameSrc(page);
+  await page.close();
+
+  // Deleted from the landing page, once its tab is gone.
+  const landing = await context.newPage();
+  await landing.goto("/");
+  await expect
+    .poll(async () => {
+      await landing.reload();
+      await expect(landing.getByTestId(`workspace-row-${id}`)).toBeVisible();
+      return landing.getByTestId(`workspace-live-${id}`).count();
+    })
+    .toBe(0);
+  await landing.getByTestId(`workspace-row-${id}`).hover();
+  await landing.getByTestId(`workspace-delete-${id}`).click();
+  await landing.getByTestId(`workspace-delete-confirm-${id}`).click();
+  await expect(landing.getByTestId(`workspace-row-${id}`)).toHaveCount(0);
+
+  // The same id again is a new workspace: it must not get its predecessor's origin, where
+  // that one's pages left their storage and their cookies.
+  await landing.goto(`/w/${id}`);
+  await writeSite(landing);
+  await runInTerminal(landing, "bun server.ts");
+  await heading(landing, "Hello from Bun.serve");
+  const after = await frameSrc(landing);
+  expect(new URL(after ?? "").host).toMatch(hostOf(3000));
+  expect(after).not.toBe(before);
+});
+
 test("a second tab of the workspace previews the first tab's server on the same origin", async ({ page }) => {
   test.skip(TAB_POLICY !== "attach", "tabs share a workspace only with the attach policy");
   const id = await newWorkspace(page);

@@ -21,16 +21,27 @@ export function previewDomain(build: PreviewBuild): string | undefined {
 }
 
 /**
- * - `mounted` previews share the IDE's origin, so a previewed project could reach the IDE's
- *   storage. They exist only in development: under `vite dev`, or in a build made with
- *   VITE_SPROCKT_PREVIEWS=mounted (the test build, and the owner's private preview).
+ * - `mounted` previews share the IDE's origin, so previewed code can reach the IDE's storage
+ *   and every workspace's. They are for trusted code only: under `vite dev`, or in a build made
+ *   with VITE_SPROCKT_PREVIEWS=mounted (the test build, and the owner's private preview).
  * - `isolated` previews give every server an origin of its own under the preview domain. A
  *   build that names the domain (VITE_SPROCKT_PREVIEW_DOMAIN) has them: that is the public build.
  * - Any other build has no preview transport.
+ *
+ * A build that names a preview domain and also asks for mounted previews is refused: naming
+ * the domain says the build is meant for the public, and a public build must never be mounted.
+ * A forgotten or left-over setting then fails the build instead of shipping the wrong one.
  */
 export function previewKind(build: PreviewBuild): PreviewKind {
-  if (build.DEV || build.VITE_SPROCKT_PREVIEWS === "mounted") return "mounted";
-  return previewDomain(build) === undefined ? "none" : "isolated";
+  if (build.DEV) return "mounted";
+  const domain = previewDomain(build);
+  const mounted = build.VITE_SPROCKT_PREVIEWS === "mounted";
+  if (mounted && domain !== undefined)
+    throw new Error(
+      `VITE_SPROCKT_PREVIEWS=mounted and VITE_SPROCKT_PREVIEW_DOMAIN=${domain} cannot go together: a build with a preview domain is a public build, and mounted previews are for trusted code only`,
+    );
+  if (mounted) return "mounted";
+  return domain === undefined ? "none" : "isolated";
 }
 
 function running(): PreviewBuild {

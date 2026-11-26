@@ -25,9 +25,17 @@ test("a build that names a preview domain has isolated previews: that is the pub
   expect(previewKind({ DEV: false, VITE_SPROCKT_PREVIEW_DOMAIN: "localhost:4174" })).toBe("isolated");
 });
 
-test("asking for mounted previews wins over a preview domain: the owner's private preview", () => {
+test("a build that names a preview domain cannot be mounted: it fails instead of shipping", () => {
+  // Naming the domain says the build is for the public. A left-over `mounted` setting must not
+  // quietly win, and must not quietly lose either.
   const build = { DEV: false, VITE_SPROCKT_PREVIEWS: "mounted", VITE_SPROCKT_PREVIEW_DOMAIN: "sprockt.dev" };
-  expect(previewKind(build)).toBe("mounted");
+  expect(() => previewKind(build)).toThrow("cannot go together");
+  // Each setting alone is fine.
+  expect(previewKind({ DEV: false, VITE_SPROCKT_PREVIEWS: "mounted" })).toBe("mounted");
+  expect(
+    previewKind({ DEV: false, VITE_SPROCKT_PREVIEWS: "mounted", VITE_SPROCKT_PREVIEW_DOMAIN: " " }),
+  ).toBe("mounted");
+  expect(previewKind({ DEV: false, VITE_SPROCKT_PREVIEW_DOMAIN: "sprockt.dev" })).toBe("isolated");
 });
 
 test("the preview domain is a host name, in one spelling", () => {

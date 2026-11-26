@@ -1,55 +1,40 @@
-// A workspace's preview identity: a random value stored inside the workspace, beside its
-// metadata. Preview host names are derived from it, so every tab of a workspace computes the
-// same names, and a workspace that was deleted and created again gets new ones: it never
-// inherits the cookies or the storage its predecessor's pages left on their origins.
-import { WORKSPACE_META_DIR } from "../importer/metadata";
+// A workspace's preview identity: what its preview host names are derived from (isolated-origins.ts).
+//
+// It is the host's own key for the workspace (the name of its storage) and a random nonce made
+// when the identity is first asked for. Both live outside the workspace: the nonce is kept in
+// a database of the IDE's origin (identity-store.ts), never in the workspace's filesystem,
+// which every program in the workspace can write.
+//
+// - The key is part of the identity, so two workspaces never derive the same host names,
+//   whatever else is equal.
+// - Every tab of a workspace reads the same nonce, so every tab derives the same names.
+// - Deleting a workspace forgets its nonce (`forgetPreviewIdentity`, called where storage is
+//   deleted), so a workspace created again under the same id gets new names, and never the
+//   cookies or the storage its predecessor's pages left on their origins.
+import { storageName } from "../workspace/paths";
+import { browserIdentityStore, type IdentityStore } from "./identity-store";
 
-/** On the workspace filesystem's root, outside the project, like the metadata itself. */
-export const PREVIEW_IDENTITY_PATH = `${WORKSPACE_META_DIR}/preview-identity`;
-
-const SHAPE = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/;
-
-/** The filesystem calls the identity needs; `runtime.filesystem` provides them. */
-export interface IdentityFilesystem {
-  readFile(path: string): Promise<Uint8Array | undefined>;
-  writeFile(path: string, content: string): Promise<unknown>;
-  mkdirp(path: string): Promise<unknown>;
-  flush(): Promise<unknown>;
-}
-
-/** The part of the Web Locks API used here. */
-export interface IdentityLocks {
-  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
-}
-
-async function stored(filesystem: IdentityFilesystem): Promise<string | undefined> {
-  const bytes = await filesystem.readFile(PREVIEW_IDENTITY_PATH);
-  const text = bytes ? new TextDecoder().decode(bytes).trim() : "";
-  return SHAPE.test(text) ? text : undefined;
-}
-
-async function create(filesystem: IdentityFilesystem): Promise<string> {
-  // Another tab may have written it while this one waited for the lock.
-  const existing = await stored(filesystem);
-  if (existing) return existing;
-  const identity = crypto.randomUUID();
-  await filesystem.mkdirp(WORKSPACE_META_DIR);
-  await filesystem.writeFile(PREVIEW_IDENTITY_PATH, `${identity}\n`);
-  await filesystem.flush();
-  return identity;
+/** The identity of the workspace with this id, created on first use. */
+export async function previewIdentity(
+  workspace: string,
+  store: IdentityStore = browserIdentityStore(),
+): Promise<string> {
+  const key = storageName(workspace);
+  const nonce = await store.claim(key, crypto.randomUUID());
+  return `${key}\n${nonce}`;
 }
 
 /**
- * The workspace's preview identity, created on first use. Tabs of a workspace share one live
- * filesystem, and the lock makes "read, and write if missing" one step across them, so two
- * tabs that ask at the same moment get the same value.
+ * Forgets the nonce of the workspace whose storage has this name. Called after the storage is
+ * gone: forgetting first would give a workspace that could not be deleted new host names under
+ * its open tabs.
  */
-export async function previewIdentity(
-  workspace: string,
-  filesystem: IdentityFilesystem,
-  locks: IdentityLocks = navigator.locks,
-): Promise<string> {
-  const existing = await stored(filesystem);
-  if (existing) return existing;
-  return locks.request(`sprockt:${workspace}:preview-identity`, () => create(filesystem));
+export async function forgetPreviewIdentity(
+  storage: string,
+  store: IdentityStore = browserIdentityStore(),
+): Promise<void> {
+  // A nonce that could not be removed only means the next workspace of this id keeps its names.
+  await store.forget(storage).catch((error: unknown) => {
+    console.error("Forgetting a workspace's preview identity failed", error);
+  });
 }

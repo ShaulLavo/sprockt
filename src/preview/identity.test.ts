@@ -1,104 +1,90 @@
 import { expect, test } from "bun:test";
-import {
-  PREVIEW_IDENTITY_PATH,
-  previewIdentity,
-  type IdentityFilesystem,
-  type IdentityLocks,
-} from "./identity";
+import { previewOrigin, previewOriginId } from "bun-wasm/preview-origins";
+import { forgetPreviewIdentity, previewIdentity } from "./identity";
+import type { IdentityStore } from "./identity-store";
 
-interface FakeFilesystem extends IdentityFilesystem {
-  readonly files: Map<string, string>;
-  readonly flushed: string[];
-}
-
-/** A filesystem every "tab" shares, as tabs of a workspace do. Reads take a turn, as real ones do. */
-function sharedFilesystem(): FakeFilesystem {
-  const files = new Map<string, string>();
-  const flushed: string[] = [];
+/** The IDE's own store, shared by every "tab": a claim is one step, as a transaction makes it. */
+function sharedStore(): IdentityStore & { readonly nonces: Map<string, string> } {
+  const nonces = new Map<string, string>();
   return {
-    files,
-    flushed,
-    async readFile(path) {
-      await Promise.resolve();
-      const text = files.get(path);
-      return text === undefined ? undefined : new TextEncoder().encode(text);
+    nonces,
+    async claim(key, fresh) {
+      const stored = nonces.get(key) ?? fresh;
+      nonces.set(key, stored);
+      return stored;
     },
-    async writeFile(path, content) {
-      await Promise.resolve();
-      files.set(path, content);
-    },
-    mkdirp: async () => {},
-    async flush() {
-      flushed.push(files.get(PREVIEW_IDENTITY_PATH) ?? "");
+    async forget(key) {
+      nonces.delete(key);
     },
   };
 }
 
-/** Web Locks across the "tabs" of one browser: one holder of a name at a time, in order. */
-function sharedLocks(): IdentityLocks & { readonly names: string[] } {
-  const queues = new Map<string, Promise<unknown>>();
-  const names: string[] = [];
-  return {
-    names,
-    request(name, task) {
-      names.push(name);
-      const run = (queues.get(name) ?? Promise.resolve()).then(task);
-      queues.set(
-        name,
-        run.catch(() => {}),
-      );
-      return run;
-    },
-  };
-}
+const IDE = "https://sprockt.test";
+const originOf = async (identity: string, port = 3000) =>
+  previewOrigin({ domain: "previews.test" }, await previewOriginId(IDE, identity), port);
 
-/** No locking at all: every caller runs at once, as tabs would without the lock. */
-const noLocks: IdentityLocks = { request: (_name, task) => task() };
-
-test("the identity is created once, stored in the workspace, and read back afterwards", async () => {
-  const filesystem = sharedFilesystem();
-  const first = await previewIdentity("abc", filesystem, sharedLocks());
-  expect(first).toMatch(/^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/);
-  expect(filesystem.files.get(PREVIEW_IDENTITY_PATH)).toBe(`${first}\n`);
-  // Durable before it is used: a host name derived from it must still be the same after a reload.
-  expect(filesystem.flushed).toEqual([`${first}\n`]);
-  const locks = sharedLocks();
-  expect(await previewIdentity("abc", filesystem, locks)).toBe(first);
-  // An identity that exists is read without waiting for anyone.
-  expect(locks.names).toEqual([]);
+test("the identity is created once and is the same for every tab afterwards", async () => {
+  const store = sharedStore();
+  const first = await previewIdentity("abc", store);
+  expect(await previewIdentity("abc", store)).toBe(first);
+  // The host's key for the workspace is part of it, and the nonce is kept under that key.
+  expect(first.split("\n")).toEqual(["sprockt-abc", store.nonces.get("sprockt-abc") ?? "missing"]);
+  expect(store.nonces.get("sprockt-abc")).toMatch(/^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/);
 });
 
 test("tabs that ask at the same moment get the same identity", async () => {
-  const filesystem = sharedFilesystem();
-  const locks = sharedLocks();
+  const store = sharedStore();
   const asked = await Promise.all([
-    previewIdentity("abc", filesystem, locks),
-    previewIdentity("abc", filesystem, locks),
-    previewIdentity("abc", filesystem, locks),
+    previewIdentity("abc", store),
+    previewIdentity("abc", store),
+    previewIdentity("abc", store),
   ]);
   expect(new Set(asked).size).toBe(1);
-  expect(locks.names).toEqual(Array.from({ length: 3 }, () => "sprockt:abc:preview-identity"));
 });
 
-test("without the lock the same tabs would disagree, which is what the lock is for", async () => {
-  const filesystem = sharedFilesystem();
-  const asked = await Promise.all([
-    previewIdentity("abc", filesystem, noLocks),
-    previewIdentity("abc", filesystem, noLocks),
-  ]);
-  expect(new Set(asked).size).toBe(2);
+test("two workspaces never derive the same preview origin, even with the same nonce", async () => {
+  const store = sharedStore();
+  // The worst case: the very same nonce under both keys. Nothing a workspace's programs write
+  // can bring this about (the store is not in any workspace), and it still does not matter.
+  store.nonces.set("sprockt-abc", "11111111-1111-4111-8111-111111111111");
+  store.nonces.set("sprockt-xyz", "11111111-1111-4111-8111-111111111111");
+  const abc = await previewIdentity("abc", store);
+  const xyz = await previewIdentity("xyz", store);
+  expect(abc).not.toBe(xyz);
+  expect(await originOf(abc)).not.toBe(await originOf(xyz));
 });
 
-test("a workspace that was deleted and created again gets a new identity", async () => {
-  const first = await previewIdentity("abc", sharedFilesystem(), sharedLocks());
-  const second = await previewIdentity("abc", sharedFilesystem(), sharedLocks());
+test("a workspace that was deleted and created again gets a new identity and new origins", async () => {
+  const store = sharedStore();
+  const first = await previewIdentity("abc", store);
+  await forgetPreviewIdentity("sprockt-abc", store);
+  const second = await previewIdentity("abc", store);
   expect(second).not.toBe(first);
+  expect(await originOf(second)).not.toBe(await originOf(first));
+  // Forgetting one workspace leaves the others' names alone.
+  const other = await previewIdentity("xyz", store);
+  await forgetPreviewIdentity("sprockt-abc", store);
+  expect(await previewIdentity("xyz", store)).toBe(other);
 });
 
-test("a file that holds something else is replaced, not used as a host name", async () => {
-  const filesystem = sharedFilesystem();
-  filesystem.files.set(PREVIEW_IDENTITY_PATH, "../../etc\n");
-  const identity = await previewIdentity("abc", filesystem, sharedLocks());
-  expect(identity).toMatch(/^[\da-f-]{36}$/);
-  expect(filesystem.files.get(PREVIEW_IDENTITY_PATH)).toBe(`${identity}\n`);
+test("a store that cannot forget does not fail the deletion it follows", async () => {
+  const store: IdentityStore = {
+    claim: async (_key, fresh) => fresh,
+    forget: () => Promise.reject(new Error("no storage")),
+  };
+  const errors: unknown[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args);
+  try {
+    await forgetPreviewIdentity("sprockt-abc", store);
+  } finally {
+    console.error = original;
+  }
+  expect(errors).toHaveLength(1);
+});
+
+test("a workspace id that is not one is refused before anything is stored", async () => {
+  const store = sharedStore();
+  expect(previewIdentity("../etc", store)).rejects.toThrow("Invalid workspace id");
+  expect(store.nonces.size).toBe(0);
 });

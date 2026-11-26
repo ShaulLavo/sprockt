@@ -100,12 +100,13 @@ test("every request asks the deploy: no earlier yes is trusted, however recent",
   expect(await worker.allowed(true)).toBe(false);
 });
 
-test("requests that arrive together ask the deploy once", async () => {
+test("requests that arrive together do not ask the deploy once each", async () => {
   const world = browser(mounted);
   const worker = world.startWorker();
-  const answers = await Promise.all([worker.allowed(true), worker.allowed(true), worker.allowed(false)]);
-  expect(answers).toEqual([true, true, true]);
-  expect(world.asked).toBe(1);
+  const answers = await Promise.all(Array.from({ length: 20 }, (_, index) => worker.allowed(index === 0)));
+  expect(answers).toEqual(Array.from({ length: 20 }, () => true));
+  // One question for the first, and one more that all the others share.
+  expect(world.asked).toBe(2);
 });
 
 test("a request that arrives while the deploy is being asked is not answered by that question", async () => {
