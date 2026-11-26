@@ -92,7 +92,7 @@ function createTabDrag(
 
   function end(event: PointerEvent): void {
     if (!state || event.pointerId !== state.pointerId) return;
-    suppressClick = state.moved;
+    suppressClick = event.type !== "pointercancel" && state.moved;
     state = undefined;
     setDragging(undefined);
     stopListening();
@@ -100,6 +100,7 @@ function createTabDrag(
 
   return {
     start(event: DragStart, index: number): void {
+      suppressClick = false;
       if (event.button !== 0 || event.pointerType === "touch") return;
       state = { index, startX: event.clientX, pointerId: event.pointerId, moved: false };
       window.addEventListener("pointermove", move);

@@ -244,21 +244,24 @@ test("the Vite + React starter stays clean before install, waits through partial
   await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
   await page.getByTestId("file-tree").getByRole("button", { name: "App.tsx", exact: true }).click();
   await expect.poll(() => editorText(page)).toContain("Hello from bun.wasm");
-  // Before dependencies are installed, the status bar explains that TS checks are waiting and
+  // Before dependencies are installed, the status bar reports all 6 missing packages and
   // the editor stays free of false-alarm missing-module/JSX red squiggles.
-  await expect(page.locator('[data-status="typescript"]')).toContainText("Install deps for TS");
+  const tsStatus = page.locator('[data-status="typescript"]');
+  await expect(tsStatus).toContainText("Install deps for TS");
+  await expect(tsStatus).toHaveAttribute("title", /6 uninstalled packages/);
   await expect.poll(() => syntaxRanges(page)).toEqual(expect.arrayContaining(["main", "className"]));
   expect(await errorRanges(page)).toEqual([]);
 
-  // A partial install (only one package written so far) keeps the gate closed and error-free.
+  // A partial install (only vite written so far) completes a recheck (6 -> 5 missing),
+  // keeps the gate closed, and keeps the editor error-free.
   await writeProject(page, REACT_STARTER_PARTIAL);
-  await page.waitForTimeout(300);
-  await expect(page.locator('[data-status="typescript"]')).toContainText("Install deps for TS");
+  await expect(tsStatus).toHaveAttribute("title", /5 uninstalled packages/);
+  await expect(tsStatus).toContainText("Install deps for TS");
   expect(await errorRanges(page)).toEqual([]);
 
   // Once every declared package lands, the waiting indicator clears and the language server starts.
   await writeProject(page, REACT_STARTER_REMAINING);
-  await expect(page.locator('[data-status="typescript"]')).toHaveCount(0);
+  await expect(tsStatus).toHaveCount(0);
   await expect.poll(() => errorRanges(page)).toEqual([]);
   // The language server adds nothing over the JSX: the highlighter still paints it.
   await expect.poll(() => syntaxRanges(page)).toEqual(expect.arrayContaining(["main", "className"]));

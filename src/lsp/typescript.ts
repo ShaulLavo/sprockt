@@ -24,13 +24,16 @@ import { watchProjectFiles } from "./watch";
 
 const SERVER: TypeScriptServer = tsrs;
 
-const WAITING_FOR_DEPS_STATUS: StatusItem = {
-  text: "Install deps for TS",
-  title: "TypeScript checks wait until dependencies are installed (run bun install or start the dev server).",
-  side: "end",
-  order: 9,
-  tone: "neutral",
-};
+function waitingForDepsStatus(missingCount: number): StatusItem {
+  const noun = missingCount === 1 ? "package" : "packages";
+  return {
+    text: "Install deps for TS",
+    title: `TypeScript checks wait for ${missingCount} uninstalled ${noun} (run bun install or start the dev server).`,
+    side: "end",
+    order: 9,
+    tone: "neutral",
+  };
+}
 
 /** Whether the tree at `absolute` holds a script file of the project's own. */
 async function subtreeHasScript(runtime: Runtime, projectRoot: string, absolute: string): Promise<boolean> {
@@ -44,12 +47,12 @@ async function subtreeHasScript(runtime: Runtime, projectRoot: string, absolute:
   );
 }
 
-/** Whether every direct package declared in `package.json` is installed in `node_modules`. */
-async function dependenciesReady(runtime: Runtime, projectRoot: string): Promise<boolean> {
+/** Number of direct packages declared in `package.json` not yet present under `node_modules`. */
+async function missingDependencyCount(runtime: Runtime, projectRoot: string): Promise<number> {
   const bytes = await runtime.filesystem.readFile(`${projectRoot}/package.json`).catch(() => undefined);
   const text = bytes ? new TextDecoder().decode(bytes) : undefined;
   const packages = declaredPackages(text);
-  if (packages.length === 0) return true;
+  if (packages.length === 0) return 0;
   const resolved = await Promise.all(
     packages.map((name) =>
       runtime.filesystem
@@ -57,13 +60,13 @@ async function dependenciesReady(runtime: Runtime, projectRoot: string): Promise
         .catch(() => undefined),
     ),
   );
-  return resolved.every((entry) => entry !== undefined);
+  return resolved.filter((entry) => entry === undefined).length;
 }
 
 /** Tracks whether the workspace has TypeScript/JavaScript sources and installed dependencies. */
 class ProjectReadyWaiter {
   private hasScript = false;
-  private depsReady: boolean | undefined;
+  private missingDeps: number | undefined;
   private depCheckSeq = 0;
   private finished = false;
   private readonly stopWatch: () => void;
@@ -85,14 +88,17 @@ class ProjectReadyWaiter {
 
   private evaluate(): void {
     if (this.finished) return;
-    if (this.hasScript && this.depsReady === true) {
+    if (this.hasScript && this.missingDeps === 0) {
       this.finished = true;
       this.clearStatus();
       this.stopWatch();
       this.onReady();
       return;
     }
-    const statusItem = this.hasScript && this.depsReady === false ? WAITING_FOR_DEPS_STATUS : undefined;
+    const statusItem =
+      this.hasScript && this.missingDeps !== undefined && this.missingDeps > 0
+        ? waitingForDepsStatus(this.missingDeps)
+        : undefined;
     this.context.status?.set(STATUS_SLOT.typescript, statusItem);
   }
 
@@ -114,17 +120,17 @@ class ProjectReadyWaiter {
   private recheckDependencies(): void {
     if (this.finished) return;
     const seq = ++this.depCheckSeq;
-    this.depsReady = undefined;
+    this.missingDeps = undefined;
     const { runtime, projectRoot } = this.context;
-    void dependenciesReady(runtime, projectRoot).then(
-      (ready) => this.applyDependencyCheck(seq, ready),
+    void missingDependencyCount(runtime, projectRoot).then(
+      (missing) => this.applyDependencyCheck(seq, missing),
       (error: unknown) => console.warn("Could not check project dependencies for TypeScript", error),
     );
   }
 
-  private applyDependencyCheck(seq: number, ready: boolean): void {
+  private applyDependencyCheck(seq: number, missing: number): void {
     if (this.finished || seq !== this.depCheckSeq) return;
-    this.depsReady = ready;
+    this.missingDeps = missing;
     this.evaluate();
   }
 

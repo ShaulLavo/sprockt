@@ -174,18 +174,37 @@ test("terminal updates its theme live across light and dark toggles, even when h
 }) => {
   await page.emulateMedia({ colorScheme: "light" });
   await page.setViewportSize({ width: 390, height: 844 });
+
+  // Hold shell-engine.wasm so startTerminal pauses AFTER capturing the initial light theme and
+  // mounting the Ghostty canvas, but BEFORE handle.current is attached (mid-boot resync window).
+  let releaseShell!: () => void;
+  const shellPaused = new Promise<void>((resolve) => {
+    releaseShell = resolve;
+  });
+  await page.route("**/shell-engine.wasm", async (route) => {
+    await shellPaused;
+    await route.continue();
+  });
+
   await page.goto("/");
   await page.getByTestId("template-blank").click();
   await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
   await expect(page.getByTestId("phone-menu")).toBeVisible();
 
-  // Mid-boot toggle: switch to dark mode right away while the hidden terminal is still starting.
+  // Wait until Ghostty mounted with its initial light background while the shell is still held.
+  await expect
+    .poll(() => terminalRootInlineBackground(page))
+    .toMatch(/rgb\(255,\s*255,\s*255\)|rgb\(255 255 255/);
+  await expect(page.getByTestId("terminal-state")).not.toHaveText("ready");
+
+  // Mid-boot toggle: switch to dark while startTerminal is paused (handle.current is undefined).
   await page.getByTestId("phone-menu").click();
   await page.getByRole("button", { name: "Use dark theme" }).click();
   await page.locator(".wb-scrim").click();
 
+  // Release startup and verify the post-boot resync turns the hidden terminal dark before reveal.
+  releaseShell();
   await expect(page.getByTestId("terminal-state")).toHaveText("ready");
-  // Even BEFORE revealing the Terminal pane, Ghostty's root element already has the dark background.
   await expect.poll(() => terminalRootInlineBackground(page)).toMatch(/rgb\(10,\s*13,\s*20\)|rgb\(10 13 20/);
 
   // Toggle dark -> light -> dark while still hidden, checking the hidden terminal before reveal.
@@ -240,13 +259,26 @@ test("switching file tabs on mobile never focuses the editor, while desktop keyb
   await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
   await expect.poll(() => editorHasFocus(page)).toBe(false);
 
-  // Hybrid desktop check: a cancelled touch gesture on a tab must not suppress keyboard Enter focus.
+  // Hybrid desktop check: a cancelled mouse drag + Enter must still focus on Enter AND must not
+  // swallow the next touch tap on another tab.
   await page.setViewportSize({ width: 1440, height: 900 });
   const alphaTab = page.locator('[data-testid="editor-tab"][data-path="alpha.ts"]');
-  await alphaTab.dispatchEvent("pointerdown", { pointerType: "touch", pointerId: 1, button: 0 });
-  await alphaTab.dispatchEvent("pointercancel", { pointerType: "touch", pointerId: 1 });
+  const betaTab = page.locator('[data-testid="editor-tab"][data-path="beta.ts"]');
+  await betaTab.dispatchEvent("pointerdown", { pointerType: "mouse", pointerId: 1, button: 0, clientX: 20 });
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new PointerEvent("pointermove", { pointerType: "mouse", pointerId: 1, clientX: 40 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointercancel", { pointerType: "mouse", pointerId: 1, clientX: 40 }),
+    );
+  });
   await alphaTab.focus();
   await page.keyboard.press("Enter");
   await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
   await expect.poll(() => editorHasFocus(page)).toBe(true);
+
+  await betaTab.dispatchEvent("pointerdown", { pointerType: "touch", pointerId: 2, button: 0 });
+  await betaTab.click();
+  await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
 });
