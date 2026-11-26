@@ -993,3 +993,40 @@ test("save-and-close tracks detached drafts across rename and keeps failed tabs 
   expect(store.pendingClose()?.error).toBeDefined();
   dispose();
 });
+
+test("staged close tracks unloaded tabs by identity and ignores concurrent close requests", async () => {
+  const { store, disk, emit, dispose } = setUpStore({
+    "a.ts": "old a",
+    "b.ts": "clean b",
+    "dirty.ts": "d",
+    "extra.ts": "e",
+  });
+  store.setAutosave(false);
+  // Leave a.ts unloaded; load dirty.ts and edit it; keep b.ts outside the close batch.
+  store.open("a.ts");
+  store.open("b.ts");
+  store.open("dirty.ts");
+  store.open("extra.ts");
+  await store.buffers.load("dirty.ts");
+  type(store, "dirty.ts", "edit ");
+
+  store.requestClose(["a.ts", "dirty.ts"]);
+  expect(store.pendingClose()?.paths).toEqual(["dirty.ts"]);
+
+  // A new close request while confirmation is open must not close extra.ts or replace the batch.
+  store.requestClose(["extra.ts"]);
+  expect(store.tabs().map((tab) => tab.path)).toEqual(["a.ts", "b.ts", "dirty.ts", "extra.ts"]);
+  expect(store.pendingClose()?.paths).toEqual(["dirty.ts"]);
+
+  // Moving b.ts (outside the batch) onto a.ts replaces the unloaded tab at a.ts; discarding the
+  // staged batch must close dirty.ts without closing the replacement tab at a.ts.
+  disk.set("a.ts", "clean b");
+  disk.delete("b.ts");
+  emit({ moves: [{ from: "b.ts", to: "a.ts", operation: 1 }] });
+  await tick();
+
+  await store.resolvePendingClose("discard");
+  expect(store.pendingClose()).toBeUndefined();
+  expect(store.tabs().map((tab) => tab.path)).toEqual(["a.ts", "extra.ts"]);
+  dispose();
+});

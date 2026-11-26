@@ -107,12 +107,30 @@ test("explorer compacts single-child folders, shows indent guides, and supports 
   await expect(page.locator('[data-testid="tree-row"][data-path="README.md"]')).toHaveCount(0);
 
   // Select All in a filtered tree selects matching files, never context-only ancestor folders.
-  await buttonRow.focus();
+  // Even with a context-only folder focused, Select All + Delete targets only the matching file.
+  const srcRow = page.locator('[data-testid="tree-row"][data-path="src"]');
+  await srcRow.focus();
   await pressMod(page, "Mod+a");
-  await expect(page.locator('[data-testid="tree-row"][data-path="src"]')).not.toHaveClass(/is-selected/);
+  await expect(srcRow).not.toHaveClass(/is-selected/);
   await expect(buttonRow).toHaveClass(/is-selected/);
+  await page.keyboard.press("Delete");
+  const confirmDialog = page.locator("dialog.tree-dialog[open]");
+  await expect(confirmDialog).toBeVisible();
+  await expect(confirmDialog).toContainText("Button.tsx");
+  await expect(confirmDialog).not.toContainText("Delete src");
+  await page.keyboard.press("Escape");
+  await expect(confirmDialog).toHaveCount(0);
 
-  // Starting rename (F2) while filtered clears the filter and reveals the inline name box.
+  // Starting rename (F2) while filtered clears the filter and reveals the inline name box,
+  // even when a grandparent folder was collapsed prior to filtering.
+  await filterInput.press("Escape");
+  await expect(page.getByTestId("tree-filter")).toHaveCount(0);
+  await chain.click(); // collapses `src` while leaving `src/app` expanded inside
+  await expect(buttonRow).toHaveCount(0);
+  await pressMod(page, "Mod+f");
+  await page.getByTestId("tree-filter-input").fill("Button");
+  await expect(buttonRow).toBeVisible();
+  await buttonRow.focus();
   await page.keyboard.press("F2");
   await expect(page.getByTestId("tree-filter")).toHaveCount(0);
   await expect(page.getByTestId("tree-input")).toBeVisible();

@@ -87,6 +87,7 @@ function useEditorShortcuts(
       if (next) store.open(next.path, { preview: next.preview, focus: true });
     };
     const closeActiveTab = () => {
+      if (store.pendingClose() !== undefined) return;
       const active = store.active();
       if (active) store.requestClose([active]);
     };

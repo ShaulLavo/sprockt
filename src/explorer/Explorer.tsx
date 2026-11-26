@@ -550,8 +550,11 @@ function createTree(
   function selectionOrFocus(): string[] {
     const focused = state.focused();
     const chosen = Array.from(state.selected());
-    if (focused && !state.selected().has(focused)) return [focused];
-    return chosen.length > 0 ? chosen : focused ? [focused] : [];
+    const focusedIsContext =
+      focused !== undefined && state.entries().some((row) => row.path === focused && row.contextOnly);
+    if (focused && !state.selected().has(focused) && !focusedIsContext) return [focused];
+    if (chosen.length > 0) return chosen;
+    return focused && !focusedIsContext ? [focused] : [];
   }
 
   function onRowKeyDown(event: React.KeyboardEvent<HTMLElement>): void {

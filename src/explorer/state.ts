@@ -329,7 +329,7 @@ export function createExplorerState(options: ExplorerOptions) {
     setExpanded(next);
     // Focus inside a folder that just closed moves to the folder, not into thin air.
     const inside = focused();
-    if (inside && isInside(inside, directory)) setFocused(directory);
+    if (inside && isInside(inside, directory)) focusPath(directory);
   }
 
   function toggle(directory: string): void {
@@ -360,11 +360,12 @@ export function createExplorerState(options: ExplorerOptions) {
       anchor = path;
       return;
     }
-    if (how === "range" && anchor) {
+    if (how === "range") {
       const list = entries();
       const contextOnly = new Set(list.filter((row) => row.contextOnly).map((row) => row.path));
-      const range = rangeBetween(list, anchor, path).filter((candidate) => !contextOnly.has(candidate));
-      setSelected(new Set(range.length > 0 ? range : [path]));
+      const raw = anchor ? rangeBetween(list, anchor, path) : [path];
+      const range = raw.filter((candidate) => !contextOnly.has(candidate));
+      setSelected(new Set(range));
       return;
     }
     setSelected(new Set([path]));
@@ -377,6 +378,8 @@ export function createExplorerState(options: ExplorerOptions) {
       .map((row) => row.path);
     if (all.length === 0) return;
     setSelected(new Set(all));
+    const current = focused();
+    if (!current || !all.includes(current)) focusPath(all[0]!);
     anchor = all[0];
   }
 
@@ -430,7 +433,8 @@ export function createExplorerState(options: ExplorerOptions) {
     if (filterOpen()) closeFilter();
     setProblem(undefined);
     const parent = parentOf(path);
-    if (parent !== "" && !expanded().has(parent)) {
+    const hiddenAncestor = ancestorsOf(path).some((ancestor) => !expanded().has(ancestor));
+    if (parent !== "" && hiddenAncestor) {
       void expand(parent).then(() => setDraft({ mode: "rename", path }));
       return;
     }

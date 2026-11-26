@@ -130,7 +130,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchFocus, setSearchFocus] = createSignal(0);
   interface CloseTarget {
-    readonly initialPath: string;
+    readonly tabToken: number;
     readonly buffer: Buffer | undefined;
     readonly dirty: boolean;
   }
@@ -140,7 +140,42 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     readonly error: string | undefined;
   }
   const [stagedClose, setStagedClose] = createSignal<StagedClose>();
+  let tabTokenSeq = 0;
+  const nextTabToken = () => (tabTokenSeq += 1);
+  const tabTokens = new Map<string, number>();
+  for (const tab of saved.tabs) tabTokens.set(tab.path, nextTabToken());
   let revealSeq = 0;
+
+  function syncTabTokens(nextTabs: readonly EditorTab[]): void {
+    const keep = new Set(nextTabs.map((tab) => tab.path));
+    for (const path of tabTokens.keys()) {
+      if (!keep.has(path)) tabTokens.delete(path);
+    }
+    for (const tab of nextTabs) {
+      if (!tabTokens.has(tab.path)) tabTokens.set(tab.path, nextTabToken());
+    }
+  }
+
+  function renameTabTokens(previous: readonly EditorTab[], from: string, to: string): void {
+    const incoming = new Map<string, number>();
+    for (const tab of previous) {
+      const moved = renamedPath(tab.path, from, to);
+      if (moved === tab.path) continue;
+      incoming.set(moved, tabTokens.get(tab.path) ?? nextTabToken());
+    }
+    const next = new Map<string, number>();
+    for (const tab of previous) {
+      const moved = renamedPath(tab.path, from, to);
+      if (next.has(moved)) continue;
+      const replaced = moved === tab.path && (moved === to || moved.startsWith(`${to}/`));
+      const token = replaced
+        ? (incoming.get(moved) ?? nextTabToken())
+        : (tabTokens.get(tab.path) ?? nextTabToken());
+      next.set(moved, token);
+    }
+    tabTokens.clear();
+    for (const [path, token] of next) tabTokens.set(path, token);
+  }
 
   function setQuickOpen(open: boolean, seed = ""): void {
     setQuickOpenSeed(open ? seed : "");
@@ -148,6 +183,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
   }
 
   function commit(nextTabs: readonly EditorTab[], nextActive: string | undefined): void {
+    syncTabTokens(nextTabs);
     setTabs(nextTabs);
     setActive(nextActive);
     saveTabs(workspace.id, { tabs: nextTabs, active: nextActive });
@@ -220,6 +256,11 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
   /** Moves a single tab, the file on screen and the selection from one exact path to another. */
   function retarget(from: string, to: string, current: string | undefined): string | undefined {
     const list = tabs();
+    const token = tabTokens.get(from);
+    if (token !== undefined) {
+      tabTokens.delete(from);
+      tabTokens.set(to, token);
+    }
     const nextTabs = list.some((tab) => tab.path === from)
       ? list.map((tab) => (tab.path === from ? { path: to, preview: false } : tab))
       : list.concat([{ path: to, preview: false }]);
@@ -254,7 +295,12 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     }
     drafts.renamed(from, to);
     const moved = displayed();
-    commit(renameTabs(tabs(), from, to), current === undefined ? undefined : renamedPath(current, from, to));
+    const previousTabs = tabs();
+    renameTabTokens(previousTabs, from, to);
+    commit(
+      renameTabs(previousTabs, from, to),
+      current === undefined ? undefined : renamedPath(current, from, to),
+    );
     if (moved !== undefined) setDisplayed(renamedPath(moved, from, to));
     // One path can split into two detached drafts (a pending write and newer edits), and this
     // tab's single recovery copy at that path belongs to only one of them. A fresh snapshot gives
@@ -391,25 +437,38 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     if (wasDirty || !buffers.unsaved().has(path)) drafts.settled(path);
   }
 
+  function pathForToken(token: number): string | undefined {
+    for (const [path, candidate] of tabTokens) {
+      if (candidate === token) return path;
+    }
+    return undefined;
+  }
+
   function currentPathOf(target: CloseTarget): string | undefined {
     const buffer = target.buffer;
     if (buffer) return buffers.get(buffer.path) === buffer ? buffer.path : undefined;
-    if (!tabs().some((tab) => tab.path === target.initialPath)) return undefined;
-    return buffers.get(target.initialPath)?.dirty() ? undefined : target.initialPath;
+    const path = pathForToken(target.tabToken);
+    if (path === undefined) return undefined;
+    return buffers.get(path)?.dirty() ? undefined : path;
   }
 
   function requestClose(paths: readonly string[]): void {
-    if (paths.length === 0) return;
+    if (paths.length === 0 || stagedClose() !== undefined) return;
     const openSet = new Set(tabs().map((tab) => tab.path));
     const targets: CloseTarget[] = [];
     for (const path of new Set(paths)) {
       if (!openSet.has(path)) continue;
+      const tabToken = tabTokens.get(path) ?? nextTabToken();
+      tabTokens.set(path, tabToken);
       const buffer = buffers.get(path);
-      targets.push({ initialPath: path, buffer, dirty: buffer?.dirty() ?? false });
+      targets.push({ tabToken, buffer, dirty: buffer?.dirty() ?? false });
     }
     if (targets.length === 0) return;
     if (!targets.some((target) => target.dirty)) {
-      for (const target of targets) closeOne(target.initialPath);
+      for (const target of targets) {
+        const path = pathForToken(target.tabToken);
+        if (path !== undefined) closeOne(path);
+      }
       return;
     }
     // Stage the full batch (clean + dirty) so Cancel leaves the entire tab set untouched.
@@ -475,10 +534,11 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
       if (!target.dirty || !target.buffer) return [];
       return buffers.get(target.buffer.path) === target.buffer ? [target.buffer.path] : [];
     });
-    const paths =
-      dirtyPaths.length > 0
-        ? dirtyPaths
-        : staged.targets.map((target) => target.buffer?.path ?? target.initialPath);
+    const fallbackPaths = staged.targets.flatMap((target) => {
+      const path = target.buffer?.path ?? pathForToken(target.tabToken);
+      return path === undefined ? [] : [path];
+    });
+    const paths = dirtyPaths.length > 0 ? dirtyPaths : fallbackPaths;
     return { paths, saving: staged.saving, error: staged.error };
   }
 
