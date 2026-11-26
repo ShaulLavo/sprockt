@@ -4,9 +4,9 @@
 // giant wordmark close. Loads zero editor, terminal or Waffle runtime code on initial render.
 import jetbrainsMonoLatinUrl from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url";
 import schibstedLatinUrl from "@fontsource-variable/schibsted-grotesk/files/schibsted-grotesk-latin-wght-normal.woff2?url";
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { createStore, reconcile } from "solid-js/store";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { navigate } from "../app/router";
+import { useScope, useValue } from "../lib/react";
 import { routePath, type Route } from "../app/routes";
 import {
   BLANK_TEMPLATE_SUMMARY,
@@ -17,7 +17,7 @@ import {
 import { SprocktLogo } from "../ui/SprocktLogo";
 import { applyStoredTheme, colorScheme, setColorScheme } from "../workbench/theme";
 import { LANDING_COPY } from "./copy";
-import { createDemo } from "./demo";
+import { createDemo, type Demo } from "./demo";
 import { FeatureCards } from "./FeatureCards";
 import { parseGithubInput } from "./github-input";
 import { HubDiagram } from "./HubDiagram";
@@ -79,6 +79,9 @@ const MARQUEE = [
   "Safari on iPhone",
 ] as const;
 
+/** The marquee runs two copies end to end; the second is hidden from assistive tech. */
+const MARQUEE_LOOP: readonly string[] = (MARQUEE as readonly string[]).concat(MARQUEE);
+
 const STACK = [
   { name: "Waffle", repo: "waffle", role: LANDING_COPY.hoodRoleWaffle },
   { name: "Singapore", repo: "singapore", role: LANDING_COPY.hoodRoleSingapore },
@@ -113,74 +116,75 @@ function engineUrl(repo: string): string {
 /** The seven real starters, plus Blank as the last option. */
 const TEMPLATES = STARTER_TEMPLATE_SUMMARIES.concat(BLANK_TEMPLATE_SUMMARY);
 
-function nextTheme(): "light" | "dark" {
-  return colorScheme() === "dark" ? "light" : "dark";
-}
-
-function nextThemeLabel(): string {
-  return nextTheme() === "light" ? LANDING_COPY.navThemeLight : LANDING_COPY.navThemeDark;
-}
-
 function Muted(props: { readonly lead: string; readonly rest: string }) {
   return (
     <>
-      {props.lead} <span class="lp-muted">{props.rest}</span>
+      {props.lead} <span className="lp-muted">{props.rest}</span>
     </>
   );
 }
 
-export function Landing() {
+/** Applies the stored theme before the first paint, then runs the shared workbench demo. */
+function createLandingDemo(): Demo {
   applyStoredTheme();
-  const demo = createDemo();
-  const [repoInput, setRepoInput] = createSignal("");
-  const [repoError, setRepoError] = createSignal<string | undefined>();
-  const [creatingTemplate, setCreatingTemplate] = createSignal<TemplateId | undefined>();
-  const [createError, setCreateError] = createSignal<string | undefined>();
-  const [menuOpen, setMenuOpen] = createSignal(false);
-  const [marqueePaused, setMarqueePaused] = createSignal(false);
+  return createDemo();
+}
 
-  const [workspaces, setWorkspaces] = createStore<StoredWorkspaceSummary[]>([]);
-  const [loadingWorkspaces, setLoadingWorkspaces] = createSignal(true);
+export function Landing() {
+  const demo = useScope(createLandingDemo);
+  const scheme = useValue(colorScheme);
+  const [repoInput, setRepoInput] = useState("");
+  const [repoError, setRepoError] = useState<string | undefined>();
+  const [creatingTemplate, setCreatingTemplate] = useState<TemplateId | undefined>();
+  const [createError, setCreateError] = useState<string | undefined>();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [marqueePaused, setMarqueePaused] = useState(false);
+
+  const [workspaces, setWorkspaces] = useState<readonly StoredWorkspaceSummary[]>([]);
+  const [loadingWorkspaces, setLoadingWorkspaces] = useState(true);
   // Known before storage answers, so a returning visitor's page does not jump once it does.
-  const expectsWorkspaces = hasWorkspaceHints();
-  let refreshSequence = 0;
+  const [expectsWorkspaces] = useState(hasWorkspaceHints);
+  const refreshSequence = useRef(0);
+  // A synchronous guard: two clicks in one frame must not both start a template.
+  const launching = useRef(false);
 
   async function refreshWorkspaces(): Promise<void> {
-    const seq = ++refreshSequence;
+    const seq = ++refreshSequence.current;
     try {
       const next = await listStoredWorkspaces();
-      if (seq !== refreshSequence) return;
-      setWorkspaces(reconcile(next, { key: "id" }));
+      if (seq !== refreshSequence.current) return;
+      setWorkspaces(next);
     } finally {
-      if (seq === refreshSequence) setLoadingWorkspaces(false);
+      if (seq === refreshSequence.current) setLoadingWorkspaces(false);
     }
   }
 
-  function refreshOnVisible(): void {
-    if (document.visibilityState === "visible") void refreshWorkspaces();
-  }
+  const hasRecent = workspaces.length > 0 || (loadingWorkspaces && expectsWorkspaces);
+  const nextTheme = scheme === "dark" ? "light" : "dark";
+  const nextThemeLabel = nextTheme === "light" ? LANDING_COPY.navThemeLight : LANDING_COPY.navThemeDark;
 
-  const hasRecent = () => workspaces.length > 0 || (loadingWorkspaces() && expectsWorkspaces);
-
-  function closeMenuOnEscape(event: KeyboardEvent): void {
-    if (event.key === "Escape") setMenuOpen(false);
-  }
-
-  onMount(() => {
+  useEffect(() => {
+    function refreshOnVisible(): void {
+      if (document.visibilityState === "visible") void refreshWorkspaces();
+    }
+    function closeMenuOnEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape") setMenuOpen(false);
+    }
     void refreshWorkspaces();
     document.addEventListener("visibilitychange", refreshOnVisible);
     window.addEventListener("focus", refreshOnVisible);
     window.addEventListener("keydown", closeMenuOnEscape);
-    onCleanup(() => {
+    return () => {
       document.removeEventListener("visibilitychange", refreshOnVisible);
       window.removeEventListener("focus", refreshOnVisible);
       window.removeEventListener("keydown", closeMenuOnEscape);
-    });
-  });
+    };
+    // Mount only: refreshWorkspaces reads nothing but refs and state setters.
+  }, []);
 
-  function handleGithubSubmit(event: SubmitEvent): void {
+  function handleGithubSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    const parsed = parseGithubInput(repoInput());
+    const parsed = parseGithubInput(repoInput);
     if (!parsed) {
       setRepoError(LANDING_COPY.openError);
       return;
@@ -190,7 +194,8 @@ export function Landing() {
   }
 
   async function launchTemplate(templateId: TemplateId): Promise<void> {
-    if (creatingTemplate()) return;
+    if (launching.current) return;
+    launching.current = true;
     setCreatingTemplate(templateId);
     setCreateError(undefined);
     try {
@@ -199,29 +204,31 @@ export function Landing() {
       saveWorkspaceHint(id, meta);
       navigate({ kind: "workspace", id });
     } catch (error) {
+      launching.current = false;
       setCreatingTemplate(undefined);
       setCreateError(error instanceof Error ? error.message : String(error));
     }
   }
 
+  const creating = creatingTemplate !== undefined;
   const startLabel = (id: TemplateId) =>
-    creatingTemplate() === id ? LANDING_COPY.templateCreating : LANDING_COPY.heroCta;
+    creatingTemplate === id ? LANDING_COPY.templateCreating : LANDING_COPY.heroCta;
 
   function renderTemplate(template: TemplateSummary) {
     return (
-      <li>
+      <li key={template.id}>
         <button
           type="button"
-          class="lp-starter"
-          disabled={creatingTemplate() !== undefined}
-          aria-busy={creatingTemplate() === template.id ? "true" : undefined}
+          className="lp-starter"
+          disabled={creating}
+          aria-busy={creatingTemplate === template.id ? "true" : undefined}
           data-testid={`template-${template.id}`}
           onClick={() => void launchTemplate(template.id)}
         >
           <BrandLogoTile templateId={template.id} />
-          <span class="lp-starter-name">{template.label}</span>
-          <span class="lp-starter-line">
-            {creatingTemplate() === template.id ? LANDING_COPY.templateCreating : template.description}
+          <span className="lp-starter-name">{template.label}</span>
+          <span className="lp-starter-line">
+            {creatingTemplate === template.id ? LANDING_COPY.templateCreating : template.description}
           </span>
           <Icon name="chev-r" class="lp-starter-go" />
         </button>
@@ -229,35 +236,36 @@ export function Landing() {
     );
   }
 
-  const navLinks = () => (
+  const closeMenu = () => setMenuOpen(false);
+  const navLinks = (
     <>
-      <a class="lp-nav-link" href="#features" onClick={() => setMenuOpen(false)}>
+      <a className="lp-nav-link" href="#features" onClick={closeMenu}>
         {LANDING_COPY.navEditor}
       </a>
-      <a class="lp-nav-link" href="#start" onClick={() => setMenuOpen(false)}>
+      <a className="lp-nav-link" href="#start" onClick={closeMenu}>
         {LANDING_COPY.navTemplates}
       </a>
-      <a class="lp-nav-link" href="#browsers" onClick={() => setMenuOpen(false)}>
+      <a className="lp-nav-link" href="#browsers" onClick={closeMenu}>
         {LANDING_COPY.navBrowsers}
       </a>
-      <a class="lp-nav-link" href="#hood" onClick={() => setMenuOpen(false)}>
+      <a className="lp-nav-link" href="#hood" onClick={closeMenu}>
         {LANDING_COPY.navHood}
       </a>
-      <a class="lp-nav-link" href="#faq" onClick={() => setMenuOpen(false)}>
+      <a className="lp-nav-link" href="#faq" onClick={closeMenu}>
         {LANDING_COPY.navQuestions}
       </a>
     </>
   );
 
   return (
-    <div class="landing-page" data-testid="landing-page">
-      <a class="lp-skip" href="#main">
+    <div className="landing-page" data-testid="landing-page">
+      <a className="lp-skip" href="#main">
         {LANDING_COPY.skip}
       </a>
-      <header class="nav lp-nav" classList={{ "is-open": menuOpen() }}>
-        <div class="wrap lp-wrap lp-nav-bar">
+      <header className={menuOpen ? "nav lp-nav is-open" : "nav lp-nav"}>
+        <div className="wrap lp-wrap lp-nav-bar">
           <a
-            class="lp-brand"
+            className="lp-brand"
             href={routePath({ kind: "landing" })}
             onClick={(event) => {
               event.preventDefault();
@@ -267,12 +275,12 @@ export function Landing() {
             <SprocktLogo class="lp-brand-mark" />
             <span>Sprockt</span>
           </a>
-          <nav class="lp-nav-links" aria-label="Site">
-            {navLinks()}
+          <nav className="lp-nav-links" aria-label="Site">
+            {navLinks}
           </nav>
-          <div class="lp-nav-actions">
+          <div className="lp-nav-actions">
             <a
-              class="lp-nav-icon lp-desktop-only"
+              className="lp-nav-icon lp-desktop-only"
               href={REPO_URL}
               target="_blank"
               rel="noreferrer"
@@ -281,12 +289,12 @@ export function Landing() {
             >
               <Icon name="github" />
             </a>
-            <div class="lp-theme-switch lp-desktop-only" role="group" aria-label="Theme">
+            <div className="lp-theme-switch lp-desktop-only" role="group" aria-label="Theme">
               <button
                 type="button"
                 title={LANDING_COPY.navThemeLight}
                 aria-label={LANDING_COPY.navThemeLight}
-                aria-pressed={colorScheme() === "light"}
+                aria-pressed={scheme === "light"}
                 data-testid="theme-light"
                 onClick={() => setColorScheme("light")}
               >
@@ -296,7 +304,7 @@ export function Landing() {
                 type="button"
                 title={LANDING_COPY.navThemeDark}
                 aria-label={LANDING_COPY.navThemeDark}
-                aria-pressed={colorScheme() === "dark"}
+                aria-pressed={scheme === "dark"}
                 data-testid="theme-dark"
                 onClick={() => setColorScheme("dark")}
               >
@@ -305,8 +313,8 @@ export function Landing() {
             </div>
             <button
               type="button"
-              class="lp-btn lp-btn-primary lp-desktop-only"
-              disabled={creatingTemplate() !== undefined}
+              className="lp-btn lp-btn-primary lp-desktop-only"
+              disabled={creating}
               data-testid="header-new-workspace"
               onClick={() => void launchTemplate("vite-react")}
             >
@@ -314,74 +322,74 @@ export function Landing() {
             </button>
             <button
               type="button"
-              class="lp-nav-icon lp-phone-only"
-              aria-label={nextThemeLabel()}
-              title={nextThemeLabel()}
+              className="lp-nav-icon lp-phone-only"
+              aria-label={nextThemeLabel}
+              title={nextThemeLabel}
               data-testid="phone-theme-toggle"
-              onClick={() => setColorScheme(nextTheme())}
+              onClick={() => setColorScheme(nextTheme)}
             >
-              <Icon name={nextTheme() === "light" ? "sun" : "moon"} />
+              <Icon name={nextTheme === "light" ? "sun" : "moon"} />
             </button>
             <button
               type="button"
-              class="lp-nav-icon lp-nav-menu"
+              className="lp-nav-icon lp-nav-menu"
               aria-label={LANDING_COPY.navMenu}
-              aria-expanded={menuOpen()}
+              aria-expanded={menuOpen}
               aria-controls="lp-menu"
               data-testid="phone-menu-toggle"
-              onClick={() => setMenuOpen(!menuOpen())}
+              onClick={() => setMenuOpen(!menuOpen)}
             >
-              <Icon name={menuOpen() ? "x" : "menu"} />
+              <Icon name={menuOpen ? "x" : "menu"} />
             </button>
           </div>
         </div>
-        <Show when={menuOpen()}>
-          <nav class="lp-menu" id="lp-menu" aria-label="Site" data-testid="phone-menu">
-            {navLinks()}
-            <a class="lp-nav-link" href={REPO_URL} target="_blank" rel="noreferrer">
+        {menuOpen ? (
+          <nav className="lp-menu" id="lp-menu" aria-label="Site" data-testid="phone-menu">
+            {navLinks}
+            <a className="lp-nav-link" href={REPO_URL} target="_blank" rel="noreferrer">
               {LANDING_COPY.navGithub}
             </a>
           </nav>
-        </Show>
+        ) : null}
       </header>
 
       <main id="main">
-        <section class="lp-hero" aria-labelledby="hero-title">
-          <div class="wrap lp-wrap lp-hero-inner">
-            <div class="lp-hero-c">
-              <a class="lp-pill" href="#hood">
+        <section className="lp-hero" aria-labelledby="hero-title">
+          <div className="wrap lp-wrap lp-hero-inner">
+            <div className="lp-hero-c">
+              <a className="lp-pill" href="#hood">
                 <span>{LANDING_COPY.heroPill}</span>
-                <span class="lp-muted">{LANDING_COPY.heroPillLink}</span>
+                <span className="lp-muted">{LANDING_COPY.heroPillLink}</span>
               </a>
               <h1 id="hero-title">{LANDING_COPY.heroTitle}</h1>
-              <p class="lp-hero-lead">{LANDING_COPY.heroLede}</p>
-              <div class="lp-btn-row">
+              <p className="lp-hero-lead">{LANDING_COPY.heroLede}</p>
+              <div className="lp-btn-row">
                 <button
                   type="button"
-                  class="lp-btn lp-btn-primary"
-                  disabled={creatingTemplate() !== undefined}
+                  className="lp-btn lp-btn-primary"
+                  disabled={creating}
                   data-testid="hero-start-cta"
                   onClick={() => void launchTemplate("vite-react")}
                 >
                   {startLabel("vite-react")}
                 </button>
-                <a class="lp-btn lp-btn-secondary" href="#start">
+                <a className="lp-btn lp-btn-secondary" href="#start">
                   {LANDING_COPY.heroSecondary}
                 </a>
               </div>
             </div>
-            <div class="lp-hero-frame" data-enter-media>
-              <div class="lp-hero-backdrop lp-ground lp-grain" aria-hidden="true" />
-              <div class="lp-hero-window lp-hero-tab">
+            <div className="lp-hero-frame" data-enter-media>
+              <div className="lp-hero-backdrop lp-ground lp-grain" aria-hidden="true" />
+              <div className="lp-hero-window lp-hero-tab">
                 <WorkbenchPreview demo={demo} pane="terminal" label={LANDING_COPY.showcaseBenchFrame} />
               </div>
             </div>
           </div>
         </section>
 
-        <section class="lp-section" id="features" aria-labelledby="features-title">
-          <div class="wrap lp-wrap">
-            <div class="lp-section-head">
+        <section className="lp-section" id="features" aria-labelledby="features-title">
+          <div className="wrap lp-wrap">
+            <div className="lp-section-head">
               <h2 id="features-title">
                 <Muted lead={LANDING_COPY.featuresTitle} rest={LANDING_COPY.featuresTitleMuted} />
               </h2>
@@ -390,52 +398,50 @@ export function Landing() {
           </div>
         </section>
 
-        <section class="lp-section" id="start" aria-labelledby="start-title">
-          <div class="wrap lp-wrap">
-            <div class="lp-section-head">
+        <section className="lp-section" id="start" aria-labelledby="start-title">
+          <div className="wrap lp-wrap">
+            <div className="lp-section-head">
               <h2 id="start-title">
                 <Muted lead={LANDING_COPY.templatesTitle} rest={LANDING_COPY.templatesTitleMuted} />
               </h2>
             </div>
-            <div class="lp-start" classList={{ "has-recent": hasRecent() }}>
-              <div class="lp-start-form">
-                <form class="lp-open" onSubmit={handleGithubSubmit} noValidate>
-                  <label class="lp-field-label" for="repo-input">
+            <div className={hasRecent ? "lp-start has-recent" : "lp-start"}>
+              <div className="lp-start-form">
+                <form className="lp-open" onSubmit={handleGithubSubmit} noValidate>
+                  <label className="lp-field-label" htmlFor="repo-input">
                     {LANDING_COPY.openLabel}
                   </label>
-                  <div class="lp-open-row">
+                  <div className="lp-open-row">
                     <input
                       id="repo-input"
                       type="text"
                       placeholder={LANDING_COPY.openPlaceholder}
-                      autocomplete="off"
-                      spellcheck={false}
-                      autocapitalize="off"
-                      value={repoInput()}
-                      aria-invalid={repoError() ? "true" : undefined}
-                      aria-describedby={repoError() ? "repo-error" : undefined}
+                      autoComplete="off"
+                      spellCheck={false}
+                      autoCapitalize="off"
+                      value={repoInput}
+                      aria-invalid={repoError ? "true" : undefined}
+                      aria-describedby={repoError ? "repo-error" : undefined}
                       data-testid="repo-input"
-                      onInput={(event) => {
+                      onChange={(event) => {
                         setRepoInput(event.currentTarget.value);
-                        if (repoError()) setRepoError(undefined);
+                        if (repoError) setRepoError(undefined);
                       }}
                     />
-                    <button class="lp-btn lp-btn-primary" type="submit" data-testid="repo-submit">
+                    <button className="lp-btn lp-btn-primary" type="submit" data-testid="repo-submit">
                       {LANDING_COPY.openButton}
                     </button>
                   </div>
-                  <Show when={repoError()}>
-                    {(message) => (
-                      <p id="repo-error" class="lp-field-error" role="alert" data-testid="repo-error">
-                        {message()}
-                      </p>
-                    )}
-                  </Show>
+                  {repoError ? (
+                    <p id="repo-error" className="lp-field-error" role="alert" data-testid="repo-error">
+                      {repoError}
+                    </p>
+                  ) : null}
                 </form>
-                <p class="lp-start-note">
+                <p className="lp-start-note">
                   {LANDING_COPY.templatesNote} {LANDING_COPY.openTry}{" "}
                   <a
-                    class="lp-link"
+                    className="lp-link"
                     href={SAMPLE_GITHUB_PATH}
                     data-testid="sample-repo-link"
                     onClick={(event) => {
@@ -446,208 +452,202 @@ export function Landing() {
                     ShaulLavo/bash-web
                   </a>
                 </p>
-                <div class="lp-start-log lp-ground">
+                <div className="lp-start-log lp-ground">
                   <WorkspaceSwitcher
                     workspaces={workspaces}
-                    loading={loadingWorkspaces()}
+                    loading={loadingWorkspaces}
                     onOpen={(id) => navigate({ kind: "workspace", id })}
                     onRefresh={() => void refreshWorkspaces()}
                   />
                 </div>
               </div>
-              <div class="lp-start-list">
-                <Show when={createError()}>
-                  {(message) => (
-                    <p class="lp-create-error" role="alert" data-testid="template-error">
-                      {LANDING_COPY.templatesError.replace("{message}", message())}
-                    </p>
-                  )}
-                </Show>
-                <ul class="lp-starters" data-testid="template-grid">
-                  <For each={TEMPLATES}>{(template) => renderTemplate(template)}</For>
+              <div className="lp-start-list">
+                {createError ? (
+                  <p className="lp-create-error" role="alert" data-testid="template-error">
+                    {LANDING_COPY.templatesError.replace("{message}", createError)}
+                  </p>
+                ) : null}
+                <ul className="lp-starters" data-testid="template-grid">
+                  {TEMPLATES.map(renderTemplate)}
                 </ul>
               </div>
             </div>
           </div>
         </section>
 
-        <section class="lp-section lp-band" id="browsers" aria-labelledby="browsers-title">
-          <div class="wrap lp-wrap">
-            <div class="lp-split">
-              <div class="lp-split-text">
-                <div class="lp-section-head">
+        <section className="lp-section lp-band" id="browsers" aria-labelledby="browsers-title">
+          <div className="wrap lp-wrap">
+            <div className="lp-split">
+              <div className="lp-split-text">
+                <div className="lp-section-head">
                   <h2 id="browsers-title">
                     <Muted lead={LANDING_COPY.showcaseTitle} rest={LANDING_COPY.showcaseTitleMuted} />
                   </h2>
                   <p>{LANDING_COPY.showcaseLede}</p>
                 </div>
-                <ul class="lp-browsers" aria-label={LANDING_COPY.showcaseBrowsers}>
-                  <For each={BROWSERS}>
-                    {(item) => (
-                      <li>
-                        <img src={item.logo} alt="" width="32" height="32" loading="lazy" />
-                        {item.name}
-                      </li>
-                    )}
-                  </For>
+                <ul className="lp-browsers" aria-label={LANDING_COPY.showcaseBrowsers}>
+                  {BROWSERS.map((item) => (
+                    <li key={item.name}>
+                      <img src={item.logo} alt="" width="32" height="32" loading="lazy" />
+                      {item.name}
+                    </li>
+                  ))}
                 </ul>
               </div>
-              <div class="lp-phone-frame lp-ground">
-                <div class="lp-device">
+              <div className="lp-phone-frame lp-ground">
+                <div className="lp-device">
                   <WorkbenchPreview demo={demo} pane="code" label={LANDING_COPY.showcaseHeroFrame} />
                 </div>
               </div>
             </div>
-            <div class="lp-marquee" classList={{ "is-paused": marqueePaused() }}>
-              <div class="lp-marquee-clip">
-                <ul class="lp-marquee-track">
-                  <For each={MARQUEE.concat(MARQUEE)}>
-                    {(item, index) => (
-                      <li aria-hidden={index() >= MARQUEE.length ? "true" : undefined}>{item}</li>
-                    )}
-                  </For>
+            <div className={marqueePaused ? "lp-marquee is-paused" : "lp-marquee"}>
+              <div className="lp-marquee-clip">
+                <ul className="lp-marquee-track">
+                  {MARQUEE_LOOP.map((item, index) => (
+                    <li key={index} aria-hidden={index >= MARQUEE.length ? "true" : undefined}>
+                      {item}
+                    </li>
+                  ))}
                 </ul>
               </div>
               <button
                 type="button"
-                class="lp-loop-pause"
-                aria-label={marqueePaused() ? LANDING_COPY.marqueePlay : LANDING_COPY.marqueePause}
-                title={marqueePaused() ? LANDING_COPY.marqueePlay : LANDING_COPY.marqueePause}
-                onClick={() => setMarqueePaused(!marqueePaused())}
+                className="lp-loop-pause"
+                aria-label={marqueePaused ? LANDING_COPY.marqueePlay : LANDING_COPY.marqueePause}
+                title={marqueePaused ? LANDING_COPY.marqueePlay : LANDING_COPY.marqueePause}
+                onClick={() => setMarqueePaused(!marqueePaused)}
               >
                 <svg viewBox="0 0 12 12" aria-hidden="true">
-                  <Show when={marqueePaused()} fallback={<path d="M4 3v6M8 3v6" />}>
-                    <path d="M4 2.8v6.4L9.2 6z" />
-                  </Show>
+                  {marqueePaused ? <path d="M4 2.8v6.4L9.2 6z" /> : <path d="M4 3v6M8 3v6" />}
                 </svg>
               </button>
             </div>
           </div>
         </section>
 
-        <section class="lp-section" id="hood" aria-labelledby="hood-title">
-          <div class="wrap lp-wrap">
-            <div class="lp-split">
-              <div class="lp-split-text">
-                <div class="lp-section-head">
+        <section className="lp-section" id="hood" aria-labelledby="hood-title">
+          <div className="wrap lp-wrap">
+            <div className="lp-split">
+              <div className="lp-split-text">
+                <div className="lp-section-head">
                   <h2 id="hood-title">
                     <Muted lead={LANDING_COPY.hoodTitle} rest={LANDING_COPY.hoodTitleMuted} />
                   </h2>
                 </div>
-                <p class="lp-hood-lede">{LANDING_COPY.hoodLede}</p>
-                <ul class="lp-hood">
-                  <For each={STACK}>
-                    {(part) => (
-                      <li>
-                        <a href={engineUrl(part.repo)} target="_blank" rel="noreferrer">
-                          <b>{part.name}</b>
-                          <span>{part.role}</span>
-                        </a>
-                      </li>
-                    )}
-                  </For>
+                <p className="lp-hood-lede">{LANDING_COPY.hoodLede}</p>
+                <ul className="lp-hood">
+                  {STACK.map((part) => (
+                    <li key={part.repo}>
+                      <a href={engineUrl(part.repo)} target="_blank" rel="noreferrer">
+                        <b>{part.name}</b>
+                        <span>{part.role}</span>
+                      </a>
+                    </li>
+                  ))}
                 </ul>
-                <p class="lp-hood-limits">{LANDING_COPY.hoodLimits}</p>
+                <p className="lp-hood-limits">{LANDING_COPY.hoodLimits}</p>
               </div>
-              <div class="lp-hood-frame lp-ground">
+              <div className="lp-hood-frame lp-ground">
                 <HubDiagram />
               </div>
             </div>
           </div>
         </section>
 
-        <section class="lp-section" id="faq" aria-labelledby="faq-title">
-          <div class="wrap lp-wrap">
-            <div class="lp-split">
-              <div class="lp-faq-side">
+        <section className="lp-section" id="faq" aria-labelledby="faq-title">
+          <div className="wrap lp-wrap">
+            <div className="lp-split">
+              <div className="lp-faq-side">
                 <h2 id="faq-title">{LANDING_COPY.faqTitle}</h2>
-                <p class="lp-muted lp-faq-intro">{LANDING_COPY.faqIntro}</p>
-                <a class="lp-link lp-link-arrow" href={REPO_URL} target="_blank" rel="noreferrer">
+                <p className="lp-muted lp-faq-intro">{LANDING_COPY.faqIntro}</p>
+                <a className="lp-link lp-link-arrow" href={REPO_URL} target="_blank" rel="noreferrer">
                   {LANDING_COPY.faqContact}
                 </a>
                 <a
-                  class="lp-license"
+                  className="lp-license"
                   href={LICENSE_URL}
                   target="_blank"
                   rel="noreferrer"
                   aria-label={LANDING_COPY.faqLicense}
                 >
-                  <span class="lp-mini-tabs" aria-hidden="true">
-                    <span class="is-on" data-tab-tone="md">
+                  <span className="lp-mini-tabs" aria-hidden="true">
+                    <span className="is-on" data-tab-tone="md">
                       LICENSE
                     </span>
                   </span>
-                  <ol class="lp-mini-pre lp-mini-text" aria-hidden="true">
-                    <For each={LICENSE_LINES}>{(line, index) => <li data-n={index() + 1}>{line}</li>}</For>
+                  <ol className="lp-mini-pre lp-mini-text" aria-hidden="true">
+                    {LICENSE_LINES.map((line, index) => (
+                      <li key={index} data-n={index + 1}>
+                        {line}
+                      </li>
+                    ))}
                   </ol>
                 </a>
               </div>
-              <div class="lp-faq">
-                <For each={FAQ}>
-                  {(item) => (
-                    <div class="lp-faq-item">
-                      <h3>{item[0]}</h3>
-                      <p>{item[1]}</p>
-                    </div>
-                  )}
-                </For>
+              <div className="lp-faq">
+                {FAQ.map((item) => (
+                  <div key={item[0]} className="lp-faq-item">
+                    <h3>{item[0]}</h3>
+                    <p>{item[1]}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         </section>
       </main>
 
-      <footer class="closing lp-closing" aria-labelledby="close-title">
-        <div class="wrap lp-wrap">
-          <div class="lp-close-head">
+      <footer className="closing lp-closing" aria-labelledby="close-title">
+        <div className="wrap lp-wrap">
+          <div className="lp-close-head">
             <div>
               <h2 id="close-title">{LANDING_COPY.closingTitle}</h2>
-              <p class="lp-close-lede">{LANDING_COPY.closingLede}</p>
+              <p className="lp-close-lede">{LANDING_COPY.closingLede}</p>
             </div>
             <button
               type="button"
-              class="lp-btn lp-btn-primary"
-              disabled={creatingTemplate() !== undefined}
+              className="lp-btn lp-btn-primary"
+              disabled={creating}
               data-testid="closing-start-cta"
               onClick={() => void launchTemplate("vite-react")}
             >
               {startLabel("vite-react")}
             </button>
           </div>
-          <p class="lp-close-word" aria-hidden="true">
+          <p className="lp-close-word" aria-hidden="true">
             Sprockt
           </p>
-          <div class="lp-foot">
-            <div class="lp-foot-brand">
-              <span class="lp-brand">
+          <div className="lp-foot">
+            <div className="lp-foot-brand">
+              <span className="lp-brand">
                 <SprocktLogo class="lp-brand-mark" />
                 <span>Sprockt</span>
               </span>
               <p>{LANDING_COPY.footerLede}</p>
             </div>
-            <nav class="lp-foot-col" aria-labelledby="foot-editor">
+            <nav className="lp-foot-col" aria-labelledby="foot-editor">
               <h3 id="foot-editor">{LANDING_COPY.footerGroupEditor}</h3>
               <a href="#features">{LANDING_COPY.footerTypeChecking}</a>
               <a href="#features">{LANDING_COPY.footerTerminal}</a>
             </nav>
-            <nav class="lp-foot-col" aria-labelledby="foot-start">
+            <nav className="lp-foot-col" aria-labelledby="foot-start">
               <h3 id="foot-start">{LANDING_COPY.footerGroupStart}</h3>
               <a href="#start">{LANDING_COPY.footerImport}</a>
               <button
                 type="button"
-                disabled={creatingTemplate() !== undefined}
+                disabled={creating}
                 data-testid="new-workspace"
                 onClick={() => void launchTemplate("blank")}
               >
-                {creatingTemplate() === "blank" ? LANDING_COPY.templateCreating : LANDING_COPY.altBlank}
+                {creatingTemplate === "blank" ? LANDING_COPY.templateCreating : LANDING_COPY.altBlank}
               </button>
             </nav>
-            <nav class="lp-foot-col" aria-labelledby="foot-browsers">
+            <nav className="lp-foot-col" aria-labelledby="foot-browsers">
               <h3 id="foot-browsers">{LANDING_COPY.footerGroupBrowsers}</h3>
               <a href="#browsers">{LANDING_COPY.footerDesktop}</a>
               <a href="#browsers">{LANDING_COPY.footerIphone}</a>
             </nav>
-            <nav class="lp-foot-col" aria-labelledby="foot-project">
+            <nav className="lp-foot-col" aria-labelledby="foot-project">
               <h3 id="foot-project">{LANDING_COPY.footerGroupProject}</h3>
               <a href={REPO_URL} target="_blank" rel="noreferrer">
                 {LANDING_COPY.navGithub}
@@ -658,7 +658,7 @@ export function Landing() {
               <a href="#hood">{LANDING_COPY.navHood}</a>
             </nav>
           </div>
-          <div class="lp-legal">
+          <div className="lp-legal">
             <span>
               &copy; 2026 Sprockt ·{" "}
               <a href={LICENSE_URL} target="_blank" rel="noreferrer">

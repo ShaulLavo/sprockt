@@ -1,6 +1,6 @@
 // Local workspace switcher: lists stored IndexedDB workspaces, opens, renames, retries, and deletes them.
 // Renders `<IncompleteRow>` (built on PR 4's `readIncomplete` / `retryPath`) for unfinished workspaces.
-import { createSignal, For, Show } from "solid-js";
+import { useState } from "react";
 import type { WorkspaceMeta } from "../importer/metadata";
 import { templateLabel } from "../templates/metadata";
 import { formatRelativeTime } from "../templates/workspace-meta";
@@ -23,13 +23,42 @@ export interface WorkspaceSwitcherProps {
   readonly onRefresh: () => void;
 }
 
+/** Focuses a just-mounted element once the current render settles. */
+function focusOnMount(el: HTMLElement | null): void {
+  if (el) queueMicrotask(() => el.focus());
+}
+
+function rowClass(menuOpen: boolean, incomplete: boolean): string {
+  if (menuOpen) return "lp-ws is-menu-open";
+  return incomplete ? "lp-ws is-incomplete" : "lp-ws";
+}
+
+/** "Open in another tab" when it is, else when it was last opened, in the given class. */
+function LastSeen(props: {
+  readonly ws: StoredWorkspaceSummary;
+  readonly liveClass: string;
+  readonly liveTestId: string;
+  readonly whenClass: string;
+}) {
+  const { ws } = props;
+  if (ws.openInOtherTab) {
+    return (
+      <span className={props.liveClass} data-testid={props.liveTestId}>
+        {LANDING_COPY.recentOpenElsewhere}
+      </span>
+    );
+  }
+  if (!ws.lastOpened) return null;
+  return <span className={props.whenClass}>{formatRelativeTime(ws.lastOpened)}</span>;
+}
+
 export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
-  const [editingId, setEditingId] = createSignal<string | undefined>();
-  const [draftName, setDraftName] = createSignal("");
-  const [confirmDeleteId, setConfirmDeleteId] = createSignal<string | undefined>();
-  const [menuId, setMenuId] = createSignal<string | undefined>();
-  const [busyId, setBusyId] = createSignal<string | undefined>();
-  const [notice, setNotice] = createSignal<string | undefined>();
+  const [editingId, setEditingId] = useState<string | undefined>();
+  const [draftName, setDraftName] = useState("");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | undefined>();
+  const [menuId, setMenuId] = useState<string | undefined>();
+  const [busyId, setBusyId] = useState<string | undefined>();
+  const [notice, setNotice] = useState<string | undefined>();
 
   function startRename(ws: StoredWorkspaceSummary): void {
     setConfirmDeleteId(undefined);
@@ -44,8 +73,15 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
     setDraftName("");
   }
 
+  function startDelete(id: string): void {
+    setEditingId(undefined);
+    setMenuId(undefined);
+    setNotice(undefined);
+    setConfirmDeleteId(id);
+  }
+
   async function commitRename(id: string): Promise<void> {
-    const trimmed = draftName().trim();
+    const trimmed = draftName.trim();
     if (!trimmed) return;
     setBusyId(id);
     setNotice(undefined);
@@ -101,240 +137,220 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
     props.onOpen(id);
   }
 
+  function renderConfirmDelete(ws: StoredWorkspaceSummary) {
+    const isBusy = busyId === ws.id;
+    return (
+      <div className="lp-ws-confirm" data-testid={`workspace-confirm-delete-${ws.id}`}>
+        <span className="lp-ws-confirm-text">Delete {ws.name}?</span>
+        <div className="lp-ws-confirm-actions">
+          <button
+            type="button"
+            className="lp-ws-btn lp-ws-btn-danger"
+            disabled={isBusy}
+            data-testid={`workspace-delete-confirm-${ws.id}`}
+            onClick={() => void confirmDelete(ws.id)}
+          >
+            {LANDING_COPY.recentConfirmDelete}
+          </button>
+          <button
+            type="button"
+            className="lp-ws-btn"
+            disabled={isBusy}
+            data-testid={`workspace-delete-cancel-${ws.id}`}
+            ref={focusOnMount}
+            onClick={() => setConfirmDeleteId(undefined)}
+          >
+            {LANDING_COPY.recentCancel}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderRename(ws: StoredWorkspaceSummary) {
+    const isBusy = busyId === ws.id;
+    return (
+      <form
+        className="lp-ws-rename-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void commitRename(ws.id);
+        }}
+      >
+        <label className="lp-sr-only" htmlFor={`rename-${ws.id}`}>
+          {LANDING_COPY.recentRename}
+        </label>
+        <input
+          id={`rename-${ws.id}`}
+          type="text"
+          className="lp-ws-rename-input"
+          value={draftName}
+          maxLength={64}
+          ref={focusOnMount}
+          data-testid={`workspace-rename-input-${ws.id}`}
+          onChange={(event) => setDraftName(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") cancelRename();
+          }}
+        />
+        <button
+          type="submit"
+          className="lp-ws-icon-btn is-ok"
+          aria-label={LANDING_COPY.recentSave}
+          disabled={isBusy || !draftName.trim()}
+          data-testid={`workspace-rename-save-${ws.id}`}
+        >
+          <Icon name="check" />
+        </button>
+        <button
+          type="button"
+          className="lp-ws-icon-btn"
+          aria-label={LANDING_COPY.recentCancel}
+          disabled={isBusy}
+          data-testid={`workspace-rename-cancel-${ws.id}`}
+          onClick={cancelRename}
+        >
+          <Icon name="x" />
+        </button>
+      </form>
+    );
+  }
+
+  function renderIncomplete(ws: StoredWorkspaceSummary) {
+    return (
+      <div className="lp-ws-incomplete-wrap">
+        <div className="lp-ws-main lp-ws-main-static">
+          <BrandLogoTile templateId={ws.template} class="lp-ws-logo" />
+          <span className="lp-ws-text">
+            <span className="lp-ws-name">{ws.name}</span>
+          </span>
+        </div>
+        <IncompleteRow
+          id={ws.id}
+          meta={ws.meta}
+          skipProbe
+          onDeleted={props.onRefresh}
+          onRetryTemplate={(meta) => retryTemplateWorkspace(ws.id, meta)}
+        />
+      </div>
+    );
+  }
+
+  function renderReady(ws: StoredWorkspaceSummary) {
+    const isMenuOpen = menuId === ws.id;
+    return (
+      <>
+        <button
+          type="button"
+          className="lp-ws-main"
+          data-testid={`workspace-open-${ws.id}`}
+          onClick={() => openWorkspace(ws.id)}
+        >
+          <BrandLogoTile templateId={ws.template} class="lp-ws-logo" />
+          <span className="lp-ws-text">
+            <span className="lp-ws-name">{ws.name}</span>
+            <span className="lp-ws-meta-row">
+              <span className="lp-ws-meta">{templateLabel(ws.template)}</span>
+              <LastSeen
+                ws={ws}
+                liveClass="lp-live lp-live-inline"
+                liveTestId={`workspace-live-phone-${ws.id}`}
+                whenClass="lp-ws-when-phone"
+              />
+            </span>
+          </span>
+          <LastSeen
+            ws={ws}
+            liveClass="lp-live lp-live-desktop"
+            liveTestId={`workspace-live-${ws.id}`}
+            whenClass="lp-ws-when"
+          />
+        </button>
+
+        <IncompleteRow id={ws.id} meta={ws.meta} skipProbe onDeleted={props.onRefresh} />
+
+        {/* Desktop: reveal actions on hover/focus; Touch: single "more" button */}
+        <div className="lp-ws-actions">
+          <button
+            type="button"
+            className="lp-ws-icon-btn lp-ws-more-btn"
+            aria-label={`${LANDING_COPY.recentMore}: ${ws.name}`}
+            aria-expanded={isMenuOpen}
+            data-testid={`workspace-more-${ws.id}`}
+            onClick={() => setMenuId(isMenuOpen ? undefined : ws.id)}
+          >
+            <Icon name="more" />
+          </button>
+          <div className="lp-ws-inline-actions">
+            <button
+              type="button"
+              className="lp-ws-icon-btn"
+              title={LANDING_COPY.recentRename}
+              aria-label={`${LANDING_COPY.recentRename}: ${ws.name}`}
+              data-testid={`workspace-rename-${ws.id}`}
+              onClick={() => startRename(ws)}
+            >
+              <Icon name="pencil" />
+            </button>
+            <button
+              type="button"
+              className="lp-ws-icon-btn is-danger"
+              title={LANDING_COPY.recentDelete}
+              aria-label={`${LANDING_COPY.recentDelete}: ${ws.name}`}
+              data-testid={`workspace-delete-${ws.id}`}
+              onClick={() => startDelete(ws.id)}
+            >
+              <Icon name="trash" />
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  function renderBody(ws: StoredWorkspaceSummary) {
+    if (editingId === ws.id) return renderRename(ws);
+    if (confirmDeleteId === ws.id) return renderConfirmDelete(ws);
+    return ws.state !== undefined ? renderIncomplete(ws) : renderReady(ws);
+  }
+
+  function renderRow(ws: StoredWorkspaceSummary) {
+    return (
+      <li
+        key={ws.id}
+        className={rowClass(menuId === ws.id, ws.state !== undefined)}
+        data-testid={`workspace-row-${ws.id}`}
+      >
+        <span className="lp-sr-only">{ws.id}</span>
+        {renderBody(ws)}
+      </li>
+    );
+  }
+
   return (
-    <aside class="lp-recent-col" aria-labelledby="recent-title">
-      <div class="lp-recent-head">
+    <aside className="lp-recent-col" aria-labelledby="recent-title">
+      <div className="lp-recent-head">
         <h3 id="recent-title">{LANDING_COPY.recentTitle}</h3>
         <p>{LANDING_COPY.recentNote}</p>
       </div>
-      <div class="lp-recent">
-        <Show when={notice()}>
-          {(message) => (
-            <p class="lp-recent-notice" role="status" data-testid="workspace-notice">
-              {message()}
-            </p>
-          )}
-        </Show>
+      <div className="lp-recent">
+        {notice ? (
+          <p className="lp-recent-notice" role="status" data-testid="workspace-notice">
+            {notice}
+          </p>
+        ) : null}
 
-        <Show
-          when={props.workspaces.length > 0}
-          fallback={
-            <div class="lp-recent-empty" data-testid="workspace-empty">
-              <p>{props.loading ? LANDING_COPY.recentChecking : LANDING_COPY.recentEmpty}</p>
-            </div>
-          }
-        >
-          <ul class="lp-ws-list" data-testid="workspace-list">
-            <For each={props.workspaces}>
-              {(ws) => {
-                const isEditing = () => editingId() === ws.id;
-                const isConfirmingDelete = () => confirmDeleteId() === ws.id;
-                const isMenuOpen = () => menuId() === ws.id;
-                const isBusy = () => busyId() === ws.id;
-                const isIncomplete = () => ws.state !== undefined;
-
-                return (
-                  <li
-                    class={
-                      isMenuOpen() ? "lp-ws is-menu-open" : isIncomplete() ? "lp-ws is-incomplete" : "lp-ws"
-                    }
-                    data-testid={`workspace-row-${ws.id}`}
-                  >
-                    <span class="lp-sr-only">{ws.id}</span>
-                    <Show
-                      when={!isEditing() && !isConfirmingDelete()}
-                      fallback={
-                        <Show
-                          when={isEditing()}
-                          fallback={
-                            <div class="lp-ws-confirm" data-testid={`workspace-confirm-delete-${ws.id}`}>
-                              <span class="lp-ws-confirm-text">Delete {ws.name}?</span>
-                              <div class="lp-ws-confirm-actions">
-                                <button
-                                  type="button"
-                                  class="lp-ws-btn lp-ws-btn-danger"
-                                  disabled={isBusy()}
-                                  data-testid={`workspace-delete-confirm-${ws.id}`}
-                                  onClick={() => void confirmDelete(ws.id)}
-                                >
-                                  {LANDING_COPY.recentConfirmDelete}
-                                </button>
-                                <button
-                                  type="button"
-                                  class="lp-ws-btn"
-                                  disabled={isBusy()}
-                                  data-testid={`workspace-delete-cancel-${ws.id}`}
-                                  ref={(el) => queueMicrotask(() => el.focus())}
-                                  onClick={() => setConfirmDeleteId(undefined)}
-                                >
-                                  {LANDING_COPY.recentCancel}
-                                </button>
-                              </div>
-                            </div>
-                          }
-                        >
-                          <form
-                            class="lp-ws-rename-form"
-                            onSubmit={(event) => {
-                              event.preventDefault();
-                              void commitRename(ws.id);
-                            }}
-                          >
-                            <label class="lp-sr-only" for={`rename-${ws.id}`}>
-                              {LANDING_COPY.recentRename}
-                            </label>
-                            <input
-                              id={`rename-${ws.id}`}
-                              type="text"
-                              class="lp-ws-rename-input"
-                              value={draftName()}
-                              maxLength={64}
-                              ref={(el) => queueMicrotask(() => el.focus())}
-                              data-testid={`workspace-rename-input-${ws.id}`}
-                              onInput={(event) => setDraftName(event.currentTarget.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === "Escape") cancelRename();
-                              }}
-                            />
-                            <button
-                              type="submit"
-                              class="lp-ws-icon-btn is-ok"
-                              aria-label={LANDING_COPY.recentSave}
-                              disabled={isBusy() || !draftName().trim()}
-                              data-testid={`workspace-rename-save-${ws.id}`}
-                            >
-                              <Icon name="check" />
-                            </button>
-                            <button
-                              type="button"
-                              class="lp-ws-icon-btn"
-                              aria-label={LANDING_COPY.recentCancel}
-                              disabled={isBusy()}
-                              data-testid={`workspace-rename-cancel-${ws.id}`}
-                              onClick={cancelRename}
-                            >
-                              <Icon name="x" />
-                            </button>
-                          </form>
-                        </Show>
-                      }
-                    >
-                      <Show
-                        when={!isIncomplete()}
-                        fallback={
-                          <div class="lp-ws-incomplete-wrap">
-                            <div class="lp-ws-main lp-ws-main-static">
-                              <BrandLogoTile templateId={ws.template} class="lp-ws-logo" />
-                              <span class="lp-ws-text">
-                                <span class="lp-ws-name">{ws.name}</span>
-                              </span>
-                            </div>
-                            <IncompleteRow
-                              id={ws.id}
-                              meta={ws.meta}
-                              skipProbe
-                              onDeleted={props.onRefresh}
-                              onRetryTemplate={(meta) => retryTemplateWorkspace(ws.id, meta)}
-                            />
-                          </div>
-                        }
-                      >
-                        <button
-                          type="button"
-                          class="lp-ws-main"
-                          data-testid={`workspace-open-${ws.id}`}
-                          onClick={() => openWorkspace(ws.id)}
-                        >
-                          <BrandLogoTile templateId={ws.template} class="lp-ws-logo" />
-                          <span class="lp-ws-text">
-                            <span class="lp-ws-name">{ws.name}</span>
-                            <span class="lp-ws-meta-row">
-                              <span class="lp-ws-meta">{templateLabel(ws.template)}</span>
-                              <Show
-                                when={ws.openInOtherTab}
-                                fallback={
-                                  <Show when={ws.lastOpened}>
-                                    {(when) => (
-                                      <span class="lp-ws-when-phone">{formatRelativeTime(when())}</span>
-                                    )}
-                                  </Show>
-                                }
-                              >
-                                <span
-                                  class="lp-live lp-live-inline"
-                                  data-testid={`workspace-live-phone-${ws.id}`}
-                                >
-                                  {LANDING_COPY.recentOpenElsewhere}
-                                </span>
-                              </Show>
-                            </span>
-                          </span>
-                          <Show
-                            when={ws.openInOtherTab}
-                            fallback={
-                              <Show when={ws.lastOpened}>
-                                {(when) => <span class="lp-ws-when">{formatRelativeTime(when())}</span>}
-                              </Show>
-                            }
-                          >
-                            <span class="lp-live lp-live-desktop" data-testid={`workspace-live-${ws.id}`}>
-                              {LANDING_COPY.recentOpenElsewhere}
-                            </span>
-                          </Show>
-                        </button>
-
-                        <IncompleteRow id={ws.id} meta={ws.meta} skipProbe onDeleted={props.onRefresh} />
-
-                        {/* Desktop: reveal actions on hover/focus; Touch: single "more" button */}
-                        <div class="lp-ws-actions">
-                          <button
-                            type="button"
-                            class="lp-ws-icon-btn lp-ws-more-btn"
-                            aria-label={`${LANDING_COPY.recentMore}: ${ws.name}`}
-                            aria-expanded={isMenuOpen()}
-                            data-testid={`workspace-more-${ws.id}`}
-                            onClick={() => setMenuId(isMenuOpen() ? undefined : ws.id)}
-                          >
-                            <Icon name="more" />
-                          </button>
-                          <div class="lp-ws-inline-actions">
-                            <button
-                              type="button"
-                              class="lp-ws-icon-btn"
-                              title={LANDING_COPY.recentRename}
-                              aria-label={`${LANDING_COPY.recentRename}: ${ws.name}`}
-                              data-testid={`workspace-rename-${ws.id}`}
-                              onClick={() => startRename(ws)}
-                            >
-                              <Icon name="pencil" />
-                            </button>
-                            <button
-                              type="button"
-                              class="lp-ws-icon-btn is-danger"
-                              title={LANDING_COPY.recentDelete}
-                              aria-label={`${LANDING_COPY.recentDelete}: ${ws.name}`}
-                              data-testid={`workspace-delete-${ws.id}`}
-                              onClick={() => {
-                                setEditingId(undefined);
-                                setMenuId(undefined);
-                                setNotice(undefined);
-                                setConfirmDeleteId(ws.id);
-                              }}
-                            >
-                              <Icon name="trash" />
-                            </button>
-                          </div>
-                        </div>
-                      </Show>
-                    </Show>
-                  </li>
-                );
-              }}
-            </For>
+        {props.workspaces.length > 0 ? (
+          <ul className="lp-ws-list" data-testid="workspace-list">
+            {props.workspaces.map(renderRow)}
           </ul>
-        </Show>
+        ) : (
+          <div className="lp-recent-empty" data-testid="workspace-empty">
+            <p>{props.loading ? LANDING_COPY.recentChecking : LANDING_COPY.recentEmpty}</p>
+          </div>
+        )}
 
-        <div class="lp-recent-foot">
+        <div className="lp-recent-foot">
           <Icon name="drive" />
           <span>{LANDING_COPY.recentStorage}</span>
         </div>
