@@ -1,12 +1,12 @@
 // The few stroke icons the editor and search use, drawn like the Circuit sprite: 24×24 paths whose
 // stroke and colour come from CSS (`.ico`).
-import type { JSX } from "solid-js";
+import type { ReactNode } from "react";
 import { fileKindOf } from "../explorer/file-types";
 import { FILE_ICONS, Icon as FileGlyph } from "../explorer/icons";
 
-function Icon(props: { class?: string; children: JSX.Element }) {
+function Icon(props: { class?: string; children: ReactNode }) {
   return (
-    <svg class={`ico ${props.class ?? ""}`} viewBox="0 0 24 24" aria-hidden="true">
+    <svg className={`ico ${props.class ?? ""}`} viewBox="0 0 24 24" aria-hidden="true">
       {props.children}
     </svg>
   );
@@ -40,8 +40,8 @@ export function fileTone(path: string): string {
 
 /** A file's icon in a tab or a result row: the glyph the explorer gives that kind of file. */
 export const FileIcon = (props: { path: string }) => {
-  const kind = () => fileKindOf(props.path.slice(props.path.lastIndexOf("/") + 1));
-  return <FileGlyph name={FILE_ICONS[kind().icon]} class={`ft ${fileTone(props.path)}`} />;
+  const kind = fileKindOf(props.path.slice(props.path.lastIndexOf("/") + 1));
+  return <FileGlyph name={FILE_ICONS[kind.icon]} class={`ft ${fileTone(props.path)}`} />;
 };
 
 export const CloseIcon = (props: { class?: string }) => (
@@ -79,15 +79,12 @@ export const ChevronIcon = (props: { class?: string }) => (
 
 /** Splits `text` into plain and highlighted runs; `marks` holds indexes into `text`. */
 export function Highlighted(props: { text: string; marks: ReadonlySet<number> }) {
-  const runs = () => {
-    const result: { text: string; marked: boolean }[] = [];
-    for (let index = 0; index < props.text.length; index += 1) {
-      const marked = props.marks.has(index);
-      const last = result.at(-1);
-      if (last && last.marked === marked) last.text += props.text[index];
-      else result.push({ text: props.text[index] as string, marked });
-    }
-    return result;
-  };
-  return <>{runs().map((run) => (run.marked ? <mark>{run.text}</mark> : run.text))}</>;
+  const runs: { text: string; marked: boolean }[] = [];
+  for (let index = 0; index < props.text.length; index += 1) {
+    const marked = props.marks.has(index);
+    const last = runs.at(-1);
+    if (last && last.marked === marked) last.text += props.text[index];
+    else runs.push({ text: props.text[index] as string, marked });
+  }
+  return <>{runs.map((run, index) => (run.marked ? <mark key={index}>{run.text}</mark> : run.text))}</>;
 }

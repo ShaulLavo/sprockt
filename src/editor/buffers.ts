@@ -15,7 +15,7 @@ import {
   type PieceTableSnapshot,
 } from "@singapore-editor/core/document";
 import type { EditorScrollPosition } from "@singapore-editor/core/editor";
-import { createSignal, type Accessor } from "solid-js";
+import { createSignal, type Accessor } from "../lib/reactive";
 import type { FileService } from "../files/service";
 import { EDITOR_COPY, fill } from "./copy";
 import { replacementBetween } from "./diff";

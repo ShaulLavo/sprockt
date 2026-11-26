@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { createRoot } from "solid-js";
+import { createRoot } from "../lib/reactive";
 import type { FileChange } from "../files/service";
 import { ProjectPathError } from "../workspace/paths";
 import { isDetached, originalPath } from "./buffers";
@@ -153,6 +153,9 @@ test("a replaced preview nobody typed in is released once the next file shows", 
 
 test("a folder moved through FileService takes its open files along, unsaved text and undo too", async () => {
   const { store, disk, emit } = setUpStore({ "docs/a.txt": "a", "docs/b.txt": "b" });
+  // Effects run under the reactive core (Solid's server build skipped them), so showing the
+  // moved file would autosave it; the test is about the unsaved text following the move.
+  store.setAutosave(false);
   store.open("docs/a.txt");
   await store.buffers.load("docs/a.txt");
   store.setDisplayed("docs/a.txt");

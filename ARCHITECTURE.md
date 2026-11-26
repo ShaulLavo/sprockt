@@ -11,14 +11,14 @@ manager, [bash-web](https://github.com/ShaulLavo/bash-web) as the shell,
 
 ## Decisions
 
-| Area         | Decision                                                       | Why                                                                                                                                                             |
-| ------------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| UI framework | Solid 1.9                                                      | Fine-grained updates with no virtual DOM diff keep typing, tree refreshes and terminal output off any render path. Singapore ships a first-party Solid binding. |
-| Build        | Vite 8, ES module workers                                      | The tested bundling path of bun-wasm and Ghostty (`?worker&url`, `?url`).                                                                                       |
-| Storage      | Waffle `mode: "fast"` on IndexedDB, one database per workspace | The persistent path is the product path; `mode: "memory"` is not used.                                                                                          |
-| Tabs         | Waffle `whenBusy: "attach"`                                    | The first tab hosts the filesystem; later tabs attach and share it live. When the hosting tab closes, another tab takes over inside Waffle (Known gaps, 1).     |
-| Hosting      | Cloudflare Worker with static assets only                      | No server code is needed until previews move to their own origins.                                                                                              |
-| Language     | TypeScript only, strict                                        | `bun run check:javascript` fails on any hand-written JavaScript.                                                                                                |
+| Area         | Decision                                                       | Why                                                                                                                                                                                                                                                                                                    |
+| ------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| UI framework | React 19 over `src/lib/reactive.ts`                            | Owner choice (2026-11-26). Engine state lives in a small framework-neutral signal core; components read it with `useValue` and own scoped stores with `useScope` (`src/lib/react.ts`). No StrictMode: doubled effects would boot a second Waffle runtime. Singapore ships a first-party React binding. |
+| Build        | Vite 8, ES module workers                                      | The tested bundling path of bun-wasm and Ghostty (`?worker&url`, `?url`).                                                                                                                                                                                                                              |
+| Storage      | Waffle `mode: "fast"` on IndexedDB, one database per workspace | The persistent path is the product path; `mode: "memory"` is not used.                                                                                                                                                                                                                                 |
+| Tabs         | Waffle `whenBusy: "attach"`                                    | The first tab hosts the filesystem; later tabs attach and share it live. When the hosting tab closes, another tab takes over inside Waffle (Known gaps, 1).                                                                                                                                            |
+| Hosting      | Cloudflare Worker with static assets only                      | No server code is needed until previews move to their own origins.                                                                                                                                                                                                                                     |
+| Language     | TypeScript only, strict                                        | `bun run check:javascript` fails on any hand-written JavaScript.                                                                                                                                                                                                                                       |
 
 ## Module map
 
@@ -49,7 +49,7 @@ Rules that keep the map true:
 
 - A pane imports from `workspace/` and from its own directory. Panes never import each other;
   they meet through services on the session.
-- Logic that can be pure lives in a `.ts` file with no Solid and no DOM import, next to a
+- Logic that can be pure lives in a `.ts` file with no React and no DOM import, next to a
   `.test.ts` that `bun test` runs. Components stay thin.
 - `runtime/` knows nothing about UI. `files/` is the only module that calls
   `runtime.filesystem` on behalf of the UI.
@@ -183,7 +183,7 @@ program it runs.
 | `bash-web`                                              | 0.0.114            | npm                                                                   |
 | `bun-wasm`                                              | commit `a997a2069` | Git dependency (not on npm); `trustedDependencies` runs its `prepare` |
 | `ghostty-webgpu`                                        | 0.3.34             | npm                                                                   |
-| `@singapore-editor/core`, `/solid`, `/find`, `/gutters` | 0.2.13             | npm                                                                   |
+| `@singapore-editor/core`, `/react`, `/find`, `/gutters` | 0.2.13             | npm                                                                   |
 | `@singapore-editor/highlighting`                        | 0.2.16             | npm (Tree-sitter grammars load per language, on first use)            |
 | `@singapore-editor/lsp`, `/lsp-plugin`                  | 0.2.13, 0.2.16     | npm                                                                   |
 

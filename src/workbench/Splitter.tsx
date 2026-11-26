@@ -1,7 +1,8 @@
 // A resize handle between two panes: drag it, or focus it and use the arrow keys (Shift for big
 // steps), Home and End, and Enter to close or reopen the pane. Double-click also toggles.
 // While dragging, sizes are measured once at the start and written at most once per frame.
-import { createSignal } from "solid-js";
+import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useValue } from "../lib/react";
 import type { LayoutStore } from "./layout-store";
 import {
   DRAG_THRESHOLD_PX,
@@ -45,16 +46,24 @@ interface Gesture {
   readonly room: Room;
 }
 
+/** The gesture in progress and the animation frame that paints it; mutable, never rendered. */
+interface DragState {
+  gesture: Gesture | undefined;
+  frame: number;
+}
+
 export function Splitter(props: SplitterProps) {
-  const [dragging, setDragging] = createSignal(false);
+  const [dragging, setDragging] = useState(false);
+  const layout = useValue(props.store.layout);
+  const state = useRef<DragState>({ gesture: undefined, frame: 0 }).current;
   const vertical = props.splitter !== "terminal";
-  let drag: Gesture | undefined;
-  let frame = 0;
+  const closed = !isOpen(layout, props.splitter);
 
   const coordinate = (event: PointerEvent) => (vertical ? event.clientX : event.clientY);
 
   function paint(): void {
-    frame = 0;
+    state.frame = 0;
+    const drag = state.gesture;
     if (!drag) return;
     const growth = GROWTH[props.splitter] * (drag.latest - drag.start);
     if (!drag.dragged && Math.abs(growth) < DRAG_THRESHOLD_PX) return;
@@ -62,16 +71,15 @@ export function Splitter(props: SplitterProps) {
     props.store.show(dragLayout(props.splitter, { ...drag, growth }));
   }
 
-  function onPointerDown(event: PointerEvent): void {
-    if (event.button !== 0 || drag) return;
+  function onPointerDown(event: PointerEvent<HTMLDivElement>): void {
+    if (event.button !== 0 || state.gesture) return;
     event.preventDefault();
-    const target = event.currentTarget as HTMLElement;
-    target.setPointerCapture(event.pointerId);
+    event.currentTarget.setPointerCapture(event.pointerId);
     const start = coordinate(event);
     const startLayout = props.store.layout();
     // The size on screen, which a narrow window may hold below the saved one.
     const startPx = isOpen(startLayout, props.splitter) ? props.measureSize() : 0;
-    drag = {
+    state.gesture = {
       pointer: event.pointerId,
       start,
       latest: start,
@@ -85,18 +93,19 @@ export function Splitter(props: SplitterProps) {
   }
 
   function onPointerMove(event: PointerEvent): void {
+    const drag = state.gesture;
     if (!drag || event.pointerId !== drag.pointer) return;
     drag.latest = coordinate(event);
-    frame ||= requestAnimationFrame(paint);
+    state.frame ||= requestAnimationFrame(paint);
   }
 
   /** A click changes nothing; a drag saves where it ended, its starting layout if it came back. */
   function end(): void {
-    if (!drag) return;
-    cancelAnimationFrame(frame);
+    if (!state.gesture) return;
+    cancelAnimationFrame(state.frame);
     paint();
-    const dragged = drag.dragged;
-    drag = undefined;
+    const dragged = state.gesture.dragged;
+    state.gesture = undefined;
     if (dragged) props.store.commit();
     setDragging(false);
     props.onDragging(false);
@@ -106,27 +115,34 @@ export function Splitter(props: SplitterProps) {
     const key = handleKeyOf(props.splitter, event.key);
     if (!key) return;
     event.preventDefault();
-    const layout = props.store.layout();
-    const shown = isOpen(layout, props.splitter) ? props.measureSize() : undefined;
-    props.store.set(keyTo(layout, props.splitter, key, props.measure(), event.shiftKey, shown));
+    const current = props.store.layout();
+    const shown = isOpen(current, props.splitter) ? props.measureSize() : undefined;
+    props.store.set(keyTo(current, props.splitter, key, props.measure(), event.shiftKey, shown));
   }
 
   function toggle(): void {
-    const layout = props.store.layout();
-    props.store.set(setOpen(layout, props.splitter, !isOpen(layout, props.splitter)));
+    const current = props.store.layout();
+    props.store.set(setOpen(current, props.splitter, !isOpen(current, props.splitter)));
   }
+
+  const className = [
+    `wb-splitter wb-splitter-${props.splitter}`,
+    dragging ? "is-dragging" : "",
+    closed ? "is-closed" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div
-      class={`wb-splitter wb-splitter-${props.splitter}`}
-      classList={{ "is-dragging": dragging(), "is-closed": !isOpen(props.store.layout(), props.splitter) }}
+      className={className}
       role="separator"
-      tabindex="0"
+      tabIndex={0}
       aria-label={props.label}
       aria-controls={props.controls}
       aria-orientation={vertical ? "vertical" : "horizontal"}
-      aria-valuemin="0"
-      aria-valuemax="100"
+      aria-valuemin={0}
+      aria-valuemax={100}
       aria-valuenow={props.valueNow}
       data-testid={`splitter-${props.splitter}`}
       onPointerDown={onPointerDown}
@@ -135,7 +151,7 @@ export function Splitter(props: SplitterProps) {
       onPointerCancel={end}
       onLostPointerCapture={end}
       onKeyDown={onKeyDown}
-      onDblClick={toggle}
+      onDoubleClick={toggle}
     />
   );
 }

@@ -1,10 +1,10 @@
 // The preview toolbar's icons that the shared set (src/ui/icons.tsx) does not have. Drawn like
 // the shared ones: 24x24 strokes in the current text color, sized and weighted by `.ico`.
-import type { JSX } from "solid-js";
+import type { ReactNode } from "react";
 
-function Stroke(props: { children: JSX.Element }) {
+function Stroke(props: { children: ReactNode }) {
   return (
-    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+    <svg className="ico" viewBox="0 0 24 24" aria-hidden="true">
       {props.children}
     </svg>
   );

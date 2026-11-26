@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { useState } from "react";
 import type { WorkspaceSession } from "../workspace/session";
 import { COPY } from "../importer/copy";
 import { prepareShare, sessionShareSource } from "./share-workspace";
@@ -25,7 +25,7 @@ async function copy(text: string): Promise<boolean> {
  * shows it. The workbench header places it with one line: `<ShareButton session={session} />`.
  */
 export function ShareButton(props: { session: Pick<WorkspaceSession, "files" | "runtime"> }) {
-  const [state, setState] = createSignal<ShareState>({ kind: "idle" });
+  const [state, setState] = useState<ShareState>({ kind: "idle" });
 
   async function share(): Promise<void> {
     setState({ kind: "busy" });
@@ -37,50 +37,42 @@ export function ShareButton(props: { session: Pick<WorkspaceSession, "files" | "
     setState({ kind: "link", url: outcome.url, copied: await copy(outcome.url) });
   }
 
-  const link = () => {
-    const current = state();
-    return current.kind === "link" ? current : undefined;
-  };
-  const failure = () => {
-    const current = state();
-    return current.kind === "error" ? current.message : undefined;
-  };
+  const link = state.kind === "link" ? state : undefined;
+  const failure = state.kind === "error" ? state.message : undefined;
 
   return (
-    <div class="share" data-testid="share">
+    <div className="share" data-testid="share">
       <button
         type="button"
-        class="share-button"
+        className="share-button"
         data-testid="share-button"
-        disabled={state().kind === "busy"}
+        disabled={state.kind === "busy"}
         onClick={() => void share()}
       >
         {COPY.share.share}
       </button>
-      <Show when={link()}>
-        {(ready) => (
-          <div class="share-popover" role="status">
-            <Show when={ready().copied} fallback={<span>{COPY.share.shareReady}</span>}>
-              <span data-testid="share-copied">{COPY.share.shareCopied}</span>
-            </Show>
-            <input
-              class="share-link"
-              data-testid="share-link"
-              readonly
-              value={ready().url}
-              aria-label={COPY.share.shareReady}
-              onFocus={(event) => event.currentTarget.select()}
-            />
-          </div>
-        )}
-      </Show>
-      <Show when={failure()}>
-        {(message) => (
-          <p class="share-popover share-error" role="alert" data-testid="share-error">
-            {message()}
-          </p>
-        )}
-      </Show>
+      {link ? (
+        <div className="share-popover" role="status">
+          {link.copied ? (
+            <span data-testid="share-copied">{COPY.share.shareCopied}</span>
+          ) : (
+            <span>{COPY.share.shareReady}</span>
+          )}
+          <input
+            className="share-link"
+            data-testid="share-link"
+            readOnly
+            value={link.url}
+            aria-label={COPY.share.shareReady}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        </div>
+      ) : null}
+      {failure ? (
+        <p className="share-popover share-error" role="alert" data-testid="share-error">
+          {failure}
+        </p>
+      ) : null}
     </div>
   );
 }

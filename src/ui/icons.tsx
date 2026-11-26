@@ -1,6 +1,6 @@
 // Stroke icons on a 24x24 grid. Width, stroke and color come from the `.ico` class and the
 // surrounding text color. The logo is the 8-tooth sprocket with `< >` brackets from ./SprocktLogo.
-import type { JSX } from "solid-js";
+import type { ReactNode } from "react";
 import { SPROCKT_LOGO_INNER } from "./SprocktLogo";
 
 const PATHS = {
@@ -44,13 +44,14 @@ const PATHS = {
 
 export type IconName = keyof typeof PATHS;
 
-export function Icon(props: { name: IconName; class?: string }): JSX.Element {
+export function Icon(props: { name: IconName; class?: string }): ReactNode {
+  // The markup is this module's own constant strings, never user input.
   return (
     <svg
-      class={props.class ? `ico ${props.class}` : "ico"}
+      className={props.class ? `ico ${props.class}` : "ico"}
       viewBox="0 0 24 24"
       aria-hidden="true"
-      innerHTML={PATHS[props.name]}
+      dangerouslySetInnerHTML={{ __html: PATHS[props.name] }}
     />
   );
 }

@@ -1,5 +1,4 @@
 // The phone tab bar that picks which pane fills the screen.
-import { For, Show } from "solid-js";
 import { Icon, type IconName } from "../ui/icons";
 import { ui } from "./copy";
 
@@ -15,24 +14,21 @@ const PANES: readonly { pane: PhonePane; label: string; icon: IconName }[] = [
 
 export function PaneSwitcher(props: { pane: PhonePane; onPick(pane: PhonePane): void; dirty: boolean }) {
   return (
-    <nav class="wb-switcher" aria-label={ui.workbench.panes} data-testid="pane-switcher">
-      <For each={PANES}>
-        {(item) => (
-          <button
-            type="button"
-            class="wb-switch"
-            aria-pressed={props.pane === item.pane}
-            aria-controls={`wb-slot-${item.pane}`}
-            onClick={() => props.onPick(item.pane)}
-          >
-            <Icon name={item.icon} />
-            <span>{item.label}</span>
-            <Show when={item.pane === "code" && props.dirty}>
-              <span class="wb-switch-dot" aria-hidden="true" />
-            </Show>
-          </button>
-        )}
-      </For>
+    <nav className="wb-switcher" aria-label={ui.workbench.panes} data-testid="pane-switcher">
+      {PANES.map((item) => (
+        <button
+          key={item.pane}
+          type="button"
+          className="wb-switch"
+          aria-pressed={props.pane === item.pane}
+          aria-controls={`wb-slot-${item.pane}`}
+          onClick={() => props.onPick(item.pane)}
+        >
+          <Icon name={item.icon} />
+          <span>{item.label}</span>
+          {item.pane === "code" && props.dirty ? <span className="wb-switch-dot" aria-hidden="true" /> : null}
+        </button>
+      ))}
     </nav>
   );
 }

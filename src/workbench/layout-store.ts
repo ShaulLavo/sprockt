@@ -1,6 +1,6 @@
 // The pane layout of one workspace, persisted host-only in localStorage. Drags update it every
 // frame without writing storage; `commit` saves once the drag ends.
-import { createSignal, type Accessor } from "solid-js";
+import { createSignal, type Accessor } from "../lib/reactive";
 import { layoutStorageKey, parseLayout, serializeLayout, type PaneLayout } from "./layout";
 
 export interface LayoutStore {

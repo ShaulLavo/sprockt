@@ -1,7 +1,7 @@
 // Landing-page row UI for workspaces whose import, share link, or template seed did not finish.
 // Built on PR 4's `readIncomplete`, `retryPath`, `INCOMPLETE`, and `COPY` while keeping
 // `waffle/runtime.ts` unloaded on `/` via runtime-free storage discovery/deletion.
-import { createResource, createSignal, Show } from "solid-js";
+import { useEffect, useState } from "react";
 import { COPY, fill } from "../importer/copy";
 import { readIncomplete, retryPath, type OpenIdle } from "../importer/incomplete";
 import { INCOMPLETE, WORKSPACE_META_PATH, type WorkspaceMeta } from "../importer/metadata";
@@ -37,20 +37,49 @@ const lightweightOpenIdle: OpenIdle = async (selection) => {
   };
 };
 
-export function IncompleteRow(props: IncompleteRowProps) {
-  const [probed] = createResource(
-    () => (props.skipProbe || props.meta !== undefined ? undefined : props.id),
-    (id) => readIncomplete(id, lightweightOpenIdle),
-  );
-  const [confirming, setConfirming] = createSignal(false);
-  const [busy, setBusy] = createSignal(false);
-  const [error, setError] = createSignal<string | undefined>();
+/** Focuses a just-mounted element once the current render settles. */
+function focusOnMount(el: HTMLElement | null): void {
+  if (el) queueMicrotask(() => el.focus());
+}
 
-  const incomplete = (): WorkspaceMeta | undefined => {
-    if (props.meta !== undefined) return props.meta.state === INCOMPLETE ? props.meta : undefined;
-    if (props.skipProbe) return undefined;
-    return probed.state === "ready" ? probed() : undefined;
-  };
+interface Probe {
+  readonly id: string;
+  readonly meta: WorkspaceMeta | undefined;
+}
+
+/** Reads the workspace's metadata from storage when `id` is set; undefined until it answers. */
+function useProbe(id: string | undefined): WorkspaceMeta | undefined {
+  const [probe, setProbe] = useState<Probe | undefined>();
+  useEffect(() => {
+    if (id === undefined) return;
+    let live = true;
+    const run = async (): Promise<void> => {
+      // A failed probe shows no row, as before.
+      const meta = await readIncomplete(id, lightweightOpenIdle).catch(() => undefined);
+      if (live) setProbe({ id, meta });
+    };
+    void run();
+    return () => {
+      live = false;
+    };
+  }, [id]);
+  return probe !== undefined && probe.id === id ? probe.meta : undefined;
+}
+
+function incompleteMeta(
+  props: IncompleteRowProps,
+  probed: WorkspaceMeta | undefined,
+): WorkspaceMeta | undefined {
+  if (props.meta !== undefined) return props.meta.state === INCOMPLETE ? props.meta : undefined;
+  if (props.skipProbe) return undefined;
+  return probed;
+}
+
+export function IncompleteRow(props: IncompleteRowProps) {
+  const probed = useProbe(props.skipProbe || props.meta !== undefined ? undefined : props.id);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
 
   async function remove(): Promise<void> {
     setBusy(true);
@@ -81,102 +110,94 @@ export function IncompleteRow(props: IncompleteRowProps) {
     }
   }
 
-  return (
-    <Show when={incomplete()}>
-      {(meta) => {
-        const href = () => retryPath(props.id, meta());
-        const canRetryTemplate = () => !href() && !meta().source && Boolean(props.onRetryTemplate);
-        const label = () =>
-          meta().source ? COPY.importer.importIncomplete : LANDING_COPY.recentIncompleteSeeding;
+  const meta = incompleteMeta(props, probed);
+  if (!meta) return null;
 
-        return (
-          <div class="lp-incomplete-row" data-testid="incomplete-import">
-            <Show
-              when={confirming()}
-              fallback={
-                <>
-                  <span class="lp-ws-incomplete" data-testid={`workspace-incomplete-${props.id}`}>
-                    {label()}
-                  </span>
-                  <div class="lp-ws-incomplete-actions">
-                    <Show when={href()}>
-                      {(path) => (
-                        <a class="lp-ws-btn" href={path()} data-testid="incomplete-retry">
-                          {COPY.importer.tryAgain}
-                        </a>
-                      )}
-                    </Show>
-                    <Show when={canRetryTemplate()}>
-                      <button
-                        type="button"
-                        class="lp-ws-btn"
-                        disabled={busy()}
-                        data-testid="incomplete-retry"
-                        onClick={() => void retryTemplate(meta())}
-                      >
-                        {busy() ? LANDING_COPY.recentRetrying : LANDING_COPY.recentRetry}
-                      </button>
-                    </Show>
-                    <button
-                      type="button"
-                      class="lp-ws-icon-btn is-danger"
-                      title={COPY.importer.delete}
-                      aria-label={`${LANDING_COPY.recentDelete}: ${meta().name}`}
-                      disabled={busy()}
-                      data-testid="incomplete-delete"
-                      onClick={() => {
-                        setError(undefined);
-                        setConfirming(true);
-                      }}
-                    >
-                      <Icon name="trash" />
-                    </button>
-                  </div>
-                </>
-              }
-            >
-              <div
-                class="lp-ws-confirm"
-                role="alertdialog"
-                aria-label={fill(COPY.confirm.discardTitle, { name: meta().name })}
-                data-testid={`workspace-confirm-delete-${props.id}`}
-              >
-                <span class="lp-ws-confirm-text">
-                  {fill(COPY.confirm.discardTitle, { name: meta().name })}
-                </span>
-                <div class="lp-ws-confirm-actions">
-                  <button
-                    type="button"
-                    class="lp-ws-btn lp-ws-btn-danger"
-                    disabled={busy()}
-                    data-testid="incomplete-confirm-delete"
-                    onClick={() => void remove()}
-                  >
-                    {COPY.confirm.discardConfirm}
-                  </button>
-                  <button
-                    type="button"
-                    class="lp-ws-btn"
-                    disabled={busy()}
-                    data-testid={`workspace-delete-cancel-${props.id}`}
-                    ref={(el) => queueMicrotask(() => el.focus())}
-                    onClick={() => setConfirming(false)}
-                  >
-                    {COPY.confirm.cancel}
-                  </button>
-                </div>
-              </div>
-            </Show>
-            <Show when={error()}>
-              {(message) => (
-                <p class="lp-recent-notice" role="alert" data-testid="workspace-notice">
-                  {message()}
-                </p>
-              )}
-            </Show>
-          </div>
-        );
-      }}
-    </Show>
+  const href = retryPath(props.id, meta);
+  const canRetryTemplate = !href && !meta.source && Boolean(props.onRetryTemplate);
+  const label = meta.source ? COPY.importer.importIncomplete : LANDING_COPY.recentIncompleteSeeding;
+  const discardTitle = fill(COPY.confirm.discardTitle, { name: meta.name });
+
+  const confirm = (
+    <div
+      className="lp-ws-confirm"
+      role="alertdialog"
+      aria-label={discardTitle}
+      data-testid={`workspace-confirm-delete-${props.id}`}
+    >
+      <span className="lp-ws-confirm-text">{discardTitle}</span>
+      <div className="lp-ws-confirm-actions">
+        <button
+          type="button"
+          className="lp-ws-btn lp-ws-btn-danger"
+          disabled={busy}
+          data-testid="incomplete-confirm-delete"
+          onClick={() => void remove()}
+        >
+          {COPY.confirm.discardConfirm}
+        </button>
+        <button
+          type="button"
+          className="lp-ws-btn"
+          disabled={busy}
+          data-testid={`workspace-delete-cancel-${props.id}`}
+          ref={focusOnMount}
+          onClick={() => setConfirming(false)}
+        >
+          {COPY.confirm.cancel}
+        </button>
+      </div>
+    </div>
+  );
+
+  const actions = (
+    <>
+      <span className="lp-ws-incomplete" data-testid={`workspace-incomplete-${props.id}`}>
+        {label}
+      </span>
+      <div className="lp-ws-incomplete-actions">
+        {href ? (
+          <a className="lp-ws-btn" href={href} data-testid="incomplete-retry">
+            {COPY.importer.tryAgain}
+          </a>
+        ) : null}
+        {canRetryTemplate ? (
+          <button
+            type="button"
+            className="lp-ws-btn"
+            disabled={busy}
+            data-testid="incomplete-retry"
+            onClick={() => void retryTemplate(meta)}
+          >
+            {busy ? LANDING_COPY.recentRetrying : LANDING_COPY.recentRetry}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="lp-ws-icon-btn is-danger"
+          title={COPY.importer.delete}
+          aria-label={`${LANDING_COPY.recentDelete}: ${meta.name}`}
+          disabled={busy}
+          data-testid="incomplete-delete"
+          onClick={() => {
+            setError(undefined);
+            setConfirming(true);
+          }}
+        >
+          <Icon name="trash" />
+        </button>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="lp-incomplete-row" data-testid="incomplete-import">
+      {confirming ? confirm : actions}
+      {error ? (
+        <p className="lp-recent-notice" role="alert" data-testid="workspace-notice">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }

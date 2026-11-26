@@ -1,7 +1,10 @@
 // Keys a phone keyboard lacks, shown under the terminal on narrow screens. Ctrl is sticky: it
 // turns the next letter typed on the keyboard into its Control chord. The buttons never take
 // focus, so the keyboard stays open while they are tapped.
-import { createEffect, createSignal, For, on, onCleanup, onMount, type Accessor } from "solid-js";
+import { useEffect, useRef, useState } from "react";
+import type React from "react";
+import { useValue } from "../lib/react";
+import type { Accessor } from "../lib/reactive";
 import { trackOverflowFade } from "../ui/fade";
 import { ui } from "./copy";
 import type { TerminalHandle } from "./session";
@@ -32,50 +35,53 @@ const TRAILING: readonly SoftKey[] = [
 ];
 
 /** Keeps focus (and the on-screen keyboard) where it is. */
-const keepFocus = (event: Event) => event.preventDefault();
+const keepFocus = (event: React.SyntheticEvent) => event.preventDefault();
 
 export function TerminalKeys(props: {
   handle: Accessor<TerminalHandle | undefined>;
   /** False while the terminal is off screen, such as another pane on a phone. */
   shown: boolean;
 }) {
-  const [control, setControl] = createSignal(false);
+  const [control, setControl] = useState(false);
   /** The shell Ctrl was armed on. Only that shell's next letter becomes a chord. */
-  let owner: TerminalHandle | undefined;
-  let row: HTMLDivElement | undefined;
-  onMount(() => row && onCleanup(trackOverflowFade(row)));
+  const owner = useRef<TerminalHandle | undefined>(undefined);
+  const row = useRef<HTMLDivElement>(null);
+  const current = useValue(props.handle);
+
+  useEffect(() => (row.current ? trackOverflowFade(row.current) : undefined), []);
 
   function disarm(): void {
-    owner?.disarmControl();
-    owner = undefined;
+    owner.current?.disarmControl();
+    owner.current = undefined;
     setControl(false);
   }
 
   // Moving to another terminal lets go of Ctrl, so the shell left behind gets no surprise chord.
-  createEffect(
-    on(props.handle, (handle) => {
-      if (owner && owner !== handle) disarm();
-    }),
-  );
+  useEffect(() => {
+    if (owner.current && owner.current !== current) disarm();
+  }, [current]);
+
   // So does leaving the terminal for another pane.
-  createEffect(
-    on(
-      () => props.shown,
-      (shown) => {
-        if (!shown && owner) disarm();
-      },
-    ),
+  useEffect(() => {
+    if (!props.shown && owner.current) disarm();
+  }, [props.shown]);
+
+  useEffect(
+    () => () => {
+      owner.current?.disarmControl();
+      owner.current = undefined;
+    },
+    [],
   );
-  onCleanup(disarm);
 
   function toggleControl(): void {
     const handle = props.handle();
     if (!handle) return;
-    if (owner) return disarm();
-    owner = handle;
+    if (owner.current) return disarm();
+    owner.current = handle;
     handle.armControl(() => {
-      if (owner !== handle) return;
-      owner = undefined;
+      if (owner.current !== handle) return;
+      owner.current = undefined;
       setControl(false);
     });
     setControl(true);
@@ -90,10 +96,11 @@ export function TerminalKeys(props: {
     handle.focus();
   }
 
-  const Key = (key: SoftKey) => (
+  const renderKey = (key: SoftKey) => (
     <button
+      key={key.name}
       type="button"
-      class="term-key"
+      className="term-key"
       aria-label={key.name}
       onPointerDown={keepFocus}
       onMouseDown={keepFocus}
@@ -104,19 +111,19 @@ export function TerminalKeys(props: {
   );
 
   return (
-    <div class="term-keys" role="toolbar" aria-label={ui.terminalKeys} ref={(element) => (row = element)}>
-      <For each={LEADING}>{Key}</For>
+    <div className="term-keys" role="toolbar" aria-label={ui.terminalKeys} ref={row}>
+      {LEADING.map(renderKey)}
       <button
         type="button"
-        class="term-key is-mod"
-        aria-pressed={control()}
+        className="term-key is-mod"
+        aria-pressed={control}
         onPointerDown={keepFocus}
         onMouseDown={keepFocus}
         onClick={toggleControl}
       >
         ctrl
       </button>
-      <For each={TRAILING}>{Key}</For>
+      {TRAILING.map(renderKey)}
     </div>
   );
 }

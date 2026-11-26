@@ -1,7 +1,10 @@
 // The terminal panel: a strip of terminal tabs (new, rename, close, switch, split) over the
 // shown terminal or a split pair, and on phones a row of keys a touch keyboard lacks.
-import { createMemo, createSignal, For, onCleanup, onMount, Show, type Accessor } from "solid-js";
+import { useEffect, useRef, useState } from "react";
+import type React from "react";
 import { debugHandle } from "../app/debug";
+import { useValue } from "../lib/react";
+import type { Accessor } from "../lib/reactive";
 import { Icon } from "../ui/icons";
 import { fill } from "../ui/format";
 import { trackOverflowFade } from "../ui/fade";
@@ -25,31 +28,27 @@ export interface TerminalPanelProps {
 }
 
 function TabIndicator(props: { state: SessionState }) {
-  return (
-    <Show
-      when={props.state === "running" || props.state === "failed" || props.state === "exited"}
-      fallback={<Icon name="terminal" />}
-    >
-      <span class="ttab-dot" data-state={props.state} aria-hidden="true" />
-    </Show>
-  );
+  if (props.state !== "running" && props.state !== "failed" && props.state !== "exited") {
+    return <Icon name="terminal" />;
+  }
+  return <span className="ttab-dot" data-state={props.state} aria-hidden="true" />;
 }
 
 function RenameField(props: { tab: TerminalTab; onDone(title: string | undefined): void }) {
-  let input: HTMLInputElement | undefined;
-  onMount(() => {
-    input?.focus();
-    input?.select();
-  });
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
   return (
     <input
-      ref={(element) => (input = element)}
-      class="ttab-rename"
-      value={props.tab.title}
+      ref={input}
+      className="ttab-rename"
+      defaultValue={props.tab.title}
       aria-label={fill(ui.renameTerminal, { name: props.tab.title })}
-      spellcheck={false}
-      autocomplete="off"
-      enterkeyhint="done"
+      spellCheck={false}
+      autoComplete="off"
+      enterKeyHint="done"
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Enter") props.onDone(event.currentTarget.value);
@@ -64,54 +63,53 @@ function Tab(props: {
   tab: TerminalTab;
   index: number;
   store: TerminalStore;
+  /** The tab has keyboard focus in the strip. */
+  focused: boolean;
+  /** The tab's terminal is on screen, alone or in a split. */
+  shown: boolean;
   onSelect(id: string): void;
-  onKey(event: KeyboardEvent, id: string): void;
+  onKey(event: React.KeyboardEvent, id: string): void;
   renaming: boolean;
   onRename(id: string | undefined): void;
 }) {
-  const state = () => props.store.tabs();
-  const shown = () => state().active === props.tab.id || state().split === props.tab.id;
-  const focused = () => state().focused === props.tab.id;
+  const { tab, store } = props;
+  const sessionState = useValue(() => store.stateOf(tab.id));
+  const className = ["ttab"]
+    .concat(props.focused ? ["is-active"] : [], props.shown ? ["is-shown"] : [])
+    .join(" ");
   return (
-    <div
-      class="ttab"
-      classList={{ "is-active": focused(), "is-shown": shown() }}
-      data-tab-tone={terminalTabTone(props.tab.title, props.index)}
-    >
-      <Show
-        when={props.renaming}
-        fallback={
-          <button
-            type="button"
-            role="tab"
-            class="ttab-main"
-            id={`terminal-tab-${props.tab.id}`}
-            aria-selected={focused()}
-            tabindex={focused() ? 0 : -1}
-            data-testid="terminal-tab"
-            onClick={() => props.onSelect(props.tab.id)}
-            onDblClick={() => props.onRename(props.tab.id)}
-            onKeyDown={(event) => props.onKey(event, props.tab.id)}
-          >
-            <TabIndicator state={props.store.stateOf(props.tab.id)} />
-            <span class="ttab-title">{props.tab.title}</span>
-          </button>
-        }
-      >
+    <div className={className} data-tab-tone={terminalTabTone(tab.title, props.index)}>
+      {props.renaming ? (
         <RenameField
-          tab={props.tab}
+          tab={tab}
           onDone={(title) => {
-            if (title !== undefined) props.store.rename(props.tab.id, title);
+            if (title !== undefined) store.rename(tab.id, title);
             props.onRename(undefined);
           }}
         />
-      </Show>
+      ) : (
+        <button
+          type="button"
+          role="tab"
+          className="ttab-main"
+          id={`terminal-tab-${tab.id}`}
+          aria-selected={props.focused}
+          tabIndex={props.focused ? 0 : -1}
+          data-testid="terminal-tab"
+          onClick={() => props.onSelect(tab.id)}
+          onDoubleClick={() => props.onRename(tab.id)}
+          onKeyDown={(event) => props.onKey(event, tab.id)}
+        >
+          <TabIndicator state={sessionState} />
+          <span className="ttab-title">{tab.title}</span>
+        </button>
+      )}
       <button
         type="button"
-        class="ttab-close"
-        tabindex="-1"
-        aria-label={fill(ui.closeTerminal, { name: props.tab.title })}
-        onClick={() => props.store.close(props.tab.id)}
+        className="ttab-close"
+        tabIndex={-1}
+        aria-label={fill(ui.closeTerminal, { name: tab.title })}
+        onClick={() => store.close(tab.id)}
       >
         <Icon name="x" />
       </button>
@@ -121,40 +119,38 @@ function Tab(props: {
 
 export function TerminalPanel(props: TerminalPanelProps) {
   const { terminals } = useWorkspace();
-  const [renaming, setRenaming] = createSignal<string>();
-  const ids = createMemo(() => terminals.tabs().tabs.map((tab) => tab.id), [], {
-    equals: (a, b) => a.length === b.length && a.every((id, index) => id === b[index]),
+  const [renaming, setRenaming] = useState<string>();
+  const view = useValue(() => {
+    const tabs = terminals.tabs();
+    return { tabs, focusedState: tabs.focused ? terminals.stateOf(tabs.focused) : "exited" };
   });
-  const tabById = (id: string) => terminals.tabs().tabs.find((tab) => tab.id === id);
-  const focusedState = () => {
-    const focused = terminals.tabs().focused;
-    return focused ? terminals.stateOf(focused) : "exited";
-  };
-  let wantsFocus: string | undefined;
-  let strip: HTMLDivElement | undefined;
+  const { tabs, focusedState } = view;
+  const wantsFocus = useRef<string | undefined>(undefined);
+  const strip = useRef<HTMLDivElement>(null);
 
-  debugHandle().terminalLines = () => {
-    const focused = terminals.tabs().focused;
-    return (focused && terminals.handle(focused)?.lines()) || [];
-  };
+  useEffect(() => {
+    debugHandle().terminalLines = () => {
+      const focused = terminals.tabs().focused;
+      return (focused && terminals.handle(focused)?.lines()) || [];
+    };
+    debugHandle().terminalSize = () => {
+      const focused = terminals.tabs().focused;
+      return focused ? terminals.handle(focused)?.size() : undefined;
+    };
+  }, [terminals]);
 
-  debugHandle().terminalSize = () => {
-    const focused = terminals.tabs().focused;
-    return focused ? terminals.handle(focused)?.size() : undefined;
-  };
-
-  onMount(() => strip && onCleanup(trackOverflowFade(strip)));
+  useEffect(() => (strip.current ? trackOverflowFade(strip.current) : undefined), []);
 
   function focusTerminal(id: string | undefined): void {
     if (!id) return;
     const handle = terminals.handle(id);
     if (handle) handle.focus();
-    else wantsFocus = id;
+    else wantsFocus.current = id;
   }
 
   function onAttached(id: string): void {
-    if (wantsFocus !== id) return;
-    wantsFocus = undefined;
+    if (wantsFocus.current !== id) return;
+    wantsFocus.current = undefined;
     terminals.handle(id)?.focus();
   }
 
@@ -181,7 +177,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
     if (focused) terminals.close(focused);
   }
 
-  function onTabKey(event: KeyboardEvent, id: string): void {
+  function onTabKey(event: React.KeyboardEvent, id: string): void {
     if (event.key === "F2") {
       event.preventDefault();
       setRenaming(id);
@@ -200,7 +196,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
   }
 
   function positionOf(id: string): ViewPosition {
-    const { active, split } = terminals.tabs();
+    const { active, split } = tabs;
     if (id === active) return split ? "left" : "single";
     if (id === split) return "right";
     return "hidden";
@@ -208,34 +204,30 @@ export function TerminalPanel(props: TerminalPanelProps) {
 
   return (
     <section
-      class="pane terminal-panel"
-      classList={{ "is-collapsed": props.collapsed }}
+      className={props.collapsed ? "pane terminal-panel is-collapsed" : "pane terminal-panel"}
       aria-label={ui.terminal}
       data-testid="terminal-panel"
     >
-      <div class="term-bar">
-        <div class="term-tabs" role="tablist" aria-label={ui.tabs} ref={(element) => (strip = element)}>
-          <For each={ids()}>
-            {(id, index) => (
-              <Show when={tabById(id)}>
-                {(tab) => (
-                  <Tab
-                    tab={tab()}
-                    index={index()}
-                    store={terminals}
-                    onSelect={select}
-                    onKey={onTabKey}
-                    renaming={renaming() === id}
-                    onRename={setRenaming}
-                  />
-                )}
-              </Show>
-            )}
-          </For>
+      <div className="term-bar">
+        <div className="term-tabs" role="tablist" aria-label={ui.tabs} ref={strip}>
+          {tabs.tabs.map((tab, index) => (
+            <Tab
+              key={tab.id}
+              tab={tab}
+              index={index}
+              store={terminals}
+              focused={tabs.focused === tab.id}
+              shown={tabs.active === tab.id || tabs.split === tab.id}
+              onSelect={select}
+              onKey={onTabKey}
+              renaming={renaming === tab.id}
+              onRename={setRenaming}
+            />
+          ))}
         </div>
         <button
           type="button"
-          class="icon-button term-add"
+          className="icon-button term-add"
           aria-label={ui.newTerminal}
           title={ui.newTerminal}
           data-testid="new-terminal"
@@ -243,34 +235,34 @@ export function TerminalPanel(props: TerminalPanelProps) {
         >
           <Icon name="plus" />
         </button>
-        <span class="term-fill" />
-        <span class="term-state" data-state={focusedState()} data-testid="terminal-state">
-          {focusedState()}
+        <span className="term-fill" />
+        <span className="term-state" data-state={focusedState} data-testid="terminal-state">
+          {focusedState}
         </span>
-        <div class="term-actions">
+        <div className="term-actions">
           <button
             type="button"
-            class="icon-button term-split"
-            aria-label={terminals.tabs().split ? ui.unsplitTerminal : ui.splitTerminal}
-            title={terminals.tabs().split ? ui.unsplitTerminal : ui.splitTerminal}
-            aria-pressed={Boolean(terminals.tabs().split)}
+            className="icon-button term-split"
+            aria-label={tabs.split ? ui.unsplitTerminal : ui.splitTerminal}
+            title={tabs.split ? ui.unsplitTerminal : ui.splitTerminal}
+            aria-pressed={Boolean(tabs.split)}
             onClick={toggleSplit}
           >
             <Icon name="split" />
           </button>
           <button
             type="button"
-            class="icon-button"
+            className="icon-button"
             aria-label={ui.closeActiveTerminal}
             title={ui.closeActiveTerminal}
-            disabled={!terminals.tabs().focused}
+            disabled={!tabs.focused}
             onClick={kill}
           >
             <Icon name="trash" />
           </button>
           <button
             type="button"
-            class="icon-button term-collapse"
+            className="icon-button term-collapse"
             aria-label={props.collapsed ? ui.expandPanel : ui.collapsePanel}
             title={props.collapsed ? ui.expandPanel : ui.collapsePanel}
             aria-expanded={!props.collapsed}
@@ -281,30 +273,29 @@ export function TerminalPanel(props: TerminalPanelProps) {
         </div>
       </div>
       <div
-        class="terminal-host"
-        data-split={terminals.tabs().split ? "" : undefined}
+        className="terminal-host"
+        data-split={tabs.split ? "" : undefined}
         onClick={() => focusTerminal(terminals.tabs().focused)}
       >
-        <For each={ids()}>
-          {(id) => (
-            <TerminalView
-              id={id}
-              position={positionOf(id)}
-              scheme={props.scheme}
-              label={tabById(id)?.title ?? ui.terminal}
-              onAttached={onAttached}
-            />
-          )}
-        </For>
-        <Show when={ids().length === 0}>
-          <div class="term-empty">
+        {tabs.tabs.map((tab) => (
+          <TerminalView
+            key={tab.id}
+            id={tab.id}
+            position={positionOf(tab.id)}
+            scheme={props.scheme}
+            label={tab.title}
+            onAttached={onAttached}
+          />
+        ))}
+        {tabs.tabs.length === 0 ? (
+          <div className="term-empty">
             <p>{ui.noTerminal}</p>
-            <button type="button" class="primary" onClick={create}>
+            <button type="button" className="primary" onClick={create}>
               <Icon name="plus" />
               {ui.newTerminal}
             </button>
           </div>
-        </Show>
+        ) : null}
       </div>
       <TerminalKeys
         handle={() => terminals.handle(terminals.tabs().focused ?? "")}

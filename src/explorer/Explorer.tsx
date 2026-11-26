@@ -1,10 +1,12 @@
-import { createEffect, For, on, onCleanup, onMount, Show } from "solid-js";
-import { createStore, reconcile } from "solid-js/store";
+import { memo, useEffect, useRef, type RefObject } from "react";
+import type React from "react";
 import type { EditorStore } from "../editor/store";
 import { baseName, parentOf, type NameProblem } from "../files/paths";
 import { isHeavyName } from "../files/tree";
+import { Scope, useValue } from "../lib/react";
+import { createEffect, on, onCleanup } from "../lib/reactive";
 import { workspaceName } from "../workspace/hint";
-import { useWorkspace } from "../workspace/session";
+import { useWorkspace, type WorkspaceSession } from "../workspace/session";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { copy, fill } from "./copy";
@@ -17,9 +19,8 @@ import {
   topLevelPaths,
   type DraftRow,
   type EntryRow,
-  type Row,
 } from "./model";
-import { createExplorerState, type ExplorerState } from "./state";
+import { createExplorerState, type ExplorerState, type MenuState } from "./state";
 import { itemsFromDrop, itemsFromPicker } from "./upload";
 import "./explorer.css";
 
@@ -28,59 +29,65 @@ const TREE_DRAG = "application/x-sprockt-paths";
 /** How long a dragged item hovers over a closed folder before it opens. */
 const HOVER_OPEN_MS = 600;
 
+/** `base` plus every flag that is on, as one class attribute. */
+function classes(base: string, flags: Readonly<Record<string, boolean>>): string {
+  return [base].concat(Object.keys(flags).filter((name) => flags[name])).join(" ");
+}
+
 function NameInput(props: {
   state: ExplorerState;
   initial: string;
   label: string;
   problem: NameProblem | undefined;
 }) {
-  let input: HTMLInputElement | undefined;
-  let settled = false;
+  const input = useRef<HTMLInputElement>(null);
+  const settled = useRef(false);
   // Whether the person moved on (clicked elsewhere, pressed Tab), as opposed to something else
   // taking focus, such as the editor finishing the load of the file that was just clicked.
-  let leftOnPurpose = false;
+  const leftOnPurpose = useRef(false);
 
-  const noteLeaving = (event: Event) => {
-    if (event.target !== input) leftOnPurpose = true;
-  };
-  const noteTab = (event: KeyboardEvent) => {
-    if (event.key === "Tab") leftOnPurpose = true;
-  };
-
-  onMount(() => {
-    input?.focus();
+  useEffect(() => {
+    const element = input.current;
+    const noteLeaving = (event: Event) => {
+      if (event.target !== element) leftOnPurpose.current = true;
+    };
+    const noteTab = (event: KeyboardEvent) => {
+      if (event.key === "Tab") leftOnPurpose.current = true;
+    };
+    element?.focus();
     const [start, end] = props.initial ? renameSelection(props.initial) : [0, 0];
-    input?.setSelectionRange(start, end);
+    element?.setSelectionRange(start, end);
     document.addEventListener("pointerdown", noteLeaving, true);
     document.addEventListener("keydown", noteTab, true);
-  });
-  onCleanup(() => {
-    document.removeEventListener("pointerdown", noteLeaving, true);
-    document.removeEventListener("keydown", noteTab, true);
-  });
+    return () => {
+      document.removeEventListener("pointerdown", noteLeaving, true);
+      document.removeEventListener("keydown", noteTab, true);
+    };
+    // The box opens once with its initial name; later renders only update the problem.
+  }, []);
 
   async function commit(): Promise<boolean> {
-    const accepted = await props.state.commitDraft(input?.value ?? "");
-    settled = accepted;
+    const accepted = await props.state.commitDraft(input.current?.value ?? "");
+    settled.current = accepted;
     return accepted;
   }
 
   function cancel(): void {
-    settled = true;
+    settled.current = true;
     props.state.cancelDraft();
     const current = props.state.focused();
     if (current) props.state.focusPath(current);
   }
 
   async function onBlur(): Promise<void> {
-    if (settled) return;
+    if (settled.current) return;
     // Focus taken by something else (not the person) must not end the edit: take it back.
-    if (!leftOnPurpose) return void queueMicrotask(() => input?.focus());
+    if (!leftOnPurpose.current) return void queueMicrotask(() => input.current?.focus());
     // Clicking away keeps a valid name and drops an invalid or unchanged one.
     if (!(await commit())) cancel();
   }
 
-  function onKeyDown(event: KeyboardEvent): void {
+  function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void {
     event.stopPropagation();
     if (event.key === "Escape") {
       event.preventDefault();
@@ -95,27 +102,24 @@ function NameInput(props: {
   return (
     <>
       <input
-        ref={(element) => (input = element)}
-        class="tree-input"
-        classList={{ invalid: props.problem !== undefined }}
+        ref={input}
+        className={props.problem !== undefined ? "tree-input invalid" : "tree-input"}
         data-testid="tree-input"
         aria-label={props.label}
         aria-invalid={props.problem !== undefined}
-        value={props.initial}
-        spellcheck={false}
-        autocomplete="off"
-        autocapitalize="off"
-        onInput={() => props.state.setProblem(undefined)}
+        defaultValue={props.initial}
+        spellCheck={false}
+        autoComplete="off"
+        autoCapitalize="off"
+        onChange={() => props.state.setProblem(undefined)}
         onKeyDown={onKeyDown}
         onBlur={() => void onBlur()}
       />
-      <Show when={props.problem}>
-        {(problem) => (
-          <span class="tree-problem" role="alert">
-            {copy.problems[problem()]}
-          </span>
-        )}
-      </Show>
+      {props.problem ? (
+        <span className="tree-problem" role="alert">
+          {copy.problems[props.problem]}
+        </span>
+      ) : null}
     </>
   );
 }
@@ -124,203 +128,214 @@ interface TreeActions {
   state: ExplorerState;
   store: EditorStore;
   isDirty(path: string): boolean;
-  onRowKeyDown(event: KeyboardEvent): void;
-  dragStart(event: DragEvent, path: string): void;
+  onRowKeyDown(event: React.KeyboardEvent<HTMLElement>): void;
+  dragStart(event: React.DragEvent, path: string): void;
   dragEnd(): void;
-  dragOver(event: DragEvent, directory: string, closedDirectory?: string): void;
-  drop(event: DragEvent, directory: string): void;
+  dragOver(event: React.DragEvent, directory: string, closedDirectory?: string): void;
+  drop(event: React.DragEvent, directory: string): void;
 }
 
-function EntryItem(props: { row: EntryRow; actions: TreeActions }) {
-  const state = () => props.actions.state;
-  const path = () => props.row.path;
-  const isDirectory = () => props.row.kind === "directory";
-  const directoryOfDrop = () => (isDirectory() ? path() : parentOf(path()));
-  const dirty = () =>
-    isDirectory() ? state().dirtyDirectories().has(path()) : props.actions.isDirty(path());
-  const classes = () => ({
-    "is-dir": isDirectory(),
-    "is-file": !isDirectory(),
-    "is-open": props.row.expanded,
-    "is-active": props.actions.store.active() === path(),
-    "is-selected": state().selected().has(path()),
-    "is-dirty": dirty(),
-    "is-dim": isHeavyName(props.row.name),
-    "is-drop": isDirectory() && state().dropTarget() === path(),
-  });
+interface EntryItemProps {
+  row: EntryRow;
+  actions: TreeActions;
+}
 
-  const rowProps = () => ({
+function EntryItemView({ row, actions }: EntryItemProps) {
+  const { state, store } = actions;
+  const path = row.path;
+  const isDirectory = row.kind === "directory";
+  const directoryOfDrop = isDirectory ? path : parentOf(path);
+  const live = useValue(() => ({
+    active: store.active() === path,
+    selected: state.selected().has(path),
+    fileDirty: !isDirectory && actions.isDirty(path),
+    folderDirty: isDirectory && state.dirtyDirectories().has(path),
+    drop: isDirectory && state.dropTarget() === path,
+    tabStop: state.tabStop() === path,
+    writable: state.writable(),
+    problem: row.editing ? state.problem() : undefined,
+  }));
+
+  const rowProps = {
     "data-testid": "tree-row",
-    "data-path": path(),
-    "data-kind": props.row.kind,
-    style: { "--depth": props.row.depth },
+    "data-path": path,
+    "data-kind": row.kind,
+    style: { "--depth": row.depth } as React.CSSProperties,
+  };
+
+  if (row.editing) {
+    return (
+      <li className="tree-item">
+        <div className="row editing" {...rowProps}>
+          <RowIcons row={row} />
+          <NameInput state={state} initial={row.name} label={copy.actions.rename} problem={live.problem} />
+        </div>
+      </li>
+    );
+  }
+
+  const className = classes("row", {
+    "is-dir": isDirectory,
+    "is-file": !isDirectory,
+    "is-open": row.expanded,
+    "is-active": live.active,
+    "is-selected": live.selected,
+    "is-dirty": live.fileDirty || live.folderDirty,
+    "is-dim": isHeavyName(row.name),
+    "is-drop": live.drop,
   });
 
   return (
-    <li class="tree-item">
-      <Show
-        when={!props.row.editing}
-        fallback={
-          <div class="row editing" {...rowProps()}>
-            <RowIcons row={props.row} />
-            <NameInput
-              state={state()}
-              initial={props.row.name}
-              label={copy.actions.rename}
-              problem={state().problem()}
-            />
-          </div>
-        }
+    <li className="tree-item">
+      <button
+        type="button"
+        className={className}
+        {...rowProps}
+        tabIndex={live.tabStop ? 0 : -1}
+        aria-expanded={isDirectory ? row.expanded : undefined}
+        aria-current={live.active ? "true" : undefined}
+        aria-describedby={live.fileDirty ? "tree-unsaved" : undefined}
+        draggable={live.writable}
+        onFocus={() => state.setFocused(path)}
+        onClick={(event) => {
+          if (event.shiftKey) return state.select(path, "range");
+          if (event.metaKey || event.ctrlKey) return state.select(path, "toggle");
+          state.select(path);
+          if (isDirectory) state.toggle(path);
+          else store.open(path);
+        }}
+        onKeyDown={actions.onRowKeyDown}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          state.openMenu(event, path);
+        }}
+        onDragStart={(event) => actions.dragStart(event, path)}
+        onDragEnd={() => actions.dragEnd()}
+        onDragOver={(event) => actions.dragOver(event, directoryOfDrop, isDirectory ? path : undefined)}
+        onDrop={(event) => actions.drop(event, directoryOfDrop)}
       >
-        <button
-          type="button"
-          class="row"
-          classList={classes()}
-          {...rowProps()}
-          tabIndex={state().tabStop() === path() ? 0 : -1}
-          aria-expanded={isDirectory() ? props.row.expanded : undefined}
-          aria-current={props.actions.store.active() === path() ? "true" : undefined}
-          aria-describedby={!isDirectory() && props.actions.isDirty(path()) ? "tree-unsaved" : undefined}
-          draggable={state().writable()}
-          onFocus={() => state().setFocused(path())}
-          onClick={(event) => {
-            if (event.shiftKey) return state().select(path(), "range");
-            if (event.metaKey || event.ctrlKey) return state().select(path(), "toggle");
-            state().select(path());
-            if (isDirectory()) state().toggle(path());
-            else props.actions.store.open(path());
+        <RowIcons row={row} />
+        <span
+          className="name"
+          onDoubleClick={() => {
+            // A quick second tap is not a request to rename; touch screens have the menu.
+            if (!matchMedia("(pointer: coarse)").matches) state.beginRename(path);
           }}
-          onKeyDown={props.actions.onRowKeyDown}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            state().openMenu(event, path());
-          }}
-          onDragStart={(event) => props.actions.dragStart(event, path())}
-          onDragEnd={() => props.actions.dragEnd()}
-          onDragOver={(event) =>
-            props.actions.dragOver(event, directoryOfDrop(), isDirectory() ? path() : undefined)
-          }
-          onDrop={(event) => props.actions.drop(event, directoryOfDrop())}
         >
-          <RowIcons row={props.row} />
-          <span
-            class="name"
-            onDblClick={() => {
-              // A quick second tap is not a request to rename; touch screens have the menu.
-              if (!matchMedia("(pointer: coarse)").matches) state().beginRename(path());
-            }}
-          >
-            {props.row.name}
-          </span>
-          <Show when={props.row.loading}>
-            <span class="tree-spinner" aria-hidden="true" />
-          </Show>
-          <Show when={!isDirectory() && props.actions.isDirty(path())}>
-            <span class="dirty" aria-hidden="true" />
-            <span class="git git-m" aria-hidden="true">
+          {row.name}
+        </span>
+        {row.loading ? <span className="tree-spinner" aria-hidden="true" /> : null}
+        {live.fileDirty ? (
+          <>
+            <span className="dirty" aria-hidden="true" />
+            <span className="git git-m" aria-hidden="true">
               M
             </span>
-          </Show>
-          <Show when={isDirectory() && dirty()}>
-            <span class="git-dot" aria-hidden="true" />
-          </Show>
-        </button>
-        <button
-          type="button"
-          class="row-more"
-          tabIndex={-1}
-          aria-label={copy.actions.more}
-          onClick={(event) => {
-            const box = event.currentTarget.getBoundingClientRect();
-            state().openMenu({ clientX: box.left, clientY: box.bottom }, path());
-          }}
-        >
-          <Icon name="more" />
-        </button>
-      </Show>
+          </>
+        ) : null}
+        {live.folderDirty ? <span className="git-dot" aria-hidden="true" /> : null}
+      </button>
+      <button
+        type="button"
+        className="row-more"
+        tabIndex={-1}
+        aria-label={copy.actions.more}
+        onClick={(event) => {
+          const box = event.currentTarget.getBoundingClientRect();
+          state.openMenu({ clientX: box.left, clientY: box.bottom }, path);
+        }}
+      >
+        <Icon name="more" />
+      </button>
     </li>
   );
 }
 
+/** Rows are rebuilt on every change; a row whose fields are all the same does not render again. */
+function sameEntry(previous: EntryItemProps, next: EntryItemProps): boolean {
+  if (previous.actions !== next.actions) return false;
+  const keys = Object.keys(next.row) as (keyof EntryRow)[];
+  return (
+    keys.length === Object.keys(previous.row).length &&
+    keys.every((key) => previous.row[key] === next.row[key])
+  );
+}
+
+const EntryItem = memo(EntryItemView, sameEntry);
+
 function RowIcons(props: { row: EntryRow }) {
-  const kind = () => fileKindOf(props.row.name);
+  if (props.row.kind === "directory") {
+    return (
+      <>
+        <Icon name={props.row.expanded ? "chevronDown" : "chevronRight"} class="chev" />
+        <Icon name={props.row.expanded ? "folderOpen" : "folder"} class="ft" />
+      </>
+    );
+  }
+  const kind = fileKindOf(props.row.name);
   return (
     <>
-      <Show when={props.row.kind === "directory"} fallback={<span class="chev-space" />}>
-        <Icon name={props.row.expanded ? "chevronDown" : "chevronRight"} class="chev" />
-      </Show>
-      <Show
-        when={props.row.kind === "directory"}
-        fallback={<Icon name={FILE_ICONS[kind().icon]} class={`ft ${kind().tone}`} />}
-      >
-        <Icon name={props.row.expanded ? "folderOpen" : "folder"} class="ft" />
-      </Show>
+      <span className="chev-space" />
+      <Icon name={FILE_ICONS[kind.icon]} class={`ft ${kind.tone}`} />
     </>
   );
 }
 
 function DraftItem(props: { row: DraftRow; actions: TreeActions }) {
+  const problem = useValue(props.actions.state.problem);
   return (
-    <li class="tree-item">
-      <div class="row editing" data-testid="tree-draft" style={{ "--depth": props.row.depth }}>
-        <span class="chev-space" />
+    <li className="tree-item">
+      <div
+        className="row editing"
+        data-testid="tree-draft"
+        style={{ "--depth": props.row.depth } as React.CSSProperties}
+      >
+        <span className="chev-space" />
         <Icon name={props.row.kind === "directory" ? "folder" : "file"} class="ft" />
         <NameInput
           state={props.actions.state}
           initial=""
           label={props.row.kind === "directory" ? copy.actions.newFolder : copy.actions.newFile}
-          problem={props.actions.state.problem()}
+          problem={problem}
         />
       </div>
     </li>
   );
 }
 
-export function Explorer(props: { store: EditorStore }) {
-  const workspace = useWorkspace();
-  const files = workspace.files;
+interface Pickers {
+  readonly file: React.RefObject<HTMLInputElement | null>;
+  readonly folder: React.RefObject<HTMLInputElement | null>;
+}
+
+/** The explorer's state with the tree's event handlers, created once per mounted explorer. */
+function createTree(store: EditorStore, workspace: WorkspaceSession, pickers: Pickers) {
   const state = createExplorerState({
-    files,
+    files: workspace.files,
     workspaceId: workspace.id,
-    open: (path) => props.store.open(path),
-    active: props.store.active,
-    hasUnsaved: (path) => props.store.hasUnsaved(path),
-    openPaths: () => props.store.tabs().map((tab) => tab.path),
-    lock: (paths) => props.store.lockPaths(paths),
-    close: (path) => props.store.close(path),
+    open: (path) => store.open(path),
+    active: store.active,
+    hasUnsaved: (path) => store.hasUnsaved(path),
+    openPaths: () => store.tabs().map((tab) => tab.path),
+    lock: (paths) => store.lockPaths(paths),
+    close: (path) => store.close(path),
   });
-  let list: HTMLUListElement | undefined;
-  let filePicker: HTMLInputElement | undefined;
-  let folderPicker: HTMLInputElement | undefined;
   let uploadDirectory = "";
   let dragged: string[] = [];
   let hoverTimer: { path: string; handle: ReturnType<typeof setTimeout> } | undefined;
 
-  // Rows are rebuilt on every change; reconciling by key keeps the same elements, so focus and
-  // an open name box survive a refresh.
-  const [rows, setRows] = createStore<Row[]>([]);
-  createEffect(() => setRows(reconcile(state.rows(), { key: "key" })));
-
   createEffect(
-    on(props.store.active, (path) => {
+    on(store.active, (path) => {
       if (path) void state.reveal(path);
     }),
   );
-
-  createEffect(() => {
-    const request = state.focusRequest();
-    if (!request) return;
-    const element = list?.querySelector<HTMLElement>(`[data-path="${CSS.escape(request.path)}"].row`);
-    element?.focus();
-    element?.scrollIntoView({ block: "nearest" });
-  });
 
   onCleanup(() => clearTimeout(hoverTimer?.handle));
 
   function pick(directory: string, folder: boolean): void {
     uploadDirectory = directory;
-    (folder ? folderPicker : filePicker)?.click();
+    (folder ? pickers.folder : pickers.file).current?.click();
   }
 
   function uploaded(input: HTMLInputElement): void {
@@ -335,7 +350,7 @@ export function Explorer(props: { store: EditorStore }) {
     return chosen.length > 0 ? chosen : focused ? [focused] : [];
   }
 
-  function onRowKeyDown(event: KeyboardEvent): void {
+  function onRowKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
     if (event.altKey || event.target instanceof HTMLInputElement) return;
     const arrow = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"] as const;
     const key = arrow.find((name) => name === event.key);
@@ -360,11 +375,11 @@ export function Explorer(props: { store: EditorStore }) {
     }
   }
 
-  function dragStart(event: DragEvent, path: string): void {
+  function dragStart(event: React.DragEvent, path: string): void {
     dragged = state.selected().has(path) ? Array.from(state.selected()) : [path];
-    event.dataTransfer?.setData(TREE_DRAG, JSON.stringify(dragged));
-    event.dataTransfer?.setData("text/plain", dragged.map(baseName).join("\n"));
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(TREE_DRAG, JSON.stringify(dragged));
+    event.dataTransfer.setData("text/plain", dragged.map(baseName).join("\n"));
+    event.dataTransfer.effectAllowed = "move";
   }
 
   function stopHoverOpen(): void {
@@ -379,13 +394,13 @@ export function Explorer(props: { store: EditorStore }) {
   }
 
   /** What a drop here would do: move our own entries, or copy in files from the desktop. */
-  function dropEffect(event: DragEvent, directory: string): "move" | "copy" | undefined {
+  function dropEffect(event: React.DragEvent, directory: string): "move" | "copy" | undefined {
     if (!state.writable()) return undefined;
     if (dragged.length > 0) return canMoveInto(topLevelPaths(dragged), directory) ? "move" : undefined;
     return event.dataTransfer?.types.includes("Files") ? "copy" : undefined;
   }
 
-  function dragOver(event: DragEvent, directory: string, closedDirectory?: string): void {
+  function dragOver(event: React.DragEvent, directory: string, closedDirectory?: string): void {
     event.stopPropagation();
     const effect = dropEffect(event, directory);
     if (!effect || !event.dataTransfer) return;
@@ -401,7 +416,7 @@ export function Explorer(props: { store: EditorStore }) {
     };
   }
 
-  function drop(event: DragEvent, directory: string): void {
+  function drop(event: React.DragEvent, directory: string): void {
     event.stopPropagation();
     const effect = dropEffect(event, directory);
     const transfer = event.dataTransfer;
@@ -416,8 +431,8 @@ export function Explorer(props: { store: EditorStore }) {
 
   const actions: TreeActions = {
     state,
-    store: props.store,
-    isDirty: (path) => props.store.hasUnsaved(path),
+    store,
+    isDirty: (path) => store.hasUnsaved(path),
     onRowKeyDown,
     dragStart,
     dragEnd,
@@ -463,13 +478,20 @@ export function Explorer(props: { store: EditorStore }) {
   }
 
   /** The open menu with its items; a menu with nothing in it does not open. */
-  const openMenu = () => {
+  function openMenu(): (MenuState & { items: MenuItem[] }) | undefined {
     const menu = state.menu();
     const items = menu ? menuItems(menu.path) : [];
     return menu && items.length > 0 ? { ...menu, items } : undefined;
-  };
+  }
 
-  const confirmation = () => {
+  function closeMenu(menu: MenuState, escaped: boolean | undefined): void {
+    const origin = menu.path ?? state.tabStop();
+    state.setMenu(undefined);
+    // Escape hands focus back to the row the menu came from.
+    if (escaped && origin) state.focusPath(origin);
+  }
+
+  function confirmation() {
     const paths = state.deleting();
     if (!paths) return undefined;
     const first = paths[0] ?? "";
@@ -477,19 +499,56 @@ export function Explorer(props: { store: EditorStore }) {
       return { ...copy.confirmMany, title: fill(copy.confirmMany.title, { count: paths.length }) };
     const text = state.kindOf(first) === "directory" ? copy.confirmFolder : copy.confirmFile;
     return { ...text, title: fill(text.title, { name: baseName(first) }) };
-  };
+  }
+
+  return { state, actions, pick, uploaded, openMenu, closeMenu, confirmation };
+}
+
+function ExplorerBody(props: {
+  tree: ReturnType<typeof createTree>;
+  filePicker: RefObject<HTMLInputElement | null>;
+  folderPicker: RefObject<HTMLInputElement | null>;
+}) {
+  const { tree, filePicker, folderPicker } = props;
+  const workspace = useWorkspace();
+  const list = useRef<HTMLUListElement>(null);
+  const { state, actions } = tree;
+  const view = useValue(() => ({
+    rows: state.rows(),
+    writable: state.writable(),
+    busy: state.busy(),
+    rootDrop: state.dropTarget() === "",
+    listed: state.listings().has(""),
+    notice: state.notice(),
+    focusRequest: state.focusRequest(),
+    menu: tree.openMenu(),
+    confirmation: tree.confirmation(),
+  }));
+  const { focusRequest, menu, confirmation } = view;
+
+  useEffect(() => {
+    folderPicker.current?.setAttribute("webkitdirectory", "");
+  }, []);
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    const selector = `[data-path="${CSS.escape(focusRequest.path)}"].row`;
+    const element = list.current?.querySelector<HTMLElement>(selector);
+    element?.focus();
+    element?.scrollIntoView({ block: "nearest" });
+  }, [focusRequest]);
 
   return (
-    <section class="pane explorer-pane" aria-label={copy.title}>
-      <header class="pane-header explorer-head">
-        <span class="pane-title">{copy.title}</span>
-        <span class="pane-actions">
+    <section className="pane explorer-pane" aria-label={copy.title}>
+      <header className="pane-header explorer-head">
+        <span className="pane-title">{copy.title}</span>
+        <span className="pane-actions">
           <button
             type="button"
             data-testid="new-file"
             aria-label={copy.actions.newFile}
             title={copy.actions.newFile}
-            disabled={!state.writable()}
+            disabled={!view.writable}
             onClick={() => void state.beginCreate("file")}
           >
             <Icon name="filePlus" />
@@ -499,7 +558,7 @@ export function Explorer(props: { store: EditorStore }) {
             data-testid="new-folder"
             aria-label={copy.actions.newFolder}
             title={copy.actions.newFolder}
-            disabled={!state.writable()}
+            disabled={!view.writable}
             onClick={() => void state.beginCreate("directory")}
           >
             <Icon name="folderPlus" />
@@ -509,8 +568,8 @@ export function Explorer(props: { store: EditorStore }) {
             data-testid="upload-files"
             aria-label={copy.actions.uploadFiles}
             title={copy.actions.uploadFiles}
-            disabled={!state.writable() || state.busy() === "upload"}
-            onClick={() => pick(state.currentTarget().directory, false)}
+            disabled={!view.writable || view.busy === "upload"}
+            onClick={() => tree.pick(state.currentTarget().directory, false)}
           >
             <Icon name="upload" />
           </button>
@@ -519,7 +578,7 @@ export function Explorer(props: { store: EditorStore }) {
             data-testid="download-zip"
             aria-label={copy.actions.download}
             title={copy.actions.download}
-            disabled={state.busy() === "zip"}
+            disabled={view.busy === "zip"}
             onClick={() => void state.downloadZip()}
           >
             <Icon name="download" />
@@ -539,26 +598,22 @@ export function Explorer(props: { store: EditorStore }) {
         {copy.unsaved}
       </span>
       <input
-        ref={(element) => (filePicker = element)}
+        ref={filePicker}
         type="file"
         multiple
         hidden
         data-testid="upload-input"
-        onChange={(event) => uploaded(event.currentTarget)}
+        onChange={(event) => tree.uploaded(event.currentTarget)}
       />
       <input
-        ref={(element) => {
-          folderPicker = element;
-          element.setAttribute("webkitdirectory", "");
-        }}
+        ref={folderPicker}
         type="file"
         hidden
         data-testid="upload-folder-input"
-        onChange={(event) => uploaded(event.currentTarget)}
+        onChange={(event) => tree.uploaded(event.currentTarget)}
       />
       <div
-        class="tree-scroll"
-        classList={{ "is-drop-root": state.dropTarget() === "" }}
+        className={view.rootDrop ? "tree-scroll is-drop-root" : "tree-scroll"}
         // On press, not on click: a click lands on the nearest common ancestor of where the press and
         // the release happened, so a row that moves in between would read as a click on empty space.
         onPointerDown={(event) => {
@@ -571,70 +626,68 @@ export function Explorer(props: { store: EditorStore }) {
           event.preventDefault();
           state.openMenu(event, undefined);
         }}
-        onDragOver={(event) => dragOver(event, "")}
+        onDragOver={(event) => actions.dragOver(event, "")}
         onDragLeave={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null))
             state.setDropTarget(undefined);
         }}
-        onDrop={(event) => drop(event, "")}
+        onDrop={(event) => actions.drop(event, "")}
       >
-        <div class="tree-root">
+        <div className="tree-root">
           <Icon name="chevronDown" />
           <span>{workspaceName(workspace.id)}</span>
         </div>
-        <ul ref={(element) => (list = element)} class="tree" data-testid="file-tree" aria-label={copy.title}>
-          <For each={rows}>
-            {(row) =>
-              row.type === "entry" ? (
-                <EntryItem row={row} actions={actions} />
-              ) : (
-                <DraftItem row={row} actions={actions} />
-              )
-            }
-          </For>
+        <ul ref={list} className="tree" data-testid="file-tree" aria-label={copy.title}>
+          {view.rows.map((row) =>
+            row.type === "entry" ? (
+              <EntryItem key={row.key} row={row} actions={actions} />
+            ) : (
+              <DraftItem key={row.key} row={row} actions={actions} />
+            ),
+          )}
         </ul>
-        <Show when={rows.length === 0 && state.listings().has("")}>
-          <p class="tree-empty" data-testid="tree-empty">
+        {view.rows.length === 0 && view.listed ? (
+          <p className="tree-empty" data-testid="tree-empty">
             {copy.empty}
           </p>
-        </Show>
+        ) : null}
       </div>
-      <Show when={state.notice()}>
-        {(text) => (
-          <p class="tree-notice" role="status" data-testid="tree-notice">
-            {text()}
-          </p>
-        )}
-      </Show>
-      <Show when={openMenu()}>
-        {(menu) => (
-          <ContextMenu
-            x={menu().x}
-            y={menu().y}
-            label={copy.actions.menu}
-            items={menu().items}
-            onClose={(escaped) => {
-              // Read before the menu is cleared: after that its accessor is stale.
-              const origin = menu().path ?? state.tabStop();
-              state.setMenu(undefined);
-              // Escape hands focus back to the row the menu came from.
-              if (escaped && origin) state.focusPath(origin);
-            }}
-          />
-        )}
-      </Show>
-      <Show when={confirmation()}>
-        {(text) => (
-          <ConfirmDialog
-            title={text().title}
-            body={text().body}
-            confirm={text().confirm}
-            cancel={text().cancel}
-            onConfirm={() => void state.confirmDelete()}
-            onCancel={() => state.cancelDelete()}
-          />
-        )}
-      </Show>
+      {view.notice ? (
+        <p className="tree-notice" role="status" data-testid="tree-notice">
+          {view.notice}
+        </p>
+      ) : null}
+      {menu ? (
+        <ContextMenu
+          key={`${menu.x}:${menu.y}:${menu.path ?? ""}`}
+          x={menu.x}
+          y={menu.y}
+          label={copy.actions.menu}
+          items={menu.items}
+          onClose={(escaped) => tree.closeMenu(menu, escaped)}
+        />
+      ) : null}
+      {confirmation ? (
+        <ConfirmDialog
+          title={confirmation.title}
+          body={confirmation.body}
+          confirm={confirmation.confirm}
+          cancel={confirmation.cancel}
+          onConfirm={() => void state.confirmDelete()}
+          onCancel={() => state.cancelDelete()}
+        />
+      ) : null}
     </section>
+  );
+}
+
+export function Explorer(props: { store: EditorStore }) {
+  const workspace = useWorkspace();
+  const filePicker = useRef<HTMLInputElement>(null);
+  const folderPicker = useRef<HTMLInputElement>(null);
+  return (
+    <Scope create={() => createTree(props.store, workspace, { file: filePicker, folder: folderPicker })}>
+      {(tree) => <ExplorerBody tree={tree} filePicker={filePicker} folderPicker={folderPicker} />}
+    </Scope>
   );
 }

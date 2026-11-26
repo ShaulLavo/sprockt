@@ -1,7 +1,7 @@
 // The editor's state for one workspace: open tabs, the active tab, file buffers, where to reveal,
 // and whether quick open or project search is showing. Other panes (the explorer, the title bar)
 // drive the editor only through this store.
-import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-js";
+import { createEffect, createSignal, on, onCleanup, type Accessor } from "../lib/reactive";
 import type { FileChange, FileService } from "../files/service";
 import { createAutosave, loadAutosaveSetting, storeAutosaveSetting } from "./autosave";
 import { createBufferSet, freeName, isDetached, originalPath, type BufferSet } from "./buffers";

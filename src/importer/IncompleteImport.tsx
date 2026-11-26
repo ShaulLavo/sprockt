@@ -1,9 +1,29 @@
-import { createResource, createSignal, Show } from "solid-js";
+import { useEffect, useState } from "react";
 import { openIdleWorkspace } from "waffle";
 import { storageName } from "../workspace/paths";
 import { COPY, fill } from "./copy";
 import { readIncomplete, retryPath } from "./incomplete";
+import type { WorkspaceMeta } from "./metadata";
 import "./importer.css";
+
+/** The unfinished import's metadata of workspace `id`, once read; undefined while reading or when complete. */
+function useIncomplete(id: string): WorkspaceMeta | undefined {
+  const [meta, setMeta] = useState<{ readonly id: string; readonly meta: WorkspaceMeta | undefined }>();
+  useEffect(() => {
+    let cancelled = false;
+    async function read(): Promise<void> {
+      // A workspace whose metadata cannot be read shows nothing, as a complete one does.
+      const found = await readIncomplete(id, openIdleWorkspace).catch(() => undefined);
+      if (!cancelled) setMeta({ id, meta: found });
+    }
+    void read();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+  // What was read for another id says nothing about this one.
+  return meta?.id === id ? meta.meta : undefined;
+}
 
 /**
  * Shown next to a workspace in the landing list when its import (or share link, or template
@@ -14,12 +34,9 @@ import "./importer.css";
  * Landing list: `<IncompleteImport id={id} onDeleted={refresh} />` inside each row.
  */
 export function IncompleteImport(props: { id: string; onDeleted: () => void }) {
-  const [meta] = createResource(
-    () => props.id,
-    (id) => readIncomplete(id, openIdleWorkspace),
-  );
-  const [confirming, setConfirming] = createSignal(false);
-  const [error, setError] = createSignal<string>();
+  const incomplete = useIncomplete(props.id);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string>();
 
   async function remove(): Promise<void> {
     setError(undefined);
@@ -35,60 +52,49 @@ export function IncompleteImport(props: { id: string; onDeleted: () => void }) {
     setError(COPY.errors.deleteBusy);
   }
 
+  if (!incomplete) return null;
+  const retry = retryPath(props.id, incomplete);
+  const title = fill(COPY.confirm.discardTitle, { name: incomplete.name });
+
   return (
-    <Show when={meta.state === "ready" && meta()}>
-      {(incomplete) => (
-        <div class="incomplete-import" data-testid="incomplete-import">
-          <span class="incomplete-label">{COPY.importer.importIncomplete}</span>
-          <Show when={retryPath(props.id, incomplete())}>
-            {(path) => (
-              <a class="importer-button" href={path()} data-testid="incomplete-retry">
-                {COPY.importer.tryAgain}
-              </a>
-            )}
-          </Show>
-          <Show
-            when={confirming()}
-            fallback={
-              <button
-                type="button"
-                class="importer-button"
-                data-testid="incomplete-delete"
-                onClick={() => setConfirming(true)}
-              >
-                {COPY.importer.delete}
-              </button>
-            }
+    <div className="incomplete-import" data-testid="incomplete-import">
+      <span className="incomplete-label">{COPY.importer.importIncomplete}</span>
+      {retry ? (
+        <a className="importer-button" href={retry} data-testid="incomplete-retry">
+          {COPY.importer.tryAgain}
+        </a>
+      ) : null}
+      {confirming ? (
+        <div className="incomplete-confirm" role="alertdialog" aria-label={title}>
+          <strong>{title}</strong>
+          <span>{COPY.confirm.discardBody}</span>
+          <button
+            type="button"
+            className="importer-button danger"
+            data-testid="incomplete-confirm-delete"
+            onClick={() => void remove()}
           >
-            <div
-              class="incomplete-confirm"
-              role="alertdialog"
-              aria-label={fill(COPY.confirm.discardTitle, { name: incomplete().name })}
-            >
-              <strong>{fill(COPY.confirm.discardTitle, { name: incomplete().name })}</strong>
-              <span>{COPY.confirm.discardBody}</span>
-              <button
-                type="button"
-                class="importer-button danger"
-                data-testid="incomplete-confirm-delete"
-                onClick={() => void remove()}
-              >
-                {COPY.confirm.discardConfirm}
-              </button>
-              <button type="button" class="importer-button" onClick={() => setConfirming(false)}>
-                {COPY.confirm.cancel}
-              </button>
-            </div>
-          </Show>
-          <Show when={error()}>
-            {(message) => (
-              <span class="importer-error" role="alert">
-                {message()}
-              </span>
-            )}
-          </Show>
+            {COPY.confirm.discardConfirm}
+          </button>
+          <button type="button" className="importer-button" onClick={() => setConfirming(false)}>
+            {COPY.confirm.cancel}
+          </button>
         </div>
+      ) : (
+        <button
+          type="button"
+          className="importer-button"
+          data-testid="incomplete-delete"
+          onClick={() => setConfirming(true)}
+        >
+          {COPY.importer.delete}
+        </button>
       )}
-    </Show>
+      {error ? (
+        <span className="importer-error" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </div>
   );
 }

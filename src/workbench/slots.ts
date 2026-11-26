@@ -2,7 +2,7 @@
 // items (the branch, the dev server, the cursor position) and commands the title bar offers a
 // button for (quick open, share, download, the workspace switcher). Both live on the
 // WorkspaceSession as plain data.
-import { createSignal, type Accessor } from "solid-js";
+import { createSignal, type Accessor } from "../lib/reactive";
 import type { IconName } from "../ui/icons";
 
 export type StatusTone = "neutral" | "ok" | "warn" | "danger";

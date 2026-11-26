@@ -1,7 +1,8 @@
 // The title bar: brand, workspace name (a switcher once slice 1 registers one), branch, the quick
 // open field, workspace actions, the dev server pill and the theme toggle. On phones the actions
 // and the theme move into a menu behind a `…` button.
-import { createSignal, For, onCleanup, Show, type Accessor, type JSX } from "solid-js";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useValue } from "../lib/react";
 import { Icon } from "../ui/icons";
 import { workspaceName } from "../workspace/hint";
 import type { WorkspaceSession } from "../workspace/session";
@@ -13,13 +14,35 @@ import { colorScheme, setColorScheme, type ColorScheme } from "./theme";
 const ACTIONS = [COMMAND.share, COMMAND.download] as const;
 /** Saving, first in the phone menu: a phone has no keyboard shortcut for it. */
 const EDITOR_ACTIONS = [COMMAND.save, COMMAND.saveAll, COMMAND.autosave] as const;
+/** Everything the phone menu offers, in order. */
+const MENU_ACTIONS: readonly string[] = (EDITOR_ACTIONS as readonly string[]).concat(
+  [COMMAND.switchWorkspace],
+  ACTIONS,
+);
+
+/** A registered command with the id it was registered under, and its badge count right now. */
+interface Listed {
+  readonly id: string;
+  readonly command: Command;
+  readonly badge: number;
+}
+
+/** The registered commands among `ids`, in order. Reads their badges, so a reader tracks them. */
+function listCommands(session: WorkspaceSession | undefined, ids: readonly string[]): Listed[] {
+  if (!session) return [];
+  return ids.flatMap((id) => {
+    const command = session.commands.get(id);
+    return command ? [{ id, command, badge: command.badge?.() ?? 0 }] : [];
+  });
+}
 
 function ThemeOption(props: { scheme: ColorScheme; label: string }) {
+  const scheme = useValue(colorScheme);
   return (
     <button
       type="button"
-      class="theme-option"
-      aria-pressed={colorScheme() === props.scheme}
+      className="theme-option"
+      aria-pressed={scheme === props.scheme}
       aria-label={props.label}
       title={props.label}
       onClick={() => setColorScheme(props.scheme)}
@@ -31,7 +54,7 @@ function ThemeOption(props: { scheme: ColorScheme; label: string }) {
 
 export function ThemeToggle() {
   return (
-    <div class="theme-toggle" role="group" aria-label={ui.workbench.theme}>
+    <div className="theme-toggle" role="group" aria-label={ui.workbench.theme}>
       <ThemeOption scheme="light" label={ui.workbench.themeLight} />
       <ThemeOption scheme="dark" label={ui.workbench.themeDark} />
     </div>
@@ -39,223 +62,218 @@ export function ThemeToggle() {
 }
 
 function DevServerPill(props: { session: WorkspaceSession }) {
-  const item = () => props.session.status.get(STATUS_SLOT.devServer);
+  const server = useValue(() => props.session.status.get(STATUS_SLOT.devServer));
+  if (!server) return null;
+  const action = server.action;
   return (
-    <Show when={item()}>
-      {(server) => (
-        <div class="wb-run" data-tone={server().tone ?? "neutral"} data-testid="dev-server">
-          <button
-            type="button"
-            class="wb-run-status"
-            title={server().title}
-            onClick={() => server().onClick?.()}
-            disabled={!server().onClick}
-          >
-            <span class="wb-pulse" aria-hidden="true" />
-            <span class="wb-run-text">{server().text}</span>
-          </button>
-          <Show when={server().action}>
-            {(action) => (
-              <button
-                type="button"
-                class="wb-run-action"
-                aria-label={action().label}
-                title={action().label}
-                onClick={() => action().run()}
-              >
-                <Icon name={action().icon} />
-              </button>
-            )}
-          </Show>
-        </div>
-      )}
-    </Show>
+    <div className="wb-run" data-tone={server.tone ?? "neutral"} data-testid="dev-server">
+      <button
+        type="button"
+        className="wb-run-status"
+        title={server.title}
+        onClick={() => server.onClick?.()}
+        disabled={!server.onClick}
+      >
+        <span className="wb-pulse" aria-hidden="true" />
+        <span className="wb-run-text">{server.text}</span>
+      </button>
+      {action ? (
+        <button
+          type="button"
+          className="wb-run-action"
+          aria-label={action.label}
+          title={action.label}
+          onClick={() => action.run()}
+        >
+          <Icon name={action.icon} />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
 function PhoneMenu(props: { session: WorkspaceSession | undefined }) {
-  const [open, setOpen] = createSignal(false);
-  let button: HTMLButtonElement | undefined;
-  const commands = (): readonly Command[] => {
-    const session = props.session;
-    if (!session) return [];
-    const ids: readonly string[] = (EDITOR_ACTIONS as readonly string[]).concat(
-      [COMMAND.switchWorkspace],
-      ACTIONS,
-    );
-    return ids.flatMap((id) => session.commands.get(id) ?? []);
-  };
-  const badged = () => commands().some((command) => (command.badge?.() ?? 0) > 0);
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const commands = useValue(() => listCommands(props.session, MENU_ACTIONS));
+  const badged = commands.some((item) => item.badge > 0);
 
   function close(): void {
     setOpen(false);
-    button?.focus();
+    button.current?.focus();
   }
 
-  function onKey(event: KeyboardEvent): void {
-    if (event.key === "Escape" && open()) close();
-  }
-  addEventListener("keydown", onKey);
-  onCleanup(() => removeEventListener("keydown", onKey));
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      button.current?.focus();
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [open]);
 
   return (
-    <div class="wb-menu">
+    <div className="wb-menu">
       <button
-        ref={(element) => (button = element)}
+        ref={button}
         type="button"
-        class="wb-phone-button"
+        className="wb-phone-button"
         aria-label={ui.workbench.menu}
         aria-haspopup="menu"
-        aria-expanded={open()}
+        aria-expanded={open}
         data-testid="phone-menu"
-        onClick={() => setOpen(!open())}
+        onClick={() => setOpen(!open)}
       >
         <Icon name="more" />
-        <Show when={badged()}>
-          <span class="wb-menu-dot" aria-hidden="true" />
-        </Show>
+        {badged ? <span className="wb-menu-dot" aria-hidden="true" /> : null}
       </button>
-      <Show when={open()}>
-        <div class="wb-scrim" aria-hidden="true" onClick={close} />
-        <div class="wb-menu-panel" role="menu" aria-label={ui.workbench.menu}>
-          <For each={commands()}>
-            {(command) => (
+      {open ? (
+        <>
+          <div className="wb-scrim" aria-hidden="true" onClick={close} />
+          <div className="wb-menu-panel" role="menu" aria-label={ui.workbench.menu}>
+            {commands.map(({ id, command, badge }) => (
               <button
+                key={id}
                 type="button"
                 role="menuitem"
-                class="wb-menu-item"
+                className="wb-menu-item"
                 onClick={() => {
                   setOpen(false);
                   command.run();
                 }}
               >
-                <Show when={command.icon}>{(icon) => <Icon name={icon()} />}</Show>
+                {command.icon ? <Icon name={command.icon} /> : null}
                 <span>{command.label}</span>
-                <Show when={(command.badge?.() ?? 0) > 0}>
-                  <span class="wb-menu-badge">{command.badge?.()}</span>
-                </Show>
+                {badge > 0 ? <span className="wb-menu-badge">{badge}</span> : null}
               </button>
-            )}
-          </For>
-          <div class="wb-menu-theme">
-            <span>{ui.workbench.theme}</span>
-            <ThemeToggle />
+            ))}
+            <div className="wb-menu-theme">
+              <span>{ui.workbench.theme}</span>
+              <ThemeToggle />
+            </div>
           </div>
-        </div>
-      </Show>
+        </>
+      ) : null}
     </div>
+  );
+}
+
+function WorkspaceCrumb(props: { name: string; switcher: Command | undefined }) {
+  const switcher = props.switcher;
+  if (!switcher) {
+    return (
+      <span className="wb-crumb-project" data-testid="workspace-name">
+        {props.name}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="wb-crumb-project wb-crumb-switch"
+      aria-label={switcher.label}
+      title={switcher.label}
+      data-testid="workspace-name"
+      onClick={() => switcher.run()}
+    >
+      {props.name}
+      <Icon name="chev-d" />
+    </button>
+  );
+}
+
+function Palette(props: { quickOpen: Command | undefined }) {
+  const quickOpen = props.quickOpen;
+  if (!quickOpen) return <span className="wb-titlebar-fill" />;
+  return (
+    <button type="button" className="wb-palette" onClick={() => quickOpen.run()}>
+      <Icon name="search" />
+      <span className="wb-palette-text">{ui.search.commandPalette}</span>
+      {quickOpen.shortcut ? <kbd>{quickOpen.shortcut}</kbd> : null}
+    </button>
   );
 }
 
 export interface TitleBarProps {
   readonly workspaceId: string;
-  readonly session: Accessor<WorkspaceSession | undefined>;
+  /** The session once it started; undefined while booting, after a failure and once closed. */
+  readonly session: WorkspaceSession | undefined;
   /** Workspace controls with their own UI (Share and its link popover), before the dev server. */
-  readonly controls?: JSX.Element;
+  readonly controls?: ReactNode;
   onHome(): void;
 }
 
 export function TitleBar(props: TitleBarProps) {
-  const command = (id: string) => props.session()?.commands.get(id);
-  const branch = () => props.session()?.status.get(STATUS_SLOT.branch);
-  const actions = () => ACTIONS.flatMap((id) => command(id) ?? []);
+  const { session } = props;
+  const { switcher, quickOpen, branch, actions } = useValue(() => ({
+    switcher: session?.commands.get(COMMAND.switchWorkspace),
+    quickOpen: session?.commands.get(COMMAND.quickOpen),
+    branch: session?.status.get(STATUS_SLOT.branch),
+    actions: listCommands(session, ACTIONS),
+  }));
   // The name the workspace was given, shown once; its random id only when this browser has none.
-  const name = workspaceName(props.workspaceId);
+  const [name] = useState(() => workspaceName(props.workspaceId));
 
   return (
-    <header class="wb-titlebar">
+    <header className="wb-titlebar">
       <button
         type="button"
-        class="wb-brand"
+        className="wb-brand"
         aria-label={ui.workbench.home}
         title={ui.workbench.home}
         onClick={() => props.onHome()}
       >
-        <span class="wb-brand-mark">
+        <span className="wb-brand-mark">
           <Icon name="logo" />
         </span>
-        <span class="wb-brand-word">Sprockt</span>
+        <span className="wb-brand-word">Sprockt</span>
       </button>
-      <nav class="wb-crumbs" aria-label={ui.workbench.workspace}>
-        <Show
-          when={command(COMMAND.switchWorkspace)}
-          fallback={
-            <span class="wb-crumb-project" data-testid="workspace-name">
-              {name}
+      <nav className="wb-crumbs" aria-label={ui.workbench.workspace}>
+        <WorkspaceCrumb name={name} switcher={switcher} />
+        {branch ? (
+          <>
+            <span className="wb-crumb-sep" aria-hidden="true">
+              /
             </span>
-          }
-        >
-          {(switcher) => (
-            <button
-              type="button"
-              class="wb-crumb-project wb-crumb-switch"
-              aria-label={switcher().label}
-              title={switcher().label}
-              data-testid="workspace-name"
-              onClick={() => switcher().run()}
-            >
-              {name}
-              <Icon name="chev-d" />
-            </button>
-          )}
-        </Show>
-        <Show when={branch()}>
-          {(item) => (
-            <>
-              <span class="wb-crumb-sep" aria-hidden="true">
-                /
-              </span>
-              <span class="wb-crumb-branch" title={item().title}>
-                <Icon name="branch" />
-                {item().text}
-              </span>
-            </>
-          )}
-        </Show>
+            <span className="wb-crumb-branch" title={branch.title}>
+              <Icon name="branch" />
+              {branch.text}
+            </span>
+          </>
+        ) : null}
       </nav>
-      <Show when={command(COMMAND.quickOpen)} fallback={<span class="wb-titlebar-fill" />}>
-        {(quickOpen) => (
-          <button type="button" class="wb-palette" onClick={() => quickOpen().run()}>
-            <Icon name="search" />
-            <span class="wb-palette-text">{ui.search.commandPalette}</span>
-            <Show when={quickOpen().shortcut}>
-              <kbd>{quickOpen().shortcut}</kbd>
-            </Show>
-          </button>
-        )}
-      </Show>
-      <div class="wb-titlebar-right">
+      <Palette quickOpen={quickOpen} />
+      <div className="wb-titlebar-right">
         {props.controls}
-        <For each={actions()}>
-          {(action) => (
-            <button
-              type="button"
-              class="icon-button wb-action"
-              aria-label={action.label}
-              title={action.label}
-              onClick={() => action.run()}
-            >
-              <Icon name={action.icon ?? "share"} />
-            </button>
-          )}
-        </For>
-        <Show when={props.session()}>{(session) => <DevServerPill session={session()} />}</Show>
-        <div class="wb-theme-desktop">
+        {actions.map(({ id, command }) => (
+          <button
+            key={id}
+            type="button"
+            className="icon-button wb-action"
+            aria-label={command.label}
+            title={command.label}
+            onClick={() => command.run()}
+          >
+            <Icon name={command.icon ?? "share"} />
+          </button>
+        ))}
+        {session ? <DevServerPill session={session} /> : null}
+        <div className="wb-theme-desktop">
           <ThemeToggle />
         </div>
-        <Show when={command(COMMAND.quickOpen)}>
-          {(quickOpen) => (
-            <button
-              type="button"
-              class="wb-phone-button wb-phone-search"
-              aria-label={ui.search.commandPalette}
-              onClick={() => quickOpen().run()}
-            >
-              <Icon name="search" />
-            </button>
-          )}
-        </Show>
-        <PhoneMenu session={props.session()} />
+        {quickOpen ? (
+          <button
+            type="button"
+            className="wb-phone-button wb-phone-search"
+            aria-label={ui.search.commandPalette}
+            onClick={() => quickOpen.run()}
+          >
+            <Icon name="search" />
+          </button>
+        ) : null}
+        <PhoneMenu session={session} />
       </div>
     </header>
   );

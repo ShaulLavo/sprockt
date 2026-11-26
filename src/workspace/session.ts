@@ -1,6 +1,6 @@
 // One open workspace in this tab: the runtime and the services every pane shares. Panes take
 // what they need from here through WorkspaceContext; they never reach into each other.
-import { createContext, useContext } from "solid-js";
+import { createContext, useContext } from "react";
 import { createFileService, type FileService } from "../files/service";
 import { createPreviewTransport } from "../preview";
 import type { PreviewTransport } from "../preview/transport";
@@ -84,7 +84,7 @@ export async function openWorkspace(
   };
 }
 
-export const WorkspaceContext = createContext<WorkspaceSession>();
+export const WorkspaceContext = createContext<WorkspaceSession | undefined>(undefined);
 
 export function useWorkspace(): WorkspaceSession {
   const session = useContext(WorkspaceContext);
