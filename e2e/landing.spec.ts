@@ -161,6 +161,128 @@ test("workspace switcher lists without runtime JS, preserves other tab on busy r
   await expect(page.getByTestId("workspace-empty")).toBeVisible();
 });
 
+interface Box {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+function findHubOverlaps(
+  frame: Box,
+  boxes: readonly { readonly label: string; readonly rect: Box }[],
+): string[] {
+  const issues: string[] = [];
+  for (const a of boxes) {
+    const out =
+      a.rect.left < frame.left - 1 ||
+      a.rect.right > frame.right + 1 ||
+      a.rect.top < frame.top - 1 ||
+      a.rect.bottom > frame.bottom + 1;
+    if (out) issues.push(`out-of-bounds:${a.label}`);
+  }
+  for (let i = 0; i < boxes.length; i++) {
+    const a = boxes[i]!;
+    for (let j = i + 1; j < boxes.length; j++) {
+      const b = boxes[j]!;
+      const xOverlap = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left);
+      const yOverlap = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
+      if (xOverlap > 0.5 && yOverlap > 0.5) issues.push(`${a.label}<>${b.label}`);
+    }
+  }
+  return issues;
+}
+
+async function runHubPauseResumeCheck(root: Element) {
+  const readFrame = () =>
+    Array.from(root.querySelectorAll<SVGLineElement>(".lp-dg-comet, .lp-dg-lit"), (el) => [
+      el.getAttribute("stroke-dashoffset") ?? "",
+      el.getAttribute("stroke-dasharray") ?? "",
+      el.style.opacity,
+    ]);
+  const btn = root.querySelector<HTMLButtonElement>('[data-testid="hub-pause"]');
+  if (!btn) throw new Error("Missing hub-pause button");
+
+  const origRaf = window.requestAnimationFrame.bind(window);
+  const origCancel = window.cancelAnimationFrame.bind(window);
+  let nextId = 1;
+  const held = new Map<number, FrameRequestCallback>();
+  const holdRaf = () => {
+    window.requestAnimationFrame = (cb) => {
+      const id = nextId++;
+      held.set(id, cb);
+      return id;
+    };
+    window.cancelAnimationFrame = (id) => {
+      if (!held.delete(id)) origCancel(id);
+    };
+  };
+  const flushHeld = (ts: number): number => {
+    const cbs = Array.from(held.values());
+    held.clear();
+    for (const cb of cbs) cb(ts);
+    return cbs.length;
+  };
+  const releaseRaf = () => {
+    window.requestAnimationFrame = origRaf;
+    window.cancelAnimationFrame = origCancel;
+    const queued = Array.from(held.values());
+    held.clear();
+    for (const cb of queued) origRaf(cb);
+  };
+
+  try {
+    holdRaf();
+    const beforePause = readFrame();
+    btn.click();
+    await new Promise<void>((resolve) => setTimeout(resolve, 40));
+    const afterPause = readFrame();
+    const pausedPressed = btn.getAttribute("aria-pressed");
+    const hasPausedClass = root.classList.contains("is-paused");
+
+    releaseRaf();
+    for (let i = 0; i < 10; i++) {
+      // oxlint-disable-next-line no-await-in-loop
+      await new Promise<void>((resolve) => origRaf(() => resolve()));
+    }
+    const laterWhilePaused = readFrame();
+
+    holdRaf();
+    btn.click();
+    for (let tries = 0; tries < 25 && held.size === 0; tries++) {
+      // oxlint-disable-next-line no-await-in-loop
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+    const resumedPressed = btn.getAttribute("aria-pressed");
+    const now = performance.now();
+    const firstTickCount = flushHeld(now);
+    const firstResumed = readFrame();
+
+    // Advance only the callbacks scheduled inside the gate to prove the hub loop itself resumed.
+    let laterTickCount = 0;
+    for (let step = 1; step <= 25; step++) {
+      laterTickCount += flushHeld(now + step * 40);
+    }
+    const afterGatedTicks = readFrame();
+
+    releaseRaf();
+    return {
+      beforePause,
+      afterPause,
+      laterWhilePaused,
+      firstResumed,
+      afterGatedTicks,
+      firstTickCount,
+      laterTickCount,
+      pausedPressed,
+      hasPausedClass,
+      resumedPressed,
+    };
+  } finally {
+    releaseRaf();
+  }
+}
+
 async function assertPhoneLayout(page: Page, expectedAttr: "dark" | "light" | null): Promise<void> {
   if (expectedAttr === null) {
     await expect(page.locator("html")).not.toHaveAttribute("data-theme", /./);
@@ -208,6 +330,27 @@ test("phone viewport has no horizontal overflow, exposes menu/theme controls, an
   await expect(menu).toBeVisible();
   await expect(menu).toContainText("Starters");
   await expect(menu).toContainText("GitHub");
+  await page.getByTestId("phone-menu-toggle").click();
+
+  // At phone width the Waffle hub pills stay inside the diagram frame and never overlap each other.
+  const hub = page.getByTestId("hub-diagram");
+  await hub.scrollIntoViewIfNeeded();
+  await expect.poll(() => hub.locator(".lp-dg-svg").count()).toBe(1);
+  const hubGeometry = await hub.evaluate((root) => {
+    const f = root.getBoundingClientRect();
+    return {
+      frame: { left: f.left, right: f.right, top: f.top, bottom: f.bottom },
+      boxes: Array.from(root.querySelectorAll<HTMLElement>(".lp-dg-node"), (el) => {
+        const r = el.getBoundingClientRect();
+        return {
+          label: el.textContent?.trim() ?? "",
+          rect: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
+        };
+      }),
+    };
+  });
+  expect(hubGeometry.boxes.length).toBe(7);
+  expect(findHubOverlaps(hubGeometry.frame, hubGeometry.boxes)).toEqual([]);
 });
 
 test("theme choice persists in the same tab across landing and workbench in both directions", async ({
@@ -271,94 +414,128 @@ test("theme choice persists in the same tab across landing and workbench in both
   }
 });
 
-test("landing demo explorer and tablists are keyboard accessible and pause stops cursor blink", async ({
+test("desktop nav is dead-centered, showcases are inert, animations have WCAG pause controls, and all logos load eagerly", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  const demo = page.locator(".lp-hero-tab");
-  const workbench = demo.locator(".lp-wb");
+  await expect(page.getByTestId("landing-page")).toBeVisible();
 
-  // Explorer files open via native buttons with keyboard activation.
-  const cssButton = demo.locator(".lp-wb-explorer").getByRole("button", { name: "App.css" });
-  await cssButton.focus();
-  await page.keyboard.press("Enter");
-  const fileTabs = demo.getByRole("tablist", { name: "Open files" });
-  await expect(fileTabs.getByRole("tab", { name: "App.css" })).toHaveAttribute("aria-selected", "true");
-  await expect(fileTabs.getByRole("tab", { name: "App.css" })).toHaveAttribute("tabindex", "0");
-  await expect(fileTabs.getByRole("tab", { name: "App.tsx" })).toHaveAttribute("tabindex", "-1");
+  // Desktop nav links sit dead-centered over the H1.
+  const navBox = await page.getByTestId("desktop-nav").boundingBox();
+  const h1Box = await page.getByRole("heading", { level: 1 }).boundingBox();
+  expect(navBox).not.toBeNull();
+  expect(h1Box).not.toBeNull();
+  const navCenter = navBox!.x + navBox!.width / 2;
+  const h1Center = h1Box!.x + h1Box!.width / 2;
+  expect(Math.abs(navCenter - h1Center)).toBeLessThan(2);
 
-  // ArrowRight moves focus and selection across Open files and links tabpanel via aria-controls/aria-labelledby.
-  await fileTabs.getByRole("tab", { name: "App.css" }).focus();
-  await page.keyboard.press("ArrowRight");
-  const pkgTab = fileTabs.getByRole("tab", { name: "package.json" });
-  await expect(pkgTab).toBeFocused();
-  await expect(pkgTab).toHaveAttribute("aria-selected", "true");
-  const pkgTabId = await pkgTab.getAttribute("id");
-  const pkgPanelId = await pkgTab.getAttribute("aria-controls");
-  expect(pkgTabId).toBeTruthy();
-  expect(pkgPanelId).toBeTruthy();
-  await expect(demo.locator(`#${pkgPanelId}`)).toHaveAttribute("aria-labelledby", pkgTabId!);
-
-  // ArrowRight works on Terminal tabs with matching aria-controls/aria-labelledby, and the
-  // focused terminal tab stays inside the visible hero frame and passes pointer hit-testing.
-  const heroFrame = page.locator(".lp-hero-frame");
-  const termTabs = demo.getByRole("tablist", { name: "Terminal tabs" });
-  const bashTab = termTabs.getByRole("tab", { name: "bash" });
-  const devTab = termTabs.getByRole("tab", { name: "dev :5173" });
-  await bashTab.focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(devTab).toBeFocused();
-  await expect(devTab).toHaveAttribute("aria-selected", "true");
-  const frameBox = await heroFrame.boundingBox();
-  const devTabBox = await devTab.boundingBox();
-  expect(frameBox).not.toBeNull();
-  expect(devTabBox).not.toBeNull();
-  expect(devTabBox!.y + devTabBox!.height).toBeLessThanOrEqual(frameBox!.y + frameBox!.height + 1);
-  await bashTab.click();
-  await expect(bashTab).toHaveAttribute("aria-selected", "true");
-  await devTab.click();
-  await expect(devTab).toHaveAttribute("aria-selected", "true");
-
-  // Pause stops both playback and blinking cursors; reduced motion hides Replay.
-  const pauseBtn = demo.getByRole("button", { name: "Pause demo" });
-  if (await pauseBtn.isVisible()) await pauseBtn.click();
-  await expect(workbench).toHaveAttribute("data-playing", "false");
-  await fileTabs.getByRole("tab", { name: "App.tsx" }).click();
-  await expect
-    .poll(() => demo.locator(".lp-wb-caret").evaluate((el) => getComputedStyle(el).animationName))
-    .toBe("none");
-
-  // At tablet width (768x900), the compact pane switcher stays inside the hero frame and can be clicked.
-  await page.setViewportSize({ width: 768, height: 900 });
-  const paneTabs = demo.getByRole("tablist", { name: "Panes" });
-  const codePaneTab = paneTabs.getByRole("tab", { name: "Code" });
-  const tabletFrameBox = await heroFrame.boundingBox();
-  const codeTabBox = await codePaneTab.boundingBox();
-  expect(tabletFrameBox).not.toBeNull();
-  expect(codeTabBox).not.toBeNull();
-  expect(codeTabBox!.y + codeTabBox!.height).toBeLessThanOrEqual(
-    tabletFrameBox!.y + tabletFrameBox!.height + 1,
+  // Hero and iPhone showcases are decorative inert visuals with zero focusable descendants.
+  await Promise.all(
+    (["hero-showcase", "phone-showcase"] as const).map(async (testId) => {
+      const showcase = page.getByTestId(testId);
+      await expect(showcase).toHaveAttribute("role", "img");
+      const focusables = await showcase.evaluate((el) => {
+        const inner = el.querySelector("[inert]");
+        return {
+          hasInert: Boolean(inner),
+          buttons: el.querySelectorAll("button, a, input, [tabindex]").length,
+        };
+      });
+      expect(focusables.hasInert).toBe(true);
+      expect(focusables.buttons).toBe(0);
+    }),
   );
-  await codePaneTab.click();
-  await expect(codePaneTab).toHaveAttribute("aria-selected", "true");
-  await expect(demo.getByRole("tabpanel", { name: "Code" })).toBeVisible();
 
+  // All 4 feature cards render distinct painterly-landscape backdrops.
+  await Promise.all(
+    (["check", "complete", "terminal", "store"] as const).map((tone) =>
+      expect(page.getByTestId(`feature-card-${tone}`)).toBeVisible(),
+    ),
+  );
+
+  // Hero grain-gradient exposes a WCAG pause control when WebGL is live, and hides it on fallback.
+  const heroFallback = await page.locator(".lp-hero-backdrop").getAttribute("data-fx-fallback");
+  if (heroFallback === "1") {
+    await expect(page.getByTestId("hero-fx-pause")).toHaveCount(0);
+  } else {
+    const heroBtn = page.getByTestId("hero-fx-pause");
+    await expect(heroBtn).toBeVisible();
+    await expect(heroBtn).toHaveAttribute("aria-pressed", "false");
+    await heroBtn.click();
+    await expect(heroBtn).toHaveAttribute("aria-pressed", "true");
+    await heroBtn.click();
+    await expect(heroBtn).toHaveAttribute("aria-pressed", "false");
+  }
+
+  // Waffle hub diagram places its pause button outside role="img", freezes the current frame
+  // without resetting or advancing while paused, and resumes cleanly from that exact frame.
+  const hub = page.getByTestId("hub-diagram");
+  await hub.scrollIntoViewIfNeeded();
+  await expect(hub.locator('[role="img"]')).toHaveCount(1);
+  const hubBtn = page.getByTestId("hub-pause");
+  await expect(hubBtn).toBeVisible();
+  expect(await hubBtn.evaluate((el) => el.closest('[role="img"]') === null)).toBe(true);
+
+  const hubSnapshot = () =>
+    hub.evaluate((root) =>
+      Array.from(root.querySelectorAll<SVGLineElement>(".lp-dg-comet, .lp-dg-lit"), (el) => [
+        el.getAttribute("stroke-dashoffset") ?? "",
+        el.getAttribute("stroke-dasharray") ?? "",
+        el.style.opacity,
+      ]),
+    );
+
+  // Let the hub advance off its initial still frame before testing pause/resume continuity.
+  const initialFrame = await hubSnapshot();
+  await expect.poll(hubSnapshot).not.toEqual(initialFrame);
+
+  // Gate requestAnimationFrame around both clicks so we observe the exact frame across pause
+  // and on the first resumed tick (proving neither pause nor resume resets the clock).
+  const pauseResumeCheck = await hub.evaluate(runHubPauseResumeCheck);
+
+  expect(pauseResumeCheck.pausedPressed).toBe("true");
+  expect(pauseResumeCheck.hasPausedClass).toBe(true);
+  expect(pauseResumeCheck.beforePause).not.toEqual(initialFrame);
+  expect(pauseResumeCheck.afterPause).toEqual(pauseResumeCheck.beforePause);
+  expect(pauseResumeCheck.laterWhilePaused).toEqual(pauseResumeCheck.beforePause);
+  expect(pauseResumeCheck.resumedPressed).toBe("false");
+  expect(pauseResumeCheck.firstTickCount).toBeGreaterThan(0);
+  expect(pauseResumeCheck.laterTickCount).toBeGreaterThan(0);
+  expect(pauseResumeCheck.firstResumed).toEqual(pauseResumeCheck.beforePause);
+  expect(pauseResumeCheck.afterGatedTicks).not.toEqual(pauseResumeCheck.beforePause);
+
+  // All landing page <img> assets (browser logos, hub logos, template icons) load eagerly.
+  const brokenImages = await page.evaluate(() =>
+    Array.from(document.querySelectorAll<HTMLImageElement>("img"))
+      .filter((img) => !img.complete || img.naturalWidth === 0)
+      .map((img) => img.src),
+  );
+  expect(brokenImages).toEqual([]);
+
+  // Under prefers-reduced-motion: reduce, looping pause controls hide cleanly.
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(demo.getByRole("button", { name: /Replay demo|Pause demo/ })).toHaveCount(0);
+  await expect(page.getByTestId("hero-fx-pause")).toHaveCount(0);
+  await expect(page.getByTestId("hub-pause")).toHaveCount(0);
 });
 
-test("the phone demo's files, source and terminal output reach a screen reader", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+test("hero hides its pause control when WebGL is unavailable and static fallback is active", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (
+      this: HTMLCanvasElement,
+      type: string,
+      ...args: unknown[]
+    ) {
+      if (type === "webgl2" || type === "webgl" || type === "experimental-webgl") return null;
+      return origGetContext.apply(this, [type, ...args] as Parameters<typeof origGetContext>);
+    } as typeof HTMLCanvasElement.prototype.getContext;
+  });
   await page.goto("/");
-  const demo = page.locator(".lp-hero-tab");
-
-  // Role queries only match what the accessibility tree exposes.
-  await expect(demo.getByRole("tabpanel", { name: "Terminal" })).toContainText("bun run dev");
-  await demo.getByRole("tab", { name: "Files" }).click();
-  await expect(demo.getByRole("tabpanel", { name: "Files" })).toContainText("App.tsx");
-  await demo.getByRole("tab", { name: "Code" }).click();
-  await expect(demo.getByRole("tabpanel", { name: "Code" })).toContainText("useState");
-  await demo.getByRole("tab", { name: "Preview" }).click();
-  await expect(demo.getByRole("tabpanel", { name: "Preview" })).toContainText("Hello from bun.wasm");
+  await expect(page.getByTestId("landing-page")).toBeVisible();
+  await expect(page.locator(".lp-hero-backdrop")).toHaveAttribute("data-fx-fallback", "1");
+  await expect(page.getByTestId("hero-fx-pause")).toHaveCount(0);
 });

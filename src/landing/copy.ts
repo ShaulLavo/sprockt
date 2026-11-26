@@ -74,8 +74,13 @@ export const LANDING_COPY = {
   browserIphone: "iPhone Safari",
   marqueePause: "Pause scrolling browser list",
   marqueePlay: "Resume scrolling browser list",
-  showcaseHeroFrame: "Sprockt running the Vite + React starter in a browser tab.",
-  showcaseBenchFrame: "Sprockt workbench with files, editor, preview and terminal.",
+  heroFxPause: "Pause hero background animation",
+  heroFxPlay: "Play hero background animation",
+  hubPause: "Pause architecture diagram animation",
+  hubPlay: "Play architecture diagram animation",
+  showcaseHeroFrame: "Sprockt with App.tsx open, showing the TypeScript hover type of useState.",
+  showcaseBenchFrame:
+    "Sprockt workbench on an iPhone with App.tsx open and the Files, Code, Terminal and Preview tabs below.",
   hoodTitle: "What runs inside the browser tab.",
   hoodTitleMuted: "Open source, MIT licensed.",
   hoodLede:

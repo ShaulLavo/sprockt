@@ -1,13 +1,15 @@
-// The landing page, a port of the #4 "Sheet and Biro" design (set-a/dir-1): a centred hero whose
-// live workbench rises out of a painterly textured frame, 2x2 feature cards, the starters and
-// GitHub import, the dark browsers band with the iPhone, the Waffle hub, the questions and the
-// giant wordmark close. Loads zero editor, terminal or Waffle runtime code on initial render.
+// The landing page, a faithful port of the #4 "Sheet and Biro" design (set-a/dir-1) with #2
+// "Precision Sheet"'s 4-card painterly landscapes and Sprockt gear logo: dead-centered header nav,
+// living WebGL grain-gradient hero backdrop with cropped stately IDE showcase, 2x2 feature cards,
+// starters and GitHub import, dark browsers band with iPhone showcase, animated Waffle hub diagram,
+// questions with LICENSE tab card, and giant wordmark footer. Loads zero editor, terminal or
+// Waffle runtime code on initial render.
 import jetbrainsMonoLatinUrl from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url";
 import schibstedLatinUrl from "@fontsource-variable/schibsted-grotesk/files/schibsted-grotesk-latin-wght-normal.woff2?url";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { navigate } from "../app/router";
-import { useValue } from "../lib/react";
 import { routePath, type Route } from "../app/routes";
+import { useValue } from "../lib/react";
 import {
   BLANK_TEMPLATE_SUMMARY,
   STARTER_TEMPLATE_SUMMARIES,
@@ -17,13 +19,14 @@ import {
 import { SprocktLogo } from "../ui/SprocktLogo";
 import { applyStoredTheme, colorScheme, setColorScheme } from "../workbench/theme";
 import { LANDING_COPY } from "./copy";
-import { createDemoController } from "./demo";
+import { mountGrainGradient, type GrainGradientController } from "./effects/grain-gradient";
 import { FeatureCards } from "./FeatureCards";
 import { parseGithubInput } from "./github-input";
+import { HeroShowcase } from "./HeroShowcase";
 import { HubDiagram } from "./HubDiagram";
 import { Icon } from "./icons";
 import { BrandLogoTile, LOGOS } from "./logos";
-import { WorkbenchPreview } from "./WorkbenchPreview";
+import { PhoneShowcase } from "./PhoneShowcase";
 import {
   hasWorkspaceHints,
   listStoredWorkspaces,
@@ -32,7 +35,6 @@ import {
 } from "./workspaces";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import "./landing.css";
-import "./workbench-preview.css";
 import "./workspace-switcher.css";
 
 const SAMPLE_GITHUB_ROUTE: Extract<Route, { kind: "github" }> = {
@@ -125,7 +127,6 @@ function Muted(props: { readonly lead: string; readonly rest: string }) {
 }
 
 export function Landing() {
-  const [demo] = useState(() => createDemoController());
   const scheme = useValue(colorScheme);
   const [repoInput, setRepoInput] = useState("");
   const [repoError, setRepoError] = useState<string | undefined>();
@@ -133,6 +134,12 @@ export function Landing() {
   const [createError, setCreateError] = useState<string | undefined>();
   const [menuOpen, setMenuOpen] = useState(false);
   const [marqueePaused, setMarqueePaused] = useState(false);
+  const [heroFxPaused, setHeroFxPaused] = useState(false);
+  const [heroFxStill, setHeroFxStill] = useState(false);
+  const [heroFxAnimated, setHeroFxAnimated] = useState(false);
+
+  const heroBackdropRef = useRef<HTMLDivElement>(null);
+  const heroFxRef = useRef<GrainGradientController | null>(null);
 
   const [workspaces, setWorkspaces] = useState<readonly StoredWorkspaceSummary[]>([]);
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(true);
@@ -159,9 +166,48 @@ export function Landing() {
 
   useEffect(() => {
     applyStoredTheme();
-    demo.start();
-    return () => demo.dispose();
-  }, [demo]);
+  }, []);
+
+  useEffect(() => {
+    const reducedMQ = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const phoneMQ = window.matchMedia("(max-width: 639px)");
+    const update = () => setHeroFxStill(reducedMQ.matches || phoneMQ.matches);
+    update();
+    reducedMQ.addEventListener("change", update);
+    phoneMQ.addEventListener("change", update);
+    return () => {
+      reducedMQ.removeEventListener("change", update);
+      phoneMQ.removeEventListener("change", update);
+    };
+  }, []);
+
+  useEffect(() => {
+    const host = heroBackdropRef.current;
+    if (!host) return;
+    const ctrl = mountGrainGradient(host, {
+      scheme: colorScheme(),
+      seed: 11,
+      onAnimatedChange: setHeroFxAnimated,
+    });
+    heroFxRef.current = ctrl;
+    setHeroFxAnimated(ctrl.isAnimated());
+    return () => {
+      ctrl.destroy();
+      heroFxRef.current = null;
+      setHeroFxAnimated(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    heroFxRef.current?.setScheme(scheme);
+  }, [scheme]);
+
+  useEffect(() => {
+    const ctrl = heroFxRef.current;
+    if (!ctrl) return;
+    if (heroFxPaused) ctrl.pause();
+    else ctrl.resume();
+  }, [heroFxPaused]);
 
   useEffect(() => {
     function refreshOnVisible(): void {
@@ -275,7 +321,7 @@ export function Landing() {
             <SprocktLogo class="lp-brand-mark" />
             <span>Sprockt</span>
           </a>
-          <nav className="lp-nav-links" aria-label="Site">
+          <nav className="lp-nav-links" aria-label="Site" data-testid="desktop-nav">
             {navLinks}
           </nav>
           <div className="lp-nav-actions">
@@ -379,10 +425,31 @@ export function Landing() {
               </div>
             </div>
             <div className="lp-hero-frame" data-enter-media>
-              <div className="lp-hero-backdrop lp-ground lp-grain" aria-hidden="true" />
-              <div className="lp-hero-window lp-hero-tab">
-                <WorkbenchPreview demo={demo} pane="terminal" label={LANDING_COPY.showcaseBenchFrame} />
+              <div className="lp-hero-stage">
+                <div ref={heroBackdropRef} className="lp-hero-backdrop lp-ground" aria-hidden="true" />
+                <div className="lp-hero-window">
+                  <HeroShowcase />
+                </div>
               </div>
+              {!heroFxStill && heroFxAnimated ? (
+                <button
+                  type="button"
+                  className={heroFxPaused ? "lp-fx-pause is-paused" : "lp-fx-pause"}
+                  aria-pressed={heroFxPaused}
+                  aria-label={heroFxPaused ? LANDING_COPY.heroFxPlay : LANDING_COPY.heroFxPause}
+                  title={heroFxPaused ? LANDING_COPY.heroFxPlay : LANDING_COPY.heroFxPause}
+                  data-testid="hero-fx-pause"
+                  onClick={() => setHeroFxPaused((p) => !p)}
+                >
+                  <svg viewBox="0 0 14 14" aria-hidden="true">
+                    {heroFxPaused ? (
+                      <path d="M4 2.5v9l7.5-4.5z" />
+                    ) : (
+                      <path d="M3.5 2.5h2.5v9H3.5zM8 2.5h2.5v9H8z" />
+                    )}
+                  </svg>
+                </button>
+              ) : null}
             </div>
           </div>
         </section>
@@ -394,7 +461,7 @@ export function Landing() {
                 <Muted lead={LANDING_COPY.featuresTitle} rest={LANDING_COPY.featuresTitleMuted} />
               </h2>
             </div>
-            <FeatureCards />
+            <FeatureCards scheme={scheme} />
           </div>
         </section>
 
@@ -452,7 +519,7 @@ export function Landing() {
                     ShaulLavo/bash-web
                   </a>
                 </p>
-                <div className="lp-start-log lp-ground">
+                <div className="lp-start-log lp-ground lp-ground-grain">
                   <WorkspaceSwitcher
                     workspaces={workspaces}
                     loading={loadingWorkspaces}
@@ -488,16 +555,14 @@ export function Landing() {
                 <ul className="lp-browsers" aria-label={LANDING_COPY.showcaseBrowsers}>
                   {BROWSERS.map((item) => (
                     <li key={item.name}>
-                      <img src={item.logo} alt="" width="32" height="32" loading="lazy" />
+                      <img src={item.logo} alt="" width="32" height="32" />
                       {item.name}
                     </li>
                   ))}
                 </ul>
               </div>
-              <div className="lp-phone-frame lp-ground">
-                <div className="lp-device">
-                  <WorkbenchPreview demo={demo} pane="code" label={LANDING_COPY.showcaseHeroFrame} />
-                </div>
+              <div className="lp-phone-frame lp-ground lp-ground-grain">
+                <PhoneShowcase />
               </div>
             </div>
             <div className={marqueePaused ? "lp-marquee is-paused" : "lp-marquee"}>
@@ -513,6 +578,7 @@ export function Landing() {
               <button
                 type="button"
                 className="lp-loop-pause"
+                aria-pressed={marqueePaused}
                 aria-label={marqueePaused ? LANDING_COPY.marqueePlay : LANDING_COPY.marqueePause}
                 title={marqueePaused ? LANDING_COPY.marqueePlay : LANDING_COPY.marqueePause}
                 onClick={() => setMarqueePaused(!marqueePaused)}
@@ -547,8 +613,8 @@ export function Landing() {
                 </ul>
                 <p className="lp-hood-limits">{LANDING_COPY.hoodLimits}</p>
               </div>
-              <div className="lp-hood-frame lp-ground">
-                <HubDiagram />
+              <div className="lp-hood-frame lp-ground lp-ground-grain">
+                <HubDiagram scheme={scheme} />
               </div>
             </div>
           </div>
@@ -572,6 +638,7 @@ export function Landing() {
                 >
                   <span className="lp-mini-tabs" aria-hidden="true">
                     <span className="is-on" data-tab-tone="md">
+                      <i className="lp-mini-badge lp-mini-badge-md">MD</i>
                       LICENSE
                     </span>
                   </span>

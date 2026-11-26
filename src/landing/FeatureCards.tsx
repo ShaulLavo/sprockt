@@ -1,7 +1,13 @@
-// The four feature cards from the #4 landing: a title, two lines, and a drawn piece of the real
-// workbench on the painterly ground panel. The drawings are decorative; the words carry the meaning.
-import { Fragment, type ReactNode } from "react";
+// The four feature cards combining #4 "Sheet and Biro"'s crisp workbench fragments with #2
+// "Precision Sheet"'s per-card distinct painterly-landscape textures (sky blue, warm sand, sage
+// meadow, deep coastal teal — harmonized for both light and Night Shift dark).
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import { LANDING_COPY } from "./copy";
+import {
+  painterlyFallbackCSS,
+  renderPainterlyLandscape,
+  type FeatureCardTone,
+} from "./effects/painterly-landscape";
 import { BrandLogoTile } from "./logos";
 
 type Tok = readonly [cls: string, text: string];
@@ -153,9 +159,13 @@ function CheckPanel() {
     <div className="lp-mini lp-mini-code lp-at-corner">
       <div className="lp-mini-tabs">
         <span className="is-on" data-tab-tone="ts">
+          <i className="lp-mini-badge lp-mini-badge-ts">TS</i>
           cart.ts
         </span>
-        <span>types.ts</span>
+        <span>
+          <i className="lp-mini-badge lp-mini-badge-ts">TS</i>
+          types.ts
+        </span>
         <em>3 problems</em>
       </div>
       <ol className="lp-mini-pre">
@@ -166,7 +176,7 @@ function CheckPanel() {
         ))}
       </ol>
       <div className="lp-mini-diag">
-        <b>ts(2322)</b> Type 'number[]' is not assignable to type 'number'.
+        <b>ts(2322)</b> Type &apos;Array&lt;number&gt;&apos; is not assignable to type &apos;number&apos;.
       </div>
     </div>
   );
@@ -203,6 +213,15 @@ function TerminalPanel() {
         </span>
         <b>my-app</b>
         <span>bash</span>
+        <span className="lp-mini-branch">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="5" cy="3.5" r="1.5" />
+            <circle cx="5" cy="12.5" r="1.5" />
+            <circle cx="11" cy="5.5" r="1.5" />
+            <path d="M5 5v6M11 7c0 2.6-6 1.8-6 4" />
+          </svg>
+          main
+        </span>
       </div>
       <div className="lp-mini-screen">
         <p>
@@ -241,6 +260,10 @@ function TerminalPanel() {
           <Tick />
           <span>dist/index.html</span>
         </p>
+        <p className="lp-mini-log">
+          <Tick />
+          <span>dist/assets/index.js</span>
+        </p>
       </div>
     </div>
   );
@@ -263,36 +286,99 @@ function StorePanel() {
   );
 }
 
+function PainterlyBackdrop(props: { readonly tone: FeatureCardTone; readonly scheme: "light" | "dark" }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    const canvas = canvasRef.current;
+    if (!host || !canvas) return;
+
+    const paint = () => {
+      const w = host.clientWidth || 560;
+      const h = host.clientHeight || 420;
+      const ok = renderPainterlyLandscape(canvas, props.tone, props.scheme, w, h);
+      if (ok) {
+        canvas.style.opacity = "1";
+        host.style.background = "";
+      } else {
+        canvas.style.opacity = "0";
+        host.style.background = painterlyFallbackCSS(props.tone, props.scheme);
+      }
+    };
+
+    paint();
+    const ro = new ResizeObserver(paint);
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, [props.tone, props.scheme]);
+
+  return (
+    <div ref={hostRef} className="lp-panel-bg" data-card-tone={props.tone} aria-hidden="true">
+      <canvas ref={canvasRef} className="lp-panel-canvas" aria-hidden="true" />
+      <div className="lp-panel-grain" aria-hidden="true" />
+    </div>
+  );
+}
+
 function FeatureCard(props: {
   readonly title: string;
   readonly body: string;
   readonly fade: "b" | "br";
+  readonly tone: FeatureCardTone;
+  readonly scheme: "light" | "dark";
   readonly children: ReactNode;
 }) {
   return (
-    <article className="lp-card">
+    <article className="lp-card" data-testid={`feature-card-${props.tone}`}>
       <h3>{props.title}</h3>
       <p>{props.body}</p>
-      <div className="lp-panel" aria-hidden="true">
+      <div className="lp-panel" data-card-tone={props.tone} aria-hidden="true">
+        <PainterlyBackdrop tone={props.tone} scheme={props.scheme} />
         <div className={`lp-stage lp-fade-${props.fade}`}>{props.children}</div>
       </div>
     </article>
   );
 }
 
-export function FeatureCards() {
+export function FeatureCards(props: { readonly scheme: "light" | "dark" }) {
   return (
     <div className="lp-cards">
-      <FeatureCard title={LANDING_COPY.featureCheckTitle} body={LANDING_COPY.featureCheckBody} fade="br">
+      <FeatureCard
+        title={LANDING_COPY.featureCheckTitle}
+        body={LANDING_COPY.featureCheckBody}
+        fade="br"
+        tone="check"
+        scheme={props.scheme}
+      >
         <CheckPanel />
       </FeatureCard>
-      <FeatureCard title={LANDING_COPY.featureCompleteTitle} body={LANDING_COPY.featureCompleteBody} fade="b">
+      <FeatureCard
+        title={LANDING_COPY.featureCompleteTitle}
+        body={LANDING_COPY.featureCompleteBody}
+        fade="b"
+        tone="complete"
+        scheme={props.scheme}
+      >
         <CompletePanel />
       </FeatureCard>
-      <FeatureCard title={LANDING_COPY.featureTermTitle} body={LANDING_COPY.featureTermBody} fade="b">
+      <FeatureCard
+        title={LANDING_COPY.featureTermTitle}
+        body={LANDING_COPY.featureTermBody}
+        fade="b"
+        tone="terminal"
+        scheme={props.scheme}
+      >
         <TerminalPanel />
       </FeatureCard>
-      <FeatureCard title={LANDING_COPY.featureStoreTitle} body={LANDING_COPY.featureStoreBody} fade="b">
+      <FeatureCard
+        title={LANDING_COPY.featureStoreTitle}
+        body={LANDING_COPY.featureStoreBody}
+        fade="b"
+        tone="store"
+        scheme={props.scheme}
+      >
         <StorePanel />
       </FeatureCard>
     </div>
