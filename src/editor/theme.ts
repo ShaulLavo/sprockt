@@ -1,7 +1,7 @@
 // The editor's colours come from the IDE's design tokens (Sheet & Biro / dark sibling `--syn-*`,
 // `--bg-editor`, …), so one stylesheet themes the whole workbench.
 import type { EditorTheme } from "@singapore-editor/core/rendering";
-import { createSignal, onCleanup, type Accessor } from "solid-js";
+import { createSignal, onCleanup, type Accessor } from "../lib/reactive";
 
 export type ColorScheme = "light" | "dark";
 

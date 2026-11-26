@@ -1,7 +1,7 @@
 // FileService on top of a filesystem and a watcher, with nothing browser-specific in it, so the
 // rules it enforces (the project boundary, what "saved" means) are tested without a runtime.
 import type { SizeLookup } from "./size";
-import { createSignal } from "solid-js";
+import { createSignal } from "../lib/reactive";
 import { createZipBlob } from "../lib/zip/zip";
 import {
   isInsideProject,

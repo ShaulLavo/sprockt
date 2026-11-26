@@ -5,7 +5,7 @@
 // One tab of a workspace runs the server (tasks/dev-server-line.ts decides which); this file is
 // the process and the signals a pane reads.
 import { control, createShell, type Shell } from "bash-web";
-import { createSignal, type Accessor } from "solid-js";
+import { createSignal, type Accessor } from "../lib/reactive";
 import type { Runtime } from "waffle";
 import type { FileService } from "../files/service";
 import type { PreviewTransport } from "../preview/transport";

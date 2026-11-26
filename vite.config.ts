@@ -1,5 +1,5 @@
 import { defineConfig, type Connect, type Plugin } from "vite";
-import solid from "vite-plugin-solid";
+import react from "@vitejs/plugin-react";
 import { previewScripts } from "./src/preview/vite-plugin";
 
 // Waffle shares process state through SharedArrayBuffer, so every response needs cross-origin
@@ -29,7 +29,7 @@ function crossOriginIsolation(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [solid(), crossOriginIsolation(), previewScripts()],
+  plugins: [react(),crossOriginIsolation(), previewScripts()],
   build: { target: "esnext", sourcemap: true },
   // Each worker is one file. A split worker chunk imports back from the worker's entry file, and
   // WebKit evaluates that entry a second time instead of reusing the running one: the second copy

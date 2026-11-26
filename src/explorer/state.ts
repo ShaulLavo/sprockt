@@ -1,7 +1,7 @@
 // The explorer's state and actions for one workspace: what is loaded, expanded, selected and being
 // edited, and what happens when the user creates, renames, deletes, moves or uploads. The
 // components only draw it and forward events.
-import { createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
+import { createMemo, createSignal, onCleanup, type Accessor } from "../lib/reactive";
 import { DestinationExistsError, FolderGoneError } from "../files/errors";
 import { createAutoOpener } from "./auto-open";
 import type { DirEntry, FileChange, FileService, UploadItem } from "../files/service";

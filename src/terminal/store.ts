@@ -2,7 +2,7 @@
 // view starts its own Ghostty + bash-web session on the shared runtime and reports its handle
 // here, so other parts of the workbench (a dev-server task, an install step) can open a tab
 // and run a command in it without reaching into the terminal pane.
-import { createSignal, type Accessor } from "solid-js";
+import { createSignal, type Accessor } from "../lib/reactive";
 import type { SessionState, TerminalHandle } from "./session";
 import {
   addTab,

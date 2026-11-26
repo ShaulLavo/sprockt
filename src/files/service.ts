@@ -1,7 +1,7 @@
 // The one door between the UI and a workspace's files. Paths are project-relative: plain
 // `a/b.txt` names, never absolute, never with `.` or `..`. A path that is not, or that reaches
 // outside the project through a symbolic link, is refused with ProjectPathError.
-import type { Accessor } from "solid-js";
+import type { Accessor } from "../lib/reactive";
 import type { Runtime } from "waffle";
 import type { SaveState } from "./persistence";
 import { pathLocksFor } from "./path-locks";

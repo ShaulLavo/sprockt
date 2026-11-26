@@ -1,7 +1,7 @@
 // How many browser tabs have this workspace open and live, for the status bar's sharing
 // indicator. Each live tab says hello on a BroadcastChannel, answers others, repeats itself
 // every few seconds and says goodbye when it closes or stops being live.
-import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-js";
+import { createEffect, createSignal, on, onCleanup, type Accessor } from "../lib/reactive";
 
 const HEARTBEAT_MS = 4000;
 /** A tab not heard from for this long is gone (it crashed or its page froze). */

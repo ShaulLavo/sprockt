@@ -1,4 +1,4 @@
-import { createSignal, type Accessor } from "solid-js";
+import { createSignal, type Accessor } from "../lib/reactive";
 import { parseRoute, routePath, type Route } from "./routes";
 
 const [route, setRoute] = createSignal<Route>(parseRoute(location.pathname));

@@ -1,7 +1,7 @@
 // The landing page's one live workspace demo. Every workbench render on the page shares this
 // state, just as two browser tabs share one workspace: typing, install output, dev server boot,
 // TypeScript hover, save tick, HMR flash and the interactive counter stay in sync.
-import { createSignal, onCleanup, onMount, type Accessor } from "solid-js";
+import { createSignal, onCleanup, onMount, type Accessor } from "../lib/reactive";
 import { DEMO_SEQUENCE } from "../ui/motion";
 
 /** Step indices for the scripted workbench sequence. */

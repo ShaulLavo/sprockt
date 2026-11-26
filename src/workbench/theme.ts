@@ -1,7 +1,7 @@
 // Light or dark, following the system until the user picks the other one. The choice is stored
 // host-only in localStorage and applied as `data-theme` on <html>; the tokens in styles.css do
 // the rest with `light-dark()`.
-import { createSignal, type Accessor } from "solid-js";
+import { createSignal, type Accessor } from "../lib/reactive";
 
 export type ThemePreference = "system" | "light" | "dark";
 export type ColorScheme = "light" | "dark";
