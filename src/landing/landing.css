@@ -845,7 +845,27 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
 }
 
 .lp-wb-row.is-clickable {
+  padding: 0;
+}
+
+.lp-wb-row-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  padding: 0 8px 0 calc(8px + var(--depth, 0) * 14px);
+  border-radius: inherit;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
+}
+
+.lp-wb-row-btn:focus-visible,
+.lp-wb-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 
 .lp-wb-row.is-dim {
@@ -1063,6 +1083,9 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   margin-left: 1px;
   vertical-align: -2px;
   background: var(--caret);
+}
+
+.lp-wb[data-playing="true"] .lp-wb-caret {
   animation: lp-blink 1.05s steps(1, end) infinite;
 }
 
@@ -1278,6 +1301,9 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   height: 13px;
   vertical-align: -2px;
   background: var(--term-cursor);
+}
+
+.lp-wb[data-playing="true"] .lp-wb-tcur {
   animation: lp-blink 1.05s steps(1, end) infinite;
 }
 
@@ -1986,7 +2012,7 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
 .lp-ws-btn-danger {
   border-color: var(--danger);
   background: var(--danger);
-  color: #ffffff;
+  color: var(--danger-fg);
 }
 
 .lp-ws-rename-input {

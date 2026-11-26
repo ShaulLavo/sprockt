@@ -82,6 +82,30 @@ const PANES: readonly { pane: PhonePane; label: string; icon: "files" | "code" |
 
 const SOFT_KEYS = ["esc", "tab", "ctrl", "^C", "↑", "↓", "←", "→", "|", "~", "/", "-"] as const;
 
+function nextTabIndex(key: string, current: number, length: number): number | undefined {
+  if (length <= 0) return undefined;
+  if (key === "ArrowRight" || key === "ArrowDown") return (current + 1) % length;
+  if (key === "ArrowLeft" || key === "ArrowUp") return (current - 1 + length) % length;
+  if (key === "Home") return 0;
+  if (key === "End") return length - 1;
+  return undefined;
+}
+
+function handleTabListKeyDown<T>(
+  event: KeyboardEvent & { currentTarget: HTMLButtonElement },
+  items: readonly T[],
+  currentIndex: number,
+  onSelect: (item: T) => void,
+): void {
+  const next = nextTabIndex(event.key, currentIndex, items.length);
+  if (next === undefined) return;
+  event.preventDefault();
+  onSelect(items[next]!);
+  const tablist = event.currentTarget.closest('[role="tablist"]');
+  const tabs = tablist?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+  tabs?.[next]?.focus();
+}
+
 function FileMark(props: { kind: TreeRow["kind"] }) {
   return (
     <Show when={FILE_MARK[props.kind]} fallback={<Icon name="folder" class="lp-wb-ft lp-ft-dir" />}>
@@ -115,6 +139,11 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
   const panel = (name: PhonePane) =>
     ({ id: panelId(name), role: "tabpanel", "aria-labelledby": tabId(name) }) as const;
 
+  const fileTabId = (id: DemoFileId) => `${uid}-file-tab-${id}`;
+  const filePanelId = `${uid}-file-panel`;
+  const termTabId = (id: DemoTerminalId) => `${uid}-term-tab-${id}`;
+  const termPanelId = `${uid}-term-panel`;
+
   function openDemoFile(id: DemoFileId): void {
     props.demo.setActiveFile(id);
     setPane("code");
@@ -129,6 +158,7 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
         aria-label={props.label}
         data-phone-pane={pane()}
         data-step={step()}
+        data-playing={props.demo.playing() ? "true" : "false"}
       >
         <div class="lp-wb-titlebar">
           <span class="lp-wb-brand">
@@ -148,15 +178,17 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
                 dev :5173
               </span>
             </Show>
-            <button
-              type="button"
-              class="lp-wb-replay"
-              aria-label={props.demo.playing() ? "Pause demo" : "Replay demo"}
-              title={props.demo.playing() ? "Pause demo" : "Replay demo"}
-              onClick={() => (props.demo.playing() ? props.demo.pause() : props.demo.replay())}
-            >
-              <Icon name={props.demo.playing() ? "stop" : "reload"} />
-            </button>
+            <Show when={!props.demo.reducedMotion()}>
+              <button
+                type="button"
+                class="lp-wb-replay"
+                aria-label={props.demo.playing() ? "Pause demo" : "Replay demo"}
+                title={props.demo.playing() ? "Pause demo" : "Replay demo"}
+                onClick={() => (props.demo.playing() ? props.demo.pause() : props.demo.replay())}
+              >
+                <Icon name={props.demo.playing() ? "stop" : "reload"} />
+              </button>
+            </Show>
           </span>
         </div>
 
@@ -191,18 +223,35 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
                     }}
                     data-tab-tone={row.fileId ? fileTabTone(row.name) : undefined}
                     style={{ "--depth": row.depth }}
-                    onClick={() => {
-                      if (row.fileId) openDemoFile(row.fileId);
-                    }}
                   >
                     <Show
-                      when={row.kind === "dir" || row.kind === "dir-open"}
-                      fallback={<span class="lp-wb-chev" />}
+                      when={row.fileId}
+                      fallback={
+                        <>
+                          <Show
+                            when={row.kind === "dir" || row.kind === "dir-open"}
+                            fallback={<span class="lp-wb-chev" aria-hidden="true" />}
+                          >
+                            <Icon name={row.kind === "dir" ? "chev-r" : "chev-d"} class="lp-wb-chev" />
+                          </Show>
+                          <FileMark kind={row.kind} />
+                          <span>{row.name}</span>
+                        </>
+                      }
                     >
-                      <Icon name={row.kind === "dir" ? "chev-r" : "chev-d"} class="lp-wb-chev" />
+                      {(fileId) => (
+                        <button
+                          type="button"
+                          class="lp-wb-row-btn"
+                          aria-current={selected() ? "true" : undefined}
+                          onClick={() => openDemoFile(fileId())}
+                        >
+                          <span class="lp-wb-chev" aria-hidden="true" />
+                          <FileMark kind={row.kind} />
+                          <span>{row.name}</span>
+                        </button>
+                      )}
                     </Show>
-                    <FileMark kind={row.kind} />
-                    <span>{row.name}</span>
                   </li>
                 );
               }}
@@ -213,17 +262,25 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
         <div class="lp-wb-pane lp-wb-editor" {...panel("code")}>
           <div class="lp-wb-strip" role="tablist" aria-label="Open files">
             <For each={EDITOR_TABS}>
-              {(tab) => {
+              {(tab, index) => {
                 const isActive = () => props.demo.activeFile() === tab.id;
                 return (
                   <button
                     type="button"
                     role="tab"
+                    id={fileTabId(tab.id)}
                     class="lp-wb-tab"
                     classList={{ "is-active": isActive() }}
                     aria-selected={isActive()}
+                    aria-controls={filePanelId}
+                    tabindex={isActive() ? 0 : -1}
                     data-tab-tone={fileTabTone(tab.id)}
                     onClick={() => props.demo.setActiveFile(tab.id)}
+                    onKeyDown={(event) =>
+                      handleTabListKeyDown(event, EDITOR_TABS, index(), (next) =>
+                        props.demo.setActiveFile(next.id),
+                      )
+                    }
                   >
                     <FileMark kind={tab.kind} />
                     <span>{tab.id}</span>
@@ -232,7 +289,12 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
               }}
             </For>
           </div>
-          <div class="lp-wb-code-wrap">
+          <div
+            id={filePanelId}
+            class="lp-wb-code-wrap"
+            role="tabpanel"
+            aria-labelledby={fileTabId(props.demo.activeFile())}
+          >
             <ol class="lp-wb-code">
               <For each={lines()}>
                 {(line, index) => {
@@ -326,17 +388,25 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
         <div class="lp-wb-pane lp-wb-terminal" {...panel("terminal")}>
           <div class="lp-wb-strip" role="tablist" aria-label="Terminal tabs">
             <For each={TERM_TABS}>
-              {(tab) => {
+              {(tab, index) => {
                 const isActive = () => props.demo.activeTerm() === tab.id;
                 return (
                   <button
                     type="button"
                     role="tab"
+                    id={termTabId(tab.id)}
                     class="lp-wb-tab"
                     classList={{ "is-active": isActive() }}
                     aria-selected={isActive()}
+                    aria-controls={termPanelId}
+                    tabindex={isActive() ? 0 : -1}
                     data-tab-tone={tab.tone}
                     onClick={() => props.demo.setActiveTerm(tab.id)}
+                    onKeyDown={(event) =>
+                      handleTabListKeyDown(event, TERM_TABS, index(), (next) =>
+                        props.demo.setActiveTerm(next.id),
+                      )
+                    }
                   >
                     <span class="lp-wb-term-dot" aria-hidden="true" />
                     <span>{tab.label}</span>
@@ -348,7 +418,12 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
               Ghostty WebGPU
             </span>
           </div>
-          <div class="lp-wb-term">
+          <div
+            id={termPanelId}
+            class="lp-wb-term"
+            role="tabpanel"
+            aria-labelledby={termTabId(props.demo.activeTerm())}
+          >
             <Show
               when={props.demo.activeTerm() === "bash"}
               fallback={
@@ -440,14 +515,18 @@ export function WorkbenchPreview(props: WorkbenchPreviewProps) {
 
         <div class="lp-wb-switcher" role="tablist" aria-label="Panes">
           <For each={PANES}>
-            {(item) => (
+            {(item, index) => (
               <button
                 type="button"
                 role="tab"
                 id={tabId(item.pane)}
                 aria-controls={panelId(item.pane)}
                 aria-selected={pane() === item.pane}
+                tabindex={pane() === item.pane ? 0 : -1}
                 onClick={() => setPane(item.pane)}
+                onKeyDown={(event) =>
+                  handleTabListKeyDown(event, PANES, index(), (next) => setPane(next.pane))
+                }
               >
                 <Icon name={item.icon} />
                 <span>{item.label}</span>

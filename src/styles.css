@@ -61,6 +61,7 @@
   --ok-soft: light-dark(#e7f7ed, #122b1e);
   --warn: light-dark(#9a5b00, #f2c779);
   --danger: light-dark(#c81e2b, #f87171);
+  --danger-fg: light-dark(#ffffff, #0a0d14);
   --info: light-dark(#1a4be0, #5ab9fc);
   --dirty: light-dark(#5c616b, #a7b1c2);
   --git-modified: light-dark(#9a5b00, #f2c779);

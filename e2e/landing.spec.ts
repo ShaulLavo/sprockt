@@ -161,8 +161,12 @@ test("workspace switcher lists without runtime JS, preserves other tab on busy r
   await expect(page.getByTestId("workspace-empty")).toBeVisible();
 });
 
-async function assertPhoneLayout(page: Page, expectedTheme: "dark" | "light"): Promise<void> {
-  await expect(page.locator("html")).toHaveAttribute("data-theme", expectedTheme);
+async function assertPhoneLayout(page: Page, expectedAttr: "dark" | "light" | null): Promise<void> {
+  if (expectedAttr === null) {
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme", /./);
+  } else {
+    await expect(page.locator("html")).toHaveAttribute("data-theme", expectedAttr);
+  }
 
   const overflow = await page.evaluate(() => ({
     vsClient: document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -190,14 +194,13 @@ test("phone viewport has no horizontal overflow, exposes menu/theme controls, an
   await expect(page.getByTestId("phone-menu-toggle")).toBeVisible();
   await expect(page.getByTestId("header-new-workspace")).toBeHidden();
 
-  // First click locks an explicit theme (dark or light); second click flips to the opposite theme.
+  // First click locks the non-system explicit theme; second click returns to following the system.
   await page.getByTestId("phone-theme-toggle").click();
   const firstTheme = (await page.locator("html").getAttribute("data-theme")) === "dark" ? "dark" : "light";
   await assertPhoneLayout(page, firstTheme);
 
   await page.getByTestId("phone-theme-toggle").click();
-  const secondTheme = firstTheme === "dark" ? "light" : "dark";
-  await assertPhoneLayout(page, secondTheme);
+  await assertPhoneLayout(page, null);
 
   // Mobile menu exposes navigation links at 44px touch height.
   await page.getByTestId("phone-menu-toggle").click();
@@ -205,6 +208,117 @@ test("phone viewport has no horizontal overflow, exposes menu/theme controls, an
   await expect(menu).toBeVisible();
   await expect(menu).toContainText("Starters");
   await expect(menu).toContainText("GitHub");
+});
+
+test("theme choice persists in the same tab across landing and workbench in both directions", async ({
+  browser,
+  baseURL,
+}) => {
+  const darkContext = await browser.newContext({ baseURL, colorScheme: "dark" });
+  const page = await darkContext.newPage();
+  const themeColors = () =>
+    page.evaluate(() =>
+      Array.from(document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')).map(
+        (meta) => meta.content,
+      ),
+    );
+  try {
+    await page.goto("/");
+    await expect(page.getByTestId("landing-page")).toBeVisible();
+
+    const systemDark = await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches);
+    const [other, own] = systemDark ? (["light", "dark"] as const) : (["dark", "light"] as const);
+    const otherHex = other === "light" ? "#ffffff" : "#0a0d14";
+    const otherLabel = other === "light" ? "Light" : "Dark";
+    const ownLabel = own === "light" ? "Light" : "Dark";
+
+    // Direction 1 (landing -> workbench): choose the non-system theme on landing, then open a starter in the same tab.
+    await page.getByTestId(`theme-${other}`).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", other);
+    await expect.poll(themeColors).toEqual([otherHex, otherHex]);
+
+    await page.getByTestId("template-bun-sqlite").click();
+    await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
+    await expect(page.getByTestId("workbench")).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", other);
+    await expect(page.getByRole("button", { name: otherLabel, exact: false })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect.poll(themeColors).toEqual([otherHex, otherHex]);
+
+    // Direction 2a (workbench -> landing, returning to system): switch back to own scheme and return to landing.
+    await page.getByRole("button", { name: ownLabel, exact: false }).click();
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme", /./);
+    await page.locator(".wb-brand").click();
+    await expect(page.getByTestId("landing-page")).toBeVisible();
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme", /./);
+    await expect(page.getByTestId(`theme-${own}`)).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(themeColors).toEqual(["#ffffff", "#0a0d14"]);
+
+    // Direction 2b (workbench -> landing, explicit override): pick other scheme in workbench and return to landing.
+    await page.getByTestId("template-bun-sqlite").click();
+    await expect(page.getByTestId("workbench")).toBeVisible();
+    await page.getByRole("button", { name: otherLabel, exact: false }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", other);
+    await page.locator(".wb-brand").click();
+    await expect(page.getByTestId("landing-page")).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", other);
+    await expect(page.getByTestId(`theme-${other}`)).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(themeColors).toEqual([otherHex, otherHex]);
+  } finally {
+    await darkContext.close();
+  }
+});
+
+test("landing demo explorer and tablists are keyboard accessible and pause stops cursor blink", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const demo = page.locator(".lp-hero-tab");
+  const workbench = demo.locator(".lp-wb");
+
+  // Explorer files open via native buttons with keyboard activation.
+  const cssButton = demo.locator(".lp-wb-explorer").getByRole("button", { name: "App.css" });
+  await cssButton.focus();
+  await page.keyboard.press("Enter");
+  const fileTabs = demo.getByRole("tablist", { name: "Open files" });
+  await expect(fileTabs.getByRole("tab", { name: "App.css" })).toHaveAttribute("aria-selected", "true");
+  await expect(fileTabs.getByRole("tab", { name: "App.css" })).toHaveAttribute("tabindex", "0");
+  await expect(fileTabs.getByRole("tab", { name: "App.tsx" })).toHaveAttribute("tabindex", "-1");
+
+  // ArrowRight moves focus and selection across Open files and links tabpanel via aria-controls/aria-labelledby.
+  await fileTabs.getByRole("tab", { name: "App.css" }).focus();
+  await page.keyboard.press("ArrowRight");
+  const pkgTab = fileTabs.getByRole("tab", { name: "package.json" });
+  await expect(pkgTab).toBeFocused();
+  await expect(pkgTab).toHaveAttribute("aria-selected", "true");
+  const pkgTabId = await pkgTab.getAttribute("id");
+  const pkgPanelId = await pkgTab.getAttribute("aria-controls");
+  expect(pkgTabId).toBeTruthy();
+  expect(pkgPanelId).toBeTruthy();
+  await expect(demo.locator(`#${pkgPanelId}`)).toHaveAttribute("aria-labelledby", pkgTabId!);
+
+  // ArrowRight works on Terminal tabs with matching aria-controls/aria-labelledby.
+  const termTabs = demo.getByRole("tablist", { name: "Terminal tabs" });
+  await termTabs.getByRole("tab", { name: "bash" }).focus();
+  await page.keyboard.press("ArrowRight");
+  const devTab = termTabs.getByRole("tab", { name: "dev :5173" });
+  await expect(devTab).toBeFocused();
+  await expect(devTab).toHaveAttribute("aria-selected", "true");
+
+  // Pause stops both playback and blinking cursors; reduced motion hides Replay.
+  const pauseBtn = demo.getByRole("button", { name: "Pause demo" });
+  if (await pauseBtn.isVisible()) await pauseBtn.click();
+  await expect(workbench).toHaveAttribute("data-playing", "false");
+  await fileTabs.getByRole("tab", { name: "App.tsx" }).click();
+  await expect
+    .poll(() => demo.locator(".lp-wb-caret").evaluate((el) => getComputedStyle(el).animationName))
+    .toBe("none");
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(demo.getByRole("button", { name: /Replay demo|Pause demo/ })).toHaveCount(0);
 });
 
 test("the phone demo's files, source and terminal output reach a screen reader", async ({ page }) => {

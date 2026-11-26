@@ -19,7 +19,7 @@ import { createDemo } from "./demo";
 import { parseGithubInput } from "./github-input";
 import { Icon } from "./icons";
 import { BrandLogoTile, LOGOS } from "./logos";
-import { createThemeController } from "./theme";
+import { applyStoredTheme, colorScheme, setColorScheme } from "../workbench/theme";
 import { WorkbenchPreview } from "./WorkbenchPreview";
 import {
   hasWorkspaceHints,
@@ -78,8 +78,16 @@ function engineUrl(repo: string): string {
 /** The seven real starters, plus Blank as the last option. */
 const TEMPLATES = STARTER_TEMPLATE_SUMMARIES.concat(BLANK_TEMPLATE_SUMMARY);
 
+function nextTheme(): "light" | "dark" {
+  return colorScheme() === "dark" ? "light" : "dark";
+}
+
+function nextThemeLabel(): string {
+  return nextTheme() === "light" ? LANDING_COPY.navThemeLight : LANDING_COPY.navThemeDark;
+}
+
 export function Landing() {
-  const theme = createThemeController();
+  applyStoredTheme();
   const demo = createDemo();
   const [repoInput, setRepoInput] = createSignal("");
   const [repoError, setRepoError] = createSignal<string | undefined>();
@@ -109,9 +117,6 @@ export function Landing() {
   }
 
   const hasRecent = () => workspaces.length > 0 || (loadingWorkspaces() && expectsWorkspaces);
-  const nextTheme = () => (theme.resolved() === "dark" ? "light" : "dark");
-  const nextThemeLabel = () =>
-    nextTheme() === "light" ? LANDING_COPY.navThemeLight : LANDING_COPY.navThemeDark;
 
   function closeMenuOnEscape(event: KeyboardEvent): void {
     if (event.key === "Escape") setMenuOpen(false);
@@ -233,9 +238,9 @@ export function Landing() {
                 type="button"
                 title={LANDING_COPY.navThemeLight}
                 aria-label={LANDING_COPY.navThemeLight}
-                aria-pressed={theme.resolved() === "light"}
+                aria-pressed={colorScheme() === "light"}
                 data-testid="theme-light"
-                onClick={() => theme.setTheme("light")}
+                onClick={() => setColorScheme("light")}
               >
                 <Icon name="sun" />
               </button>
@@ -243,9 +248,9 @@ export function Landing() {
                 type="button"
                 title={LANDING_COPY.navThemeDark}
                 aria-label={LANDING_COPY.navThemeDark}
-                aria-pressed={theme.resolved() === "dark"}
+                aria-pressed={colorScheme() === "dark"}
                 data-testid="theme-dark"
-                onClick={() => theme.setTheme("dark")}
+                onClick={() => setColorScheme("dark")}
               >
                 <Icon name="moon" />
               </button>
@@ -265,7 +270,7 @@ export function Landing() {
               aria-label={nextThemeLabel()}
               title={nextThemeLabel()}
               data-testid="phone-theme-toggle"
-              onClick={() => theme.setTheme(nextTheme())}
+              onClick={() => setColorScheme(nextTheme())}
             >
               <Icon name={nextTheme() === "light" ? "sun" : "moon"} />
             </button>

@@ -93,7 +93,7 @@
 .importer-button.danger {
   border-color: transparent;
   background: var(--danger);
-  color: var(--accent-fg, #08101f);
+  color: var(--danger-fg, light-dark(#ffffff, #0a0d14));
 }
 
 a.importer-button {
