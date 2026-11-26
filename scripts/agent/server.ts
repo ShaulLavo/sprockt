@@ -38,6 +38,19 @@ function allocateLoopbackPort(): Promise<number> {
   });
 }
 
+function waitDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((done) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      done();
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener("abort", finish, { once: true });
+  });
+}
+
 async function pollServerReady(
   url: string,
   child: ChildProcess,
@@ -52,15 +65,17 @@ async function pollServerReady(
     throw new Error(`vite preview exited early (${child.exitCode}):\n${logs.join("")}`);
   }
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal });
+    if (signal?.aborted) throw new Error("Preview server startup aborted by signal");
     if (res.ok) return;
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     // Server still binding.
   }
   if (Date.now() >= deadline) {
     throw new Error(`Timed out waiting for ${url} to answer:\n${logs.join("")}`);
   }
-  await new Promise((done) => setTimeout(done, 150));
+  await waitDelay(150, signal);
   return pollServerReady(url, child, logs, deadline, signal);
 }
 
