@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createRetirement, MOUNTED_MODE, type RetirementOptions } from "./retirement";
+import { createRetirement, freshDeployYes, MOUNTED_MODE, type RetirementOptions } from "./retirement";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -181,4 +181,40 @@ test("a flag that cannot be read or written does not break the worker", async ()
   expect(await worker.allowed(false)).toBe(true);
   await worker.retire();
   expect(await worker.allowed(false)).toBe(false);
+});
+
+/** A mode answer that sent its head and then nothing: its body ends only when it is let go of. */
+function stalledBody(signal: AbortSignal): Response {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('{"previews":'));
+      signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+    },
+  });
+  return new Response(body, { headers: { "content-type": "application/json" } });
+}
+
+test("a mode answer whose body never ends is no answer once the deadline passed, and is let go of", async () => {
+  const signals: AbortSignal[] = [];
+  const worker = createRetirement({
+    flag: { has: async () => false, set: async () => {} },
+    fetchMode: async (signal) => {
+      signals.push(signal);
+      return stalledBody(signal);
+    },
+    unregister: async () => {},
+    deadlineMs: 20,
+  });
+  expect(await worker.allowed(false)).toBe(false);
+  // The request was aborted, so the connection it held is closed.
+  expect(signals[0]?.aborted).toBe(true);
+});
+
+test("a question to the deploy that never comes back is a no, for the tab that keeps sockets too", async () => {
+  // A fetch that ignores its signal is not waited for either.
+  const yes = freshDeployYes(() => new Promise<Response>(() => {}), 20);
+  expect(await yes()).toBe(false);
+  // And one that answers within the deadline is heard.
+  const quick = freshDeployYes(async () => mounted(), 1_000);
+  expect(await quick()).toBe(true);
 });

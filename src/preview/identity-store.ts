@@ -15,6 +15,7 @@ export interface IdentityStore {
    * claim the same key at the same moment all get the one that was stored first.
    */
   claim(key: string, fresh: string): Promise<string>;
+  /** Removes the nonce under `key`. Rejects when it could not: the caller must not go on as if it had. */
   forget(key: string): Promise<void>;
 }
 
@@ -59,22 +60,6 @@ async function inTransaction<T>(
   } finally {
     database.close();
   }
-}
-
-/**
- * Forgets the nonce of the workspace whose storage has this name. Called after the storage is
- * gone: forgetting first would give a workspace that could not be deleted new host names under
- * its open tabs. It lives in this file, which imports nothing, so the pages that delete
- * workspaces (the landing page, the importer) can load it by itself.
- */
-export async function forgetPreviewIdentity(
-  storage: string,
-  store: IdentityStore = browserIdentityStore(),
-): Promise<void> {
-  // A nonce that could not be removed only means the next workspace of this id keeps its names.
-  await store.forget(storage).catch((error: unknown) => {
-    console.error("Forgetting a workspace's preview identity failed", error);
-  });
 }
 
 export function browserIdentityStore(factory: IDBFactory = globalThis.indexedDB): IdentityStore {

@@ -36,9 +36,11 @@ export function createIsolatedPreviewTransport(options: IsolatedPreviewOptions):
   const listeners = new Set<(servers: readonly PreviewServer[]) => void>();
   let identity: Promise<string> | undefined;
   let origins: PreviewOrigins | undefined;
+  let disposed = false;
 
   /** Read once and shared by everything that needs it. A read that failed is tried again. */
   function readIdentity(): Promise<string> {
+    if (disposed) return Promise.reject(new Error("The previews of this workspace were closed"));
     const reading = (identity ??= options.identity());
     reading.catch(() => {
       if (identity === reading) identity = undefined;
@@ -146,9 +148,13 @@ export function createIsolatedPreviewTransport(options: IsolatedPreviewOptions):
     watch,
     onReloadNeeded: () => () => {},
     async dispose() {
+      disposed = true;
       listeners.clear();
       listed.clear();
       await previews.dispose();
+      // A claim that is still out is stored before this resolves, and the tab lets go of the
+      // workspace's storage only after it (session.ts): no claim can land after a deletion.
+      await identity?.catch(() => undefined);
     },
   };
 }

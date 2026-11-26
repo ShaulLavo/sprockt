@@ -142,7 +142,7 @@ async function askHosts(): Promise<void> {
  */
 const retirement = createRetirement({
   flag: retiredFlag(self.caches),
-  fetchMode: () => fetch(PREVIEW_MODE_PATH, { cache: "no-store" }),
+  fetchMode: (signal) => fetch(PREVIEW_MODE_PATH, { cache: "no-store", signal }),
   unregister: () => self.registration.unregister(),
 });
 

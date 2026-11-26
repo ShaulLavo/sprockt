@@ -287,10 +287,16 @@ has the protocol):
   guest cannot choose its workspace's host names, and since the key is part of the identity,
   two workspaces never derive the same origin whatever their nonces are. Every tab of a
   workspace reads the same nonce (a claim is one IndexedDB transaction) and so derives the
-  same hosts. The three places that delete a workspace's storage forget its nonce afterwards,
-  so a workspace created again under the same id gets new hosts, and never the cookies or
-  storage its predecessor's pages left behind. The same workspace under another IDE origin
-  gets other hosts too.
+  same hosts. The nonce lives exactly as long as the storage it was made for
+  (`workspace/storage-lifecycle.ts`): a tab claims it only once it has the storage open, and
+  a claim still out when the tab closes is stored before the tab lets go of the storage. Every
+  deletion of a workspace goes through `deleteIdleWorkspaceStorage`, which forgets the nonce
+  while it holds the storage's locks, before it removes the storage, so no tab can open the
+  workspace in between and claim the old nonce. A nonce that cannot be forgotten fails the
+  deletion and leaves the workspace as it was; a busy workspace keeps its nonce. So a
+  workspace created again under the same id gets new hosts, and never the cookies or storage
+  its predecessor's pages left behind, and all of its tabs agree on them. The same workspace
+  under another IDE origin gets other hosts too.
 - **A request's way.** The tab that runs a server mounts one hidden relay frame on the
   server's origin and hands it a `MessagePort`. The origin's service worker sends every
   request of the app over that port to the tab, which passes it to the server with the one
@@ -359,15 +365,24 @@ How the mounted transport works:
   that sent no referrer) goes where its address says, and a page load to an address outside
   `/__preview/` never reaches the worker at all. A page's WebSocket reaches its own server's
   port and no other, though the page names the port itself.
-- **Live sockets stay under the deploy's word** (`preview/tunnels.ts`). The worker asks the
-  deploy when a socket starts, then hands the page's port to the tab that runs the server and
-  is out of it. So that tab asks too: every server it registers is wrapped, and no frame is
-  passed on in either direction without a yes that was asked after the frame arrived (frames
-  that wait together share one question). On a no, or when the deploy cannot be asked, every
-  live socket is ended on both sides and every response still streaming is cut off. The worker
-  also tells the tabs when it is retired or refuses a request, so idle sockets end then and
-  not at their next frame. A tab of the old build that nobody tells, with sockets that carry
-  nothing, keeps those idle sockets open until their next frame.
+- **Live streams stay under the deploy's word** (`preview/tunnels.ts`). The worker asks the
+  deploy before it hands a request or a socket to the tab that runs the server, and is out of
+  it afterwards; a handoff can also arrive late, after the deploy changed. So that tab asks
+  too: every server it registers is wrapped, and nothing is passed on without a yes that was
+  asked after it arrived. That covers the handoff itself (the server sees no request and no
+  connection before it), every frame of a socket in either direction, and the head and every
+  chunk of a response. What waits together shares one question. On a no, or when the deploy
+  cannot be asked, every live socket is ended on both sides and every response is cut off
+  (Known gaps, 12, for the server's side of a response). The worker also tells the tabs when
+  it is retired or refuses a request (`revoke`), so idle streams end then and not at their
+  next frame, and a stream whose question was out at that moment is ended too. A page that
+  closes its socket lets go of the server's connection at once, even while a question is out.
+  A tab of the old build that nobody tells, with sockets that carry nothing, keeps those idle
+  sockets open until their next frame.
+- **Every question has a deadline** (`preview/retirement.ts`, `MODE_DEADLINE_MS`). The whole
+  question, from the request for `/preview-mode.json` to the end of its body, is bounded and
+  then aborted. A question that runs out is no answer, which is never a yes: the worker does
+  not serve, and the tab ends its live streams.
 - **Requests outside the mount.** A previewed page asks for `/src/main.tsx` or `/@vite/client`
   at the root of our origin. The worker sees which page asked and sends the request to that
   page's server. Redirects in answer to such requests follow the same rules as any other.
@@ -527,8 +542,8 @@ where the bytes live.
 
 - `wrangler.jsonc`: assets-only Worker, `not_found_handling: "single-page-application"` (deep
   links get `index.html` on navigation only; a missing worker or guest still answers 404).
-- The IDE's route is the apex `sprockt.dev` only, never a wildcard. `bun.sprockt.dev` is the
-  bun-wasm playground.
+- The IDE's route is the apex `sprockt.dev` only, never a wildcard. Sprockt owns all of
+  `sprockt.dev`; the bun-wasm playground is on `bun.shaulavo.dev`.
 - `wrangler.preview.jsonc`: the preview hosts, `<id>-<port>-pv.sprockt.dev`, as a second
   Worker (`worker/preview.ts`). It is separate so that it can run first on every path of a
   preview host, which must never answer with a file of the IDE, while the IDE's Worker keeps
@@ -537,12 +552,11 @@ where the bytes live.
   Nothing deploys it by itself. Before `wrangler deploy --config wrangler.preview.jsonc`:
   1. a proxied wildcard DNS record `*` on `sprockt.dev` (live since 2026-11-26). The names are one label deep, so the
      zone's Universal SSL certificate covers them;
-  2. the route `*-pv.sprockt.dev/*` belongs to one Worker. bun-wasm's reference config
-     (`bun-wasm-preview`) declares the same pattern for the playground. A host name does not
-     say which IDE it belongs to (the id is a hash), so one Worker serves the hosts of both
-     IDEs: `IDE_ORIGINS` lists both, and the two sites' bun-wasm pins have to agree on the
-     preview protocol, because the service worker it serves and the IDE page that talks to it
-     come from one version. Decide which repository deploys it before the first deploy;
+  2. the route `*-pv.sprockt.dev/*` belongs to this repository's `worker/preview.ts` and is
+     deployed from here (decision, 2026-11-26): the bun-wasm playground moved to
+     `bun.shaulavo.dev`, so Sprockt owns all of `sprockt.dev`. The service worker it serves
+     and the IDE page that talks to it come from one bun-wasm version, the pin in
+     `package.json`;
   3. the IDE build names the same domain, by running `bun run build` with
      `VITE_SPROCKT_PREVIEW_DOMAIN=sprockt.dev` set. A build without it has no previews; it is
      never `mounted`.
@@ -719,6 +733,17 @@ where the bytes live.
     1.4.4 guest did the same was not measured. No retry was added: a hot-reload test that
     fails with the server never coming up is this, and its failure line prints the task's
     status and last output. The cause is in bun-wasm or Waffle and has not been looked into.
+12. **A mounted response that is cut off keeps running in the server.** When the deploy takes
+    previews back, `preview/tunnels.ts` stops a streaming HTTP response (server-sent events, a
+    long download) from reaching the page and ends the page's request with an error. The
+    server's side stays open: Waffle 0.0.150's `PreviewServer.request()` returns only a
+    boolean, so there is no way to end one request. The guest keeps writing into a response
+    nobody reads until it ends it itself or the server stops. Nothing more reaches the page;
+    the cost is the server's work and one open guest connection per cut response. Waffle PR
+    652 adds `request(port, request, sink, { signal })`, which closes the guest's connection
+    on abort; once a release with it is pinned, `tunnels.ts` passes one signal per request
+    and aborts it when it cuts the response off. Mounted previews are trusted-only, so this
+    never reaches a public build.
 
 ## Parallel work map
 

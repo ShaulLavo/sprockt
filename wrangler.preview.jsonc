@@ -7,10 +7,8 @@
   // Nothing deploys this file by itself. Before `wrangler deploy --config wrangler.preview.jsonc`:
   //   1. a proxied wildcard DNS record `*` on sprockt.dev (single-level names, so the zone's
   //      Universal SSL certificate covers them);
-  //   2. the route below must not belong to another Worker. bun-wasm's `bun-wasm-preview`
-  //      Worker declares the same pattern for the playground; one Worker serves the hosts of
-  //      both IDEs, so IDE_ORIGINS lists both and their bun-wasm pins must agree on the preview
-  //      protocol.
+  //   2. the route below is this Worker's alone: Sprockt owns all of sprockt.dev (the bun-wasm
+  //      playground moved to bun.shaulavo.dev), so the IDE is the one origin it serves.
   // The IDE build that goes with it names the same domain: VITE_SPROCKT_PREVIEW_DOMAIN=sprockt.dev.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sprockt-preview-hosts",
@@ -26,7 +24,7 @@
   },
   "vars": {
     "PREVIEW_DOMAIN": "sprockt.dev",
-    "IDE_ORIGINS": "https://sprockt.dev,https://bun.sprockt.dev",
+    "IDE_ORIGINS": "https://sprockt.dev",
   },
   "routes": [{ "pattern": "*-pv.sprockt.dev/*", "zone_name": "sprockt.dev" }],
 }

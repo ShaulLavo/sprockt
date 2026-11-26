@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { previewOrigin, previewOriginId } from "bun-wasm/preview-origins";
 import { previewIdentity } from "./identity";
-import { forgetPreviewIdentity, type IdentityStore } from "./identity-store";
+import type { IdentityStore } from "./identity-store";
 
 /** The IDE's own store, shared by every "tab": a claim is one step, as a transaction makes it. */
 function sharedStore(): IdentityStore & { readonly nonces: Map<string, string> } {
@@ -57,30 +57,14 @@ test("two workspaces never derive the same preview origin, even with the same no
 test("a workspace that was deleted and created again gets a new identity and new origins", async () => {
   const store = sharedStore();
   const first = await previewIdentity("abc", store);
-  await forgetPreviewIdentity("sprockt-abc", store);
+  await store.forget("sprockt-abc");
   const second = await previewIdentity("abc", store);
   expect(second).not.toBe(first);
   expect(await originOf(second)).not.toBe(await originOf(first));
   // Forgetting one workspace leaves the others' names alone.
   const other = await previewIdentity("xyz", store);
-  await forgetPreviewIdentity("sprockt-abc", store);
+  await store.forget("sprockt-abc");
   expect(await previewIdentity("xyz", store)).toBe(other);
-});
-
-test("a store that cannot forget does not fail the deletion it follows", async () => {
-  const store: IdentityStore = {
-    claim: async (_key, fresh) => fresh,
-    forget: () => Promise.reject(new Error("no storage")),
-  };
-  const errors: unknown[] = [];
-  const original = console.error;
-  console.error = (...args: unknown[]) => void errors.push(args);
-  try {
-    await forgetPreviewIdentity("sprockt-abc", store);
-  } finally {
-    console.error = original;
-  }
-  expect(errors).toHaveLength(1);
 });
 
 test("a workspace id that is not one is refused before anything is stored", async () => {

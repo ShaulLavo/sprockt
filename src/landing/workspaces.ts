@@ -159,12 +159,7 @@ export function deleteStoredWorkspace(id: string): Promise<"deleted" | "missing"
   return runSerialized(async () => {
     const { deleteIdleWorkspaceStorage } = await import("./storage-discovery");
     const result = await deleteIdleWorkspaceStorage(storageName(id));
-    if (result === "busy") return result;
-    removeWorkspaceHint(id);
-    // The preview identity goes with the storage: a workspace made again under this id must
-    // not get this one's preview origins. Loaded here, so the cold landing page does not.
-    const { forgetPreviewIdentity } = await import("../preview/identity-store");
-    await forgetPreviewIdentity(storageName(id));
+    if (result !== "busy") removeWorkspaceHint(id);
     return result;
   });
 }

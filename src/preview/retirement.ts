@@ -42,11 +42,26 @@ export function retiredFlag(storage: CacheStorage | undefined): RetiredFlag {
   };
 }
 
+/**
+ * Fetches the deploy's mode file, past every cache. Rejects when the network cannot be reached.
+ * `signal` aborts when the question has taken too long; the fetch must be given it, so that a
+ * response that never ends is let go of.
+ */
+export type FetchMode = (signal: AbortSignal) => Promise<Response>;
+
+/**
+ * How long one question to the deploy may take, from the request to the end of the answer's
+ * body. A hang cap, not a speed limit: the file is a few bytes from our own origin. A question
+ * that runs out is not answered yes, so nothing waits on a deploy that has stopped talking.
+ */
+export const MODE_DEADLINE_MS = 10_000;
+
 export interface RetirementOptions {
   readonly flag: Pick<RetiredFlag, "has" | "set">;
-  /** Fetches the deploy's mode file, past every cache. Rejects when the network cannot be reached. */
-  fetchMode(): Promise<Response>;
+  readonly fetchMode: FetchMode;
   unregister(): Promise<unknown>;
+  /** Instead of `MODE_DEADLINE_MS`. */
+  readonly deadlineMs?: number;
 }
 
 export interface Retirement {
@@ -60,24 +75,53 @@ export interface Retirement {
   retire(): Promise<void>;
 }
 
-/** What the deploy says: previews on, previews off, or no answer (offline, a server error). */
-async function deployAllows(fetchMode: () => Promise<Response>): Promise<boolean | undefined> {
-  const response = await fetchMode().catch(() => undefined);
+/** The deploy's answer, read to its end: previews on, previews off, or none (offline, a server error). */
+async function readMode(fetchMode: FetchMode, signal: AbortSignal): Promise<boolean | undefined> {
+  const response = await fetchMode(signal).catch(() => undefined);
   if (!response || response.status >= 500) return undefined;
   if (!response.ok) return false;
-  // A host that answers every unknown path with its HTML page is saying no as well.
-  const body: unknown = await response.json().catch(() => undefined);
+  // A body that broke off, or that the deadline cut short, is no answer.
+  const text = await response.text().catch(() => undefined);
+  if (text === undefined || signal.aborted) return undefined;
+  // A host that answers every unknown path with its HTML page is saying no.
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return false;
+  }
   return (
     typeof body === "object" && body !== null && "previews" in body && body.previews === MOUNTED_MODE.previews
   );
 }
 
 /**
+ * What the deploy says, within the deadline: the whole question, from the request to the end
+ * of the body, is bounded. A question that runs out has no answer, which is never a yes.
+ */
+async function deployAllows(fetchMode: FetchMode, deadlineMs: number): Promise<boolean | undefined> {
+  const expiry = new AbortController();
+  const expired = new Promise<undefined>((resolve) => {
+    expiry.signal.addEventListener("abort", () => resolve(undefined), { once: true });
+  });
+  const timer = setTimeout(() => expiry.abort(), deadlineMs);
+  try {
+    // The race, and not only the signal: a fetch that ignores its signal is not waited for.
+    return await Promise.race([readMode(fetchMode, expiry.signal), expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Whether the deploy says yes, asked anew for every caller (fresh.ts). No answer is a no. For
  * the tab that runs a server, which keeps live sockets under the deploy's word (tunnels.ts).
  */
-export function freshDeployYes(fetchMode: () => Promise<Response>): () => Promise<boolean> {
-  return freshly(async () => (await deployAllows(fetchMode)) === true);
+export function freshDeployYes(
+  fetchMode: FetchMode,
+  deadlineMs: number = MODE_DEADLINE_MS,
+): () => Promise<boolean> {
+  return freshly(async () => (await deployAllows(fetchMode, deadlineMs)) === true);
 }
 
 export function createRetirement(options: RetirementOptions): Retirement {
@@ -91,7 +135,7 @@ export function createRetirement(options: RetirementOptions): Retirement {
   }
 
   async function check(): Promise<boolean> {
-    const verdict = await deployAllows(options.fetchMode);
+    const verdict = await deployAllows(options.fetchMode, options.deadlineMs ?? MODE_DEADLINE_MS);
     if (verdict === false) await retire();
     // No answer is not a yes: a deploy that cannot be asked is not served for. It is not a no
     // either, so the worker stays, and serves again once the deploy says it may.

@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import type { PreviewBackend } from "./transport";
-import { createTunnels, REVOKED } from "./tunnels";
+import { createTunnels, NO_SERVER, REVOKED } from "./tunnels";
 
 type PageSink = Parameters<PreviewBackend["connect"]>[1];
 type ServerSink = Parameters<PreviewBackend["connect"]>[1];
 type ResponseSink = Parameters<PreviewBackend["request"]>[2];
+type Asked = Parameters<PreviewBackend["request"]>[1];
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 const text = (chunk: Uint8Array) => new TextDecoder().decode(chunk);
@@ -15,10 +16,13 @@ const settle = async () => {
     await Promise.resolve();
   }
 };
+const GET: Asked = { method: "GET", target: "/events", headers: [], body: null };
 
 /** A server that records what reaches it and lets the test speak for it. */
 function server() {
   const state = {
+    connections: 0,
+    requests: 0,
     written: [] as string[],
     closed: 0,
     sinks: [] as ServerSink[],
@@ -28,6 +32,7 @@ function server() {
   const backend: PreviewBackend = {
     connect(_port, sink) {
       if (!state.accepts) return null;
+      state.connections++;
       state.sinks.push(sink);
       return {
         write: (chunk) => void state.written.push(text(chunk)),
@@ -35,8 +40,10 @@ function server() {
       };
     },
     request(_port, _request, sink) {
+      if (!state.accepts) return false;
+      state.requests++;
       state.responses.push(sink);
-      return state.accepts;
+      return true;
     },
   };
   return { state, backend };
@@ -53,42 +60,75 @@ function page() {
   return { seen, sink };
 }
 
-/** The deploy, as the test sets it: yes, no, and how often it was asked. */
+/** The page's end of an HTTP response. */
+function reader() {
+  const seen = { heads: 0, data: [] as string[], ended: 0, errors: [] as string[] };
+  const sink: ResponseSink = {
+    head: () => void seen.heads++,
+    data: (chunk) => void seen.data.push(text(chunk)),
+    end: () => void seen.ended++,
+    error: (message) => void seen.errors.push(message),
+  };
+  return { seen, sink };
+}
+
+/**
+ * The deploy, as the test sets it: yes or no, how often it was asked, and, when `held` is set,
+ * a question that stays out until the test answers it.
+ */
 function deploy(initial = true) {
-  const world = { says: initial, asked: 0 };
+  const world = {
+    says: initial,
+    asked: 0,
+    held: undefined as PromiseWithResolvers<void> | undefined,
+  };
   const authorized = async (): Promise<boolean> => {
     world.asked++;
-    return world.says;
+    // The answer is what the deploy said when it was asked, not when the answer came.
+    const said = world.says;
+    await world.held?.promise;
+    return said;
   };
   return { world, authorized };
 }
 
-test("frames pass both ways while the deploy says yes, each on an answer asked after it came", async () => {
+/** A socket through the tunnels whose connection the deploy has allowed. */
+async function openSocket(tunnels: ReturnType<typeof createTunnels>, backend: PreviewBackend) {
+  const browser = page();
+  const connection = tunnels.guard(backend).connect(3000, browser.sink);
+  if (!connection) throw new Error("The tunnels always take a socket");
+  await settle();
+  return { browser, connection };
+}
+
+test("a socket reaches the server only on a yes, and so does every frame after it", async () => {
   const { world, authorized } = deploy();
   const { state, backend } = server();
   const tunnels = createTunnels(authorized);
   const browser = page();
   const connection = tunnels.guard(backend).connect(3000, browser.sink);
-  expect(connection).not.toBeNull();
   expect(tunnels.live).toBe(1);
-  // Nothing was asked for a socket that carries nothing yet.
-  expect(world.asked).toBe(0);
+  expect(state.connections).toBe(0);
+  await settle();
+  expect(state.connections).toBe(1);
+  expect(world.asked).toBe(1);
 
   connection?.write(bytes("ping"));
   await settle();
   expect(state.written).toEqual(["ping"]);
-  expect(world.asked).toBe(1);
+  expect(world.asked).toBe(2);
 
   await state.sinks[0]?.data(bytes("pong"));
   expect(browser.seen.data).toEqual(["pong"]);
   // A new frame, a new question: the earlier yes is not used again.
-  expect(world.asked).toBe(2);
+  expect(world.asked).toBe(3);
 });
 
 test("frames that wait together share one question and keep their order", async () => {
   const { world, authorized } = deploy();
   const { state, backend } = server();
-  const connection = createTunnels(authorized).guard(backend).connect(3000, page().sink);
+  const { connection } = await openSocket(createTunnels(authorized), backend);
+  world.asked = 0;
   for (const frame of ["a", "b", "c", "d", "e"]) connection?.write(bytes(frame));
   await settle();
   expect(state.written).toEqual(["a", "b", "c", "d", "e"]);
@@ -101,8 +141,7 @@ test("a socket that was open when previews went away is ended on both sides, and
   const { world, authorized } = deploy();
   const { state, backend } = server();
   const tunnels = createTunnels(authorized);
-  const browser = page();
-  const connection = tunnels.guard(backend).connect(3000, browser.sink);
+  const { browser, connection } = await openSocket(tunnels, backend);
   connection?.write(bytes("before"));
   await settle();
   expect(state.written).toEqual(["before"]);
@@ -130,8 +169,7 @@ test("a socket that was open when previews went away is ended on both sides, and
 test("a frame from the server is held back the same way", async () => {
   const { world, authorized } = deploy();
   const { state, backend } = server();
-  const browser = page();
-  createTunnels(authorized).guard(backend).connect(3000, browser.sink);
+  const { browser } = await openSocket(createTunnels(authorized), backend);
   world.says = false;
   await state.sinks[0]?.data(bytes("hot update"));
   expect(browser.seen.data).toEqual([]);
@@ -139,23 +177,24 @@ test("a frame from the server is held back the same way", async () => {
   expect(state.closed).toBe(1);
 });
 
-test("one no ends every live socket, not only the one that asked", async () => {
+test("one no ends every live stream, not only the one that asked", async () => {
   const { world, authorized } = deploy();
   const { state, backend } = server();
   const tunnels = createTunnels(authorized);
-  const guarded = tunnels.guard(backend);
-  const first = page();
-  const second = page();
-  const busy = guarded.connect(3000, first.sink);
-  guarded.connect(3000, second.sink);
-  expect(tunnels.live).toBe(2);
+  const first = await openSocket(tunnels, backend);
+  const second = await openSocket(tunnels, backend);
+  const response = reader();
+  tunnels.guard(backend).request(3000, GET, response.sink);
+  await settle();
+  expect(tunnels.live).toBe(3);
 
   world.says = false;
-  busy?.write(bytes("x"));
+  first.connection.write(bytes("x"));
   await settle();
-  // The idle socket was allowed by an answer that no longer holds, so it goes too.
-  expect(first.seen.ended).toBe(1);
-  expect(second.seen.ended).toBe(1);
+  // The idle socket and the open response were allowed by an answer that no longer holds.
+  expect(first.browser.seen.ended).toBe(1);
+  expect(second.browser.seen.ended).toBe(1);
+  expect(response.seen.errors).toEqual([REVOKED]);
   expect(state.closed).toBe(2);
   expect(tunnels.live).toBe(0);
 });
@@ -164,8 +203,8 @@ test("revoke ends idle sockets at once, without waiting for a frame", async () =
   const { world, authorized } = deploy();
   const { state, backend } = server();
   const tunnels = createTunnels(authorized);
-  const browser = page();
-  tunnels.guard(backend).connect(3000, browser.sink);
+  const { browser } = await openSocket(tunnels, backend);
+  world.asked = 0;
   tunnels.revoke();
   expect(browser.seen.ended).toBe(1);
   expect(state.closed).toBe(1);
@@ -180,8 +219,7 @@ test("a socket that ends by itself is forgotten, after what was queued before th
   const { authorized } = deploy();
   const { state, backend } = server();
   const tunnels = createTunnels(authorized);
-  const browser = page();
-  const connection = tunnels.guard(backend).connect(3000, browser.sink);
+  const { browser, connection } = await openSocket(tunnels, backend);
   // The server answers, then hangs up, all at once.
   void state.sinks[0]?.data(bytes("last words"));
   state.sinks[0]?.end();
@@ -190,72 +228,168 @@ test("a socket that ends by itself is forgotten, after what was queued before th
   expect(browser.seen.ended).toBe(1);
   expect(tunnels.live).toBe(0);
   // The page closing afterwards closes nothing twice.
-  connection?.close();
+  connection.close();
   await settle();
   expect(state.closed).toBe(0);
-
-  // And the page's own close reaches the server.
-  const other = tunnels.guard(backend).connect(3000, page().sink);
-  other?.write(bytes("bye"));
-  other?.close();
-  await settle();
-  expect(state.written).toEqual(["bye"]);
-  expect(state.closed).toBe(1);
-  expect(tunnels.live).toBe(0);
 });
 
-test("a server that takes no connection has none to guard", () => {
+test("a page that closes its socket lets go of the server's connection at once, whatever waits for an answer", async () => {
+  const { world, authorized } = deploy();
+  const { state, backend } = server();
+  const tunnels = createTunnels(authorized);
+  const { browser, connection } = await openSocket(tunnels, backend);
+
+  // The deploy is slow to answer: a frame waits for it.
+  world.held = Promise.withResolvers<void>();
+  connection.write(bytes("bye"));
+  await settle();
+  connection.close();
+  // Not after the question: now.
+  expect(state.closed).toBe(1);
+  expect(tunnels.live).toBe(0);
+  // The page closed it, so the page is not told that it ended.
+  expect(browser.seen.ended).toBe(0);
+
+  // The answer that comes later passes nothing on.
+  world.held.resolve();
+  await settle();
+  expect(state.written).toEqual([]);
+  expect(state.closed).toBe(1);
+});
+
+test("a page that closes a socket still waiting for its first yes leaves the server untouched", async () => {
+  const { world, authorized } = deploy();
+  const { state, backend } = server();
+  const tunnels = createTunnels(authorized);
+  world.held = Promise.withResolvers<void>();
+  const connection = tunnels.guard(backend).connect(3000, page().sink);
+  connection?.close();
+  expect(tunnels.live).toBe(0);
+  world.held.resolve();
+  await settle();
+  expect(state.connections).toBe(0);
+  expect(state.closed).toBe(0);
+});
+
+test("a server that is gone by the yes is told to the page as no server", async () => {
   const { authorized } = deploy();
   const { state, backend } = server();
   state.accepts = false;
   const tunnels = createTunnels(authorized);
-  expect(tunnels.guard(backend).connect(3000, page().sink)).toBeNull();
+  const { browser } = await openSocket(tunnels, backend);
+  expect(browser.seen.errors).toEqual([NO_SERVER]);
+  const response = reader();
+  expect(tunnels.guard(backend).request(3000, GET, response.sink)).toBe(true);
+  await settle();
+  expect(response.seen.errors).toEqual([NO_SERVER]);
   expect(tunnels.live).toBe(0);
 });
 
-test("a response that is still streaming is cut off when previews are revoked", () => {
-  const { authorized } = deploy();
+test("a handoff that arrives once the deploy said no never reaches the server", async () => {
+  const { world, authorized } = deploy(false);
   const { state, backend } = server();
   const tunnels = createTunnels(authorized);
-  const seen = { heads: 0, data: [] as string[], ended: 0, errors: [] as string[] };
-  const sink: ResponseSink = {
-    head: () => void seen.heads++,
-    data: (chunk) => void seen.data.push(text(chunk)),
-    end: () => void seen.ended++,
-    error: (message) => void seen.errors.push(message),
-  };
-  const request = { method: "GET", target: "/events", headers: [], body: null };
-  expect(tunnels.guard(backend).request(3000, request, sink)).toBe(true);
+  const socket = await openSocket(tunnels, backend);
+  const response = reader();
+  tunnels.guard(backend).request(3000, GET, response.sink);
+  await settle();
+  expect(state.connections).toBe(0);
+  expect(state.requests).toBe(0);
+  expect(socket.browser.seen.ended).toBe(1);
+  expect(response.seen.errors).toEqual([REVOKED]);
+  expect(world.asked).toBeGreaterThan(0);
+  expect(tunnels.live).toBe(0);
+});
+
+test("a handoff whose question was out when previews were revoked is refused, even on a yes", async () => {
+  const { world, authorized } = deploy();
+  const { state, backend } = server();
+  const tunnels = createTunnels(authorized);
+  world.held = Promise.withResolvers<void>();
+  const socket = page();
+  tunnels.guard(backend).connect(3000, socket.sink);
+  const response = reader();
+  tunnels.guard(backend).request(3000, GET, response.sink);
+  await settle();
+
+  // The worker says previews are off while the deploy is being asked. Its answer, a yes, was
+  // asked before that, and it does not let either handoff through.
+  tunnels.revoke();
+  world.held.resolve();
+  await settle();
+  expect(state.connections).toBe(0);
+  expect(state.requests).toBe(0);
+  expect(socket.seen.ended).toBe(1);
+  expect(response.seen.errors).toEqual([REVOKED]);
+  expect(tunnels.live).toBe(0);
+});
+
+test("a request reaches the server only on a yes, and the head and every chunk wait for their own", async () => {
+  const { world, authorized } = deploy();
+  const { state, backend } = server();
+  const tunnels = createTunnels(authorized);
+  const response = reader();
+  expect(tunnels.guard(backend).request(3000, GET, response.sink)).toBe(true);
+  expect(state.requests).toBe(0);
+  await settle();
+  expect(state.requests).toBe(1);
+  expect(world.asked).toBe(1);
+
   const stream = state.responses[0];
   stream?.head({ status: 200, statusText: "OK", headers: [] });
-  void stream?.data(new Uint8Array(bytes("first")));
-  expect(seen.data).toEqual(["first"]);
-  expect(tunnels.live).toBe(1);
+  await stream?.data(new Uint8Array(bytes("first")));
+  expect(response.seen.heads).toBe(1);
+  expect(response.seen.data).toEqual(["first"]);
+  const asked = world.asked;
+  expect(asked).toBeGreaterThan(1);
 
-  tunnels.revoke();
-  expect(seen.errors).toEqual([REVOKED]);
+  // A server-sent event after the deploy changed: no fresh yes, so it never reaches the page.
+  world.says = false;
+  await stream?.data(new Uint8Array(bytes("after the change")));
+  expect(response.seen.data).toEqual(["first"]);
+  expect(response.seen.errors).toEqual([REVOKED]);
+  expect(world.asked).toBe(asked + 1);
   expect(tunnels.live).toBe(0);
+
   // The server goes on sending; none of it reaches the page.
-  void stream?.data(new Uint8Array(bytes("second")));
+  world.says = true;
+  await stream?.data(new Uint8Array(bytes("later")));
   stream?.end();
-  expect(seen.data).toEqual(["first"]);
-  expect(seen.ended).toBe(0);
+  await settle();
+  expect(response.seen.data).toEqual(["first"]);
+  expect(response.seen.ended).toBe(0);
 });
 
-test("a response that finished is forgotten, and revoking later does not touch it", () => {
+test("a chunk held back by a slow answer is not delivered when previews are revoked meanwhile", async () => {
+  const { world, authorized } = deploy();
+  const { state, backend } = server();
+  const tunnels = createTunnels(authorized);
+  const response = reader();
+  tunnels.guard(backend).request(3000, GET, response.sink);
+  await settle();
+  const stream = state.responses[0];
+  world.held = Promise.withResolvers<void>();
+  const delivered = stream?.data(new Uint8Array(bytes("held")));
+  await settle();
+  tunnels.revoke();
+  expect(response.seen.errors).toEqual([REVOKED]);
+  world.held.resolve();
+  // The server's wait for the chunk ends: it is not left hanging on a stream that is gone.
+  await delivered;
+  expect(response.seen.data).toEqual([]);
+});
+
+test("a response that finished is forgotten, and revoking later does not touch it", async () => {
   const { authorized } = deploy();
   const { state, backend } = server();
   const tunnels = createTunnels(authorized);
-  const seen = { ended: 0, errors: [] as string[] };
-  const sink: ResponseSink = {
-    head: () => {},
-    data: () => {},
-    end: () => void seen.ended++,
-    error: (message) => void seen.errors.push(message),
-  };
-  tunnels.guard(backend).request(3000, { method: "GET", target: "/", headers: [], body: null }, sink);
+  const response = reader();
+  tunnels.guard(backend).request(3000, GET, response.sink);
+  await settle();
   state.responses[0]?.end();
+  await settle();
   expect(tunnels.live).toBe(0);
   tunnels.revoke();
-  expect(seen).toEqual({ ended: 1, errors: [] });
+  expect(response.seen.ended).toBe(1);
+  expect(response.seen.errors).toEqual([]);
 });

@@ -39,7 +39,9 @@ export function createMountedPreviewTransport(workspace: string): PreviewTranspo
   const container: ServiceWorkerContainer | undefined = navigator.serviceWorker;
   // Sockets outlive the worker's check at their start, so this tab keeps asking for them
   // (tunnels.ts): nothing is passed on without a yes from the deploy asked after it arrived.
-  const tunnels = createTunnels(freshDeployYes(() => fetch(PREVIEW_MODE_PATH, { cache: "no-store" })));
+  const tunnels = createTunnels(
+    freshDeployYes((signal) => fetch(PREVIEW_MODE_PATH, { cache: "no-store", signal })),
+  );
   let registration: ServiceWorkerRegistration | undefined;
   let ready: Promise<void> | undefined;
 
