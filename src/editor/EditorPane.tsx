@@ -2,10 +2,12 @@
 // changed under unsaved edits, the editor itself, project search beside it, and quick open.
 import { detectPlatform, getHotkeyRegistry } from "@shaulavo/hotkeys";
 import type { Editor } from "@singapore-editor/core/editor";
-import { createEffect, createMemo, For, onCleanup, onMount, Show, type Accessor } from "solid-js";
+import { Fragment, useCallback, useEffect, useRef, type RefObject } from "react";
+import { useScope, useValue } from "../lib/react";
+import { createEffect, createMemo, onCleanup, type Accessor } from "../lib/reactive";
 import type { PaletteCommand } from "../search/commands";
 import { QuickOpen } from "../search/QuickOpen";
-import { COMMAND } from "../workbench/slots";
+import { COMMAND, type Commands } from "../workbench/slots";
 import { SearchPanel } from "../search/SearchPanel";
 import { AlertIcon, ChevronIcon } from "../search/icons";
 import { useWorkspace } from "../workspace/session";
@@ -18,85 +20,91 @@ import { TabBar } from "./TabBar";
 
 /** The path of the file on screen. */
 function Crumbs(props: { path: string | undefined }) {
-  const segments = () => props.path?.split("/") ?? [];
+  const segments = props.path?.split("/") ?? [];
   return (
-    <nav class="editor-crumbs" aria-label={props.path} data-testid="editor-file">
-      <For each={segments()}>
-        {(segment, index) => (
-          <>
-            <Show when={index() > 0}>
-              <ChevronIcon />
-            </Show>
-            <span classList={{ "is-current": index() === segments().length - 1 }}>{segment}</span>
-          </>
-        )}
-      </For>
+    <nav className="editor-crumbs" aria-label={props.path} data-testid="editor-file">
+      {segments.map((segment, index) => (
+        <Fragment key={index}>
+          {index > 0 ? <ChevronIcon /> : null}
+          <span className={index === segments.length - 1 ? "is-current" : undefined}>{segment}</span>
+        </Fragment>
+      ))}
     </nav>
   );
 }
 
 function ConflictBar(props: { store: EditorStore }) {
+  const conflict = useValue(props.store.conflict);
+  if (!conflict) return null;
   const keepMine = () =>
     void props.store.keepMine().catch((error: unknown) => console.error("Saving failed", error));
   const takeTheirs = () =>
     void props.store.takeTheirs().catch((error: unknown) => console.error("Reloading failed", error));
   return (
-    <Show when={props.store.conflict()}>
-      <div class="editor-conflict" role="alert" data-testid="editor-conflict">
-        <AlertIcon />
-        <span class="editor-conflict-text">{EDITOR_COPY.externalChangeConflict}</span>
-        <button
-          type="button"
-          class="editor-conflict-action"
-          data-testid="conflict-reload"
-          onClick={takeTheirs}
-        >
-          {EDITOR_COPY.reloadFromDisk}
-        </button>
-        <button
-          type="button"
-          class="editor-conflict-action is-primary"
-          data-testid="conflict-keep"
-          onClick={keepMine}
-        >
-          {EDITOR_COPY.keepMine}
-        </button>
-      </div>
-    </Show>
+    <div className="editor-conflict" role="alert" data-testid="editor-conflict">
+      <AlertIcon />
+      <span className="editor-conflict-text">{EDITOR_COPY.externalChangeConflict}</span>
+      <button
+        type="button"
+        className="editor-conflict-action"
+        data-testid="conflict-reload"
+        onClick={takeTheirs}
+      >
+        {EDITOR_COPY.reloadFromDisk}
+      </button>
+      <button
+        type="button"
+        className="editor-conflict-action is-primary"
+        data-testid="conflict-keep"
+        onClick={keepMine}
+      >
+        {EDITOR_COPY.keepMine}
+      </button>
+    </div>
   );
 }
 
+const reportSaveError = (error: unknown) => console.error("Saving failed", error);
+
 /** Workbench-wide shortcuts, live while the editor pane is mounted. */
-function useEditorShortcuts(store: EditorStore, pane: () => HTMLElement, editor: () => Editor | undefined) {
-  const save = () => void store.save().catch(reportSaveError);
-  onMount(() => {
+function useEditorShortcuts(
+  store: EditorStore,
+  pane: RefObject<HTMLElement | null>,
+  editor: RefObject<Editor | undefined>,
+) {
+  useEffect(() => {
+    const save = () => void store.save().catch(reportSaveError);
     const registry = getHotkeyRegistry();
     const options = { preventDefault: true, stopPropagation: true, conflictBehavior: "replace" as const };
-    const handles = [
-      registry.register("Mod+S", save, options),
+    const handles = [registry.register("Mod+S", save, options)].concat(
       // Ctrl+S saves on a Mac too, as it always has here: macOS binds nothing to it in text fields.
-      ...(detectPlatform() === "mac" ? [registry.register("Control+S", save, options)] : []),
-      registry.register("Mod+P", () => store.setQuickOpen(true), options),
-      registry.register("Mod+Shift+F", () => store.setSearchOpen(true), options),
-      // Inside the editor Singapore's find takes Mod+F itself; this covers the tab bar and crumbs.
-      registry.register("Mod+F", () => void editor()?.openFind(), { ...options, target: pane() }),
-    ];
-    onCleanup(() => {
+      detectPlatform() === "mac" ? [registry.register("Control+S", save, options)] : [],
+      [
+        registry.register("Mod+P", () => store.setQuickOpen(true), options),
+        registry.register("Mod+Shift+F", () => store.setSearchOpen(true), options),
+        // Inside the editor Singapore's find takes Mod+F itself; this covers the tab bar and crumbs.
+        registry.register("Mod+F", () => void editor.current?.openFind(), {
+          ...options,
+          target: pane.current ?? undefined,
+        }),
+      ],
+    );
+    return () => {
       for (const handle of handles) handle.unregister();
-    });
-  });
+    };
+  }, [store, pane, editor]);
 
   // Closing or reloading the page with unsaved edits asks first; the text is kept and autosaved.
-  const beforeUnload = (event: BeforeUnloadEvent) => {
-    if (store.buffers.dirtyPaths().length === 0) return;
-    void store.pageHidden();
-    event.preventDefault();
-  };
-  window.addEventListener("beforeunload", beforeUnload);
-  onCleanup(() => window.removeEventListener("beforeunload", beforeUnload));
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (store.buffers.dirtyPaths().length === 0) return;
+      void store.pageHidden();
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [store]);
 }
-
-const reportSaveError = (error: unknown) => console.error("Saving failed", error);
 
 /**
  * A phone that switches apps hides the page and may never show it again. Unsaved text is left for
@@ -104,21 +112,22 @@ const reportSaveError = (error: unknown) => console.error("Saving failed", error
  * does not wait for the idle pause.
  */
 function useAutosaveTriggers(store: EditorStore) {
-  const flush = () => void store.pageHidden();
-  const onVisibility = () => {
-    if (document.visibilityState === "hidden") flush();
-  };
-  document.addEventListener("visibilitychange", onVisibility);
-  window.addEventListener("pagehide", flush);
-  onCleanup(() => {
-    document.removeEventListener("visibilitychange", onVisibility);
-    window.removeEventListener("pagehide", flush);
-  });
+  useEffect(() => {
+    const flush = () => void store.pageHidden();
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [store]);
 }
 
-/** Save, Save all and the autosave switch: in the phone menu, and in quick open. */
-function useSaveCommands(store: EditorStore): Accessor<readonly PaletteCommand[]> {
-  const workspace = useWorkspace();
+/** Save, Save all and the autosave switch: in the phone menu, and in quick open. Needs a scope. */
+function createSaveCommands(store: EditorStore, registry: Commands): Accessor<readonly PaletteCommand[]> {
   const mac = detectPlatform() === "mac";
   const unsavedCount = () => store.buffers.dirtyPaths().length;
   const commands = createMemo((): PaletteCommand[] => [
@@ -145,67 +154,73 @@ function useSaveCommands(store: EditorStore): Accessor<readonly PaletteCommand[]
       // With autosave off, the phone menu's dot says there is something to save.
       const badge =
         command.id === COMMAND.saveAll ? () => (store.autosave() ? 0 : unsavedCount()) : undefined;
-      onCleanup(workspace.commands.register(command.id, { ...command, icon, badge }));
+      onCleanup(registry.register(command.id, { ...command, icon, badge }));
     }
   });
   return commands;
 }
 
 export function EditorPane(props: { store: EditorStore }) {
-  // A detached draft shows the path it came from.
-  const displayedName = () => {
-    const path = props.store.displayed();
-    return path === undefined ? undefined : originalPath(path);
-  };
+  const { store } = props;
   const workspace = useWorkspace();
-  let pane!: HTMLElement;
-  let editor: Editor | undefined;
-  useEditorShortcuts(
-    props.store,
-    () => pane,
-    () => editor,
-  );
-  useAutosaveTriggers(props.store);
-  const commands = useSaveCommands(props.store);
+  const pane = useRef<HTMLElement>(null);
+  const editor = useRef<Editor>(undefined);
+  useEditorShortcuts(store, pane, editor);
+  useAutosaveTriggers(store);
+  const { commands, recent } = useScope(() => ({
+    commands: createSaveCommands(store, workspace.commands),
+    // Open tabs, as one list that changes only when the tabs do.
+    recent: createMemo(() => store.tabs().map((tab) => tab.path)),
+  }));
+  // A detached draft shows the path it came from.
+  const displayedName = useValue(() => {
+    const path = store.displayed();
+    return path === undefined ? undefined : originalPath(path);
+  });
+  const searchOpen = useValue(store.searchOpen);
+  const empty = useValue(() => store.active() === undefined);
+  const onEditor = useCallback((instance: Editor) => {
+    editor.current = instance;
+  }, []);
 
   const open = (path: string, location: { line?: number; column?: number }) =>
-    props.store.open(path, { ...location, focus: true });
+    store.open(path, { ...location, focus: true });
 
   return (
-    <section ref={(node) => (pane = node)} class="pane editor-pane" aria-label={EDITOR_COPY.editor}>
-      <div class="editor-shell" classList={{ "has-search": props.store.searchOpen() }}>
-        <Show when={props.store.searchOpen()}>
+    <section ref={pane} className="pane editor-pane" aria-label={EDITOR_COPY.editor}>
+      <div className={searchOpen ? "editor-shell has-search" : "editor-shell"}>
+        {searchOpen ? (
           <SearchPanel
             files={workspace.files}
-            focusRequest={props.store.searchFocus}
+            focusRequest={store.searchFocus}
             onOpen={(path, location) => {
-              props.store.open(path, { ...location, preview: true });
+              store.open(path, { ...location, preview: true });
               // On a phone the panel covers the editor: get out of the way of the file just opened.
-              if (matchMedia("(max-width: 768px)").matches) props.store.setSearchOpen(false);
+              if (matchMedia("(max-width: 768px)").matches) store.setSearchOpen(false);
             }}
-            onClose={() => props.store.setSearchOpen(false)}
+            onClose={() => store.setSearchOpen(false)}
           />
-        </Show>
-        <div class="editor-main">
-          <TabBar store={props.store} />
-          <Crumbs path={displayedName()} />
-          <ConflictBar store={props.store} />
-          <div class="editor-body">
-            <EditorView store={props.store} onEditor={(instance) => (editor = instance)} />
-            <Show when={props.store.active() === undefined}>
-              <p class="editor-empty" data-testid="editor-empty">
+        ) : null}
+        <div className="editor-main">
+          <TabBar store={store} />
+          <Crumbs path={displayedName} />
+          <ConflictBar store={store} />
+          <div className="editor-body">
+            <EditorView store={store} onEditor={onEditor} />
+            {empty ? (
+              <p className="editor-empty" data-testid="editor-empty">
                 {EDITOR_COPY.noOpenEditor}
               </p>
-            </Show>
+            ) : null}
           </div>
         </div>
       </div>
       <QuickOpen
-        open={props.store.quickOpen}
+        open={store.quickOpen}
         files={workspace.files}
-        recent={() => props.store.tabs().map((tab) => tab.path)}
+        recent={recent}
         onOpen={open}
-        onClose={() => props.store.setQuickOpen(false)}
+        onClose={() => store.setQuickOpen(false)}
         commands={commands}
       />
     </section>
