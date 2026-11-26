@@ -63,8 +63,8 @@ const VITE_REACT_FILES: Readonly<Record<string, string>> = {
   "devDependencies": {
     "@types/react": "19.3.3",
     "@types/react-dom": "19.3.0",
-    "@vitejs/plugin-react": "5.0.4",
-    "vite": "7.1.12"
+    "@vitejs/plugin-react": "5.2.0",
+    "vite": "7.3.8"
   }
 }
 `,
@@ -397,7 +397,7 @@ const SVELTEKIT_FILES: Readonly<Record<string, string>> = {
     "@sveltejs/vite-plugin-svelte": "6.2.1",
     "@opentelemetry/api": "1.9.0",
     "svelte": "5.39.11",
-    "vite": "7.1.12",
+    "vite": "7.3.8",
     "typescript": "5.9.3"
   },
   "devDependencies": {
@@ -479,7 +479,7 @@ const VANILLA_FILES: Readonly<Record<string, string>> = {
     "build": "vite build"
   },
   "devDependencies": {
-    "vite": "7.1.12"
+    "vite": "7.3.8"
   }
 }
 `,

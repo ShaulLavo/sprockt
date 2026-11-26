@@ -13,8 +13,8 @@ import { STATUS_SLOT, type StatusItem } from "../workbench/slots";
 import { createGuestLanguageServerPlugin, disposeLanguageServers } from "./glue";
 import {
   checkForScripts,
+  declaredPackages,
   hasOwnScriptFile,
-  packageNeedsInstall,
   projectRelativeName,
   touchesDependencyState,
 } from "./project";
@@ -44,15 +44,20 @@ async function subtreeHasScript(runtime: Runtime, projectRoot: string, absolute:
   );
 }
 
-/** Whether the project either declares no npm dependencies or already has files in `node_modules`. */
+/** Whether every direct package declared in `package.json` is installed in `node_modules`. */
 async function dependenciesReady(runtime: Runtime, projectRoot: string): Promise<boolean> {
   const bytes = await runtime.filesystem.readFile(`${projectRoot}/package.json`).catch(() => undefined);
   const text = bytes ? new TextDecoder().decode(bytes) : undefined;
-  if (!packageNeedsInstall(text)) return true;
-  const installed = await runtime.filesystem
-    .listFiles(`${projectRoot}/node_modules`)
-    .catch((): string[] => []);
-  return installed.length > 0;
+  const packages = declaredPackages(text);
+  if (packages.length === 0) return true;
+  const resolved = await Promise.all(
+    packages.map((name) =>
+      runtime.filesystem
+        .resolvePath(`${projectRoot}/node_modules/${name}/package.json`)
+        .catch(() => undefined),
+    ),
+  );
+  return resolved.every((entry) => entry !== undefined);
 }
 
 /** Tracks whether the workspace has TypeScript/JavaScript sources and installed dependencies. */

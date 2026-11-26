@@ -207,9 +207,20 @@ test("the server starts when the first TypeScript file arrives inside a moved di
   await expect.poll(() => errorRanges(page)).toEqual(["broken"]);
 });
 
-// What `bun install` puts in node_modules for the Vite + React starter, cut down to the types
-// src/App.tsx uses: React's hooks and JSX runtime, and Vite's client types for the CSS import.
-const REACT_STARTER_TYPES: Record<string, string> = {
+// What `bun install` puts in node_modules for the Vite + React starter, split into a partial
+// first package and the remaining declared packages so we verify the LSP gate waits for all of them.
+const REACT_STARTER_PARTIAL: Record<string, string> = {
+  "node_modules/vite/package.json": '{ "name": "vite", "version": "0.0.0" }\n',
+  "node_modules/vite/client.d.ts":
+    'declare module "*.css" {\n  const css: string;\n  export default css;\n}\n',
+};
+
+const REACT_STARTER_REMAINING: Record<string, string> = {
+  "node_modules/react/package.json": '{ "name": "react", "version": "0.0.0" }\n',
+  "node_modules/react-dom/package.json": '{ "name": "react-dom", "version": "0.0.0" }\n',
+  "node_modules/@vitejs/plugin-react/package.json":
+    '{ "name": "@vitejs/plugin-react", "version": "0.0.0" }\n',
+  "node_modules/@types/react-dom/package.json": '{ "name": "@types/react-dom", "version": "0.0.0" }\n',
   "node_modules/@types/react/package.json":
     '{ "name": "@types/react", "version": "0.0.0", "types": "index.d.ts" }\n',
   "node_modules/@types/react/index.d.ts":
@@ -223,12 +234,9 @@ const REACT_STARTER_TYPES: Record<string, string> = {
 export function jsx(type: unknown, props: unknown): JSX.Element;
 export function jsxs(type: unknown, props: unknown): JSX.Element;
 `,
-  "node_modules/vite/package.json": '{ "name": "vite", "version": "0.0.0" }\n',
-  "node_modules/vite/client.d.ts":
-    'declare module "*.css" {\n  const css: string;\n  export default css;\n}\n',
 };
 
-test("the Vite + React starter stays clean before install, then activates LSP once installed", async ({
+test("the Vite + React starter stays clean before install, waits through partial installs, then activates LSP", async ({
   page,
 }) => {
   await page.goto("/");
@@ -242,9 +250,14 @@ test("the Vite + React starter stays clean before install, then activates LSP on
   await expect.poll(() => syntaxRanges(page)).toEqual(expect.arrayContaining(["main", "className"]));
   expect(await errorRanges(page)).toEqual([]);
 
-  // The install's files arrive, as they would from `bun install`: the waiting indicator clears
-  // and the language server starts cleanly with zero diagnostics.
-  await writeProject(page, REACT_STARTER_TYPES);
+  // A partial install (only one package written so far) keeps the gate closed and error-free.
+  await writeProject(page, REACT_STARTER_PARTIAL);
+  await page.waitForTimeout(300);
+  await expect(page.locator('[data-status="typescript"]')).toContainText("Install deps for TS");
+  expect(await errorRanges(page)).toEqual([]);
+
+  // Once every declared package lands, the waiting indicator clears and the language server starts.
+  await writeProject(page, REACT_STARTER_REMAINING);
   await expect(page.locator('[data-status="typescript"]')).toHaveCount(0);
   await expect.poll(() => errorRanges(page)).toEqual([]);
   // The language server adds nothing over the JSX: the highlighter still paints it.

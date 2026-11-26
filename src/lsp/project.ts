@@ -69,23 +69,24 @@ export function isWatchedPath(relativePath: string): boolean {
   return !relativePath.split("/").includes(".git");
 }
 
-function hasDependencyEntries(value: unknown): boolean {
-  return (
-    typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length > 0
-  );
+function dependencyNames(value: unknown): string[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+  return Object.keys(value);
 }
 
 /**
- * Whether a project's `package.json` declares dependencies that must be installed into
- * `node_modules` before TypeScript checking can resolve its imports and ambient types.
+ * Direct npm packages declared in `package.json` (`dependencies` and `devDependencies`) that must
+ * exist under `node_modules/<name>/package.json` before TypeScript checking starts.
  */
-export function packageNeedsInstall(packageJsonText: string | undefined): boolean {
-  if (!packageJsonText) return false;
+export function declaredPackages(packageJsonText: string | undefined): readonly string[] {
+  if (!packageJsonText) return [];
   try {
     const parsed = JSON.parse(packageJsonText) as { dependencies?: unknown; devDependencies?: unknown };
-    return hasDependencyEntries(parsed.dependencies) || hasDependencyEntries(parsed.devDependencies);
+    return Array.from(
+      new Set(dependencyNames(parsed.dependencies).concat(dependencyNames(parsed.devDependencies))),
+    );
   } catch {
-    return false;
+    return [];
   }
 }
 

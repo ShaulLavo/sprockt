@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import {
   checkForScripts,
+  declaredPackages,
   FileChange,
   fileChangeType,
   hasOwnScriptFile,
   isScriptFile,
   isWatchedPath,
-  packageNeedsInstall,
   projectRelativeName,
   touchesDependencyState,
 } from "./project";
@@ -78,13 +78,16 @@ test("dependencies are watched, version control is not", () => {
   expect(isWatchedPath("sub/.git/HEAD")).toBe(false);
 });
 
-test("packageNeedsInstall detects declared dependencies and devDependencies safely", () => {
-  expect(packageNeedsInstall(undefined)).toBe(false);
-  expect(packageNeedsInstall("{not json")).toBe(false);
-  expect(packageNeedsInstall('{"name":"empty","scripts":{"dev":"bun server.ts"}}')).toBe(false);
-  expect(packageNeedsInstall('{"dependencies":{},"devDependencies":{}}')).toBe(false);
-  expect(packageNeedsInstall('{"dependencies":{"react":"19.3.1"}}')).toBe(true);
-  expect(packageNeedsInstall('{"devDependencies":{"@types/bun":"1.4.5"}}')).toBe(true);
+test("declaredPackages returns unique direct dependencies and devDependencies safely", () => {
+  expect(declaredPackages(undefined)).toEqual([]);
+  expect(declaredPackages("{not json")).toEqual([]);
+  expect(declaredPackages('{"name":"empty","scripts":{"dev":"bun server.ts"}}')).toEqual([]);
+  expect(declaredPackages('{"dependencies":{},"devDependencies":{}}')).toEqual([]);
+  expect(
+    declaredPackages(
+      '{"dependencies":{"react":"19.3.1"},"devDependencies":{"@types/react":"19.3.3","react":"19.3.1"}}',
+    ),
+  ).toEqual(["react", "@types/react"]);
 });
 
 test("touchesDependencyState notices package.json and node_modules changes only", () => {

@@ -157,23 +157,45 @@ const terminalCanvasBackground = (page: Page) =>
     return canvas?.parentElement ? getComputedStyle(canvas.parentElement).backgroundColor : "";
   });
 
+const terminalRootInlineBackground = (page: Page) =>
+  page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>(".term-canvas canvas");
+    return canvas?.parentElement?.style.backgroundColor ?? "";
+  });
+
 const editorHasFocus = (page: Page) =>
   page.evaluate(() => {
     const active = document.activeElement;
     return active instanceof HTMLElement && active.closest('[data-testid="editor"]') !== null;
   });
 
-test("terminal updates its theme live across light and dark toggles, even when hidden on mobile", async ({
+test("terminal updates its theme live across light and dark toggles, even when hidden or mid-boot", async ({
   page,
 }) => {
   await page.emulateMedia({ colorScheme: "light" });
   await page.setViewportSize({ width: 390, height: 844 });
-  await newWorkspace(page);
-  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+  await page.goto("/");
+  await page.getByTestId("template-blank").click();
+  await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
+  await expect(page.getByTestId("phone-menu")).toBeVisible();
 
-  // Stay on the Files/Code pane so the Terminal pane is display: none while toggling to dark.
+  // Mid-boot toggle: switch to dark mode right away while the hidden terminal is still starting.
   await page.getByTestId("phone-menu").click();
   await page.getByRole("button", { name: "Use dark theme" }).click();
+  await page.locator(".wb-scrim").click();
+
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+  // Even BEFORE revealing the Terminal pane, Ghostty's root element already has the dark background.
+  await expect.poll(() => terminalRootInlineBackground(page)).toMatch(/rgb\(10,\s*13,\s*20\)|rgb\(10 13 20/);
+
+  // Toggle dark -> light -> dark while still hidden, checking the hidden terminal before reveal.
+  await page.getByTestId("phone-menu").click();
+  await page.getByRole("button", { name: "Use light theme" }).click();
+  await expect
+    .poll(() => terminalRootInlineBackground(page))
+    .toMatch(/rgb\(255,\s*255,\s*255\)|rgb\(255 255 255/);
+  await page.getByRole("button", { name: "Use dark theme" }).click();
+  await expect.poll(() => terminalRootInlineBackground(page)).toMatch(/rgb\(10,\s*13,\s*20\)|rgb\(10 13 20/);
   await page.locator(".wb-scrim").click();
 
   await page.getByTestId("pane-switcher").getByRole("button", { name: "Terminal" }).click();
@@ -187,7 +209,7 @@ test("terminal updates its theme live across light and dark toggles, even when h
   await expect.poll(() => terminalCanvasBackground(page)).toBe("rgb(10, 13, 20)");
 });
 
-test("switching file tabs on mobile never focuses the editor until the editor surface is tapped", async ({
+test("switching file tabs on mobile never focuses the editor, while desktop keyboard activation still does", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -204,7 +226,7 @@ test("switching file tabs on mobile never focuses the editor until the editor su
   await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
   await expect.poll(() => editorHasFocus(page)).toBe(false);
 
-  // Switching tabs must not focus the editor or trigger the soft keyboard.
+  // Switching tabs on mobile must not focus the editor or trigger the soft keyboard.
   await page.locator('[data-testid="editor-tab"][data-path="alpha.ts"]').click();
   await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
   expect(await editorHasFocus(page)).toBe(false);
@@ -217,4 +239,14 @@ test("switching file tabs on mobile never focuses the editor until the editor su
   await page.locator('[data-testid="editor-tab"][data-path="beta.ts"]').click();
   await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
   await expect.poll(() => editorHasFocus(page)).toBe(false);
+
+  // Hybrid desktop check: a cancelled touch gesture on a tab must not suppress keyboard Enter focus.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const alphaTab = page.locator('[data-testid="editor-tab"][data-path="alpha.ts"]');
+  await alphaTab.dispatchEvent("pointerdown", { pointerType: "touch", pointerId: 1, button: 0 });
+  await alphaTab.dispatchEvent("pointercancel", { pointerType: "touch", pointerId: 1 });
+  await alphaTab.focus();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
+  await expect.poll(() => editorHasFocus(page)).toBe(true);
 });

@@ -20,7 +20,7 @@ export const MOTION = {
 
 /**
  * Scripted sequence for the live landing workbench demo.
- * Every visible line is real Vite + React starter output (Bun 1.4.5, Vite 7.1.12).
+ * Every visible line is real Vite + React starter output (Bun 1.4.5, Vite 7.3.8).
  */
 export const DEMO_SEQUENCE = {
   /** Typing speed per character in the terminal prompt (ms). */

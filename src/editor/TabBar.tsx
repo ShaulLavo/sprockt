@@ -146,7 +146,8 @@ function Tab(props: {
   hint: string | undefined;
   dragging: boolean;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
-  onActivate: () => void;
+  onPointerCancel: () => void;
+  onActivate: (pointerType: string | undefined) => void;
   onContextMenu: (event: ReactMouseEvent<HTMLDivElement>) => void;
 }) {
   const { tab, store, strip } = props;
@@ -163,7 +164,7 @@ function Tab(props: {
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      props.onActivate();
+      props.onActivate("keyboard");
     } else if (event.key === "Delete") {
       requestClose(store, tab.path);
     }
@@ -189,7 +190,11 @@ function Tab(props: {
       data-path={tab.path}
       data-tab-tone={fileTabTone(tab.path)}
       onPointerDown={(event) => props.onPointerDown(event)}
-      onClick={() => props.onActivate()}
+      onPointerCancel={() => props.onPointerCancel()}
+      onClick={(event) => {
+        const native = event.nativeEvent as { pointerType?: string };
+        props.onActivate(native.pointerType || undefined);
+      }}
       onDoubleClick={() => store.pin(tab.path)}
       onContextMenu={props.onContextMenu}
       onMouseDown={(event) => event.button === 1 && event.preventDefault()}
@@ -245,10 +250,10 @@ export function TabBar(props: { store: EditorStore }) {
   const shared = new Map<string, number>();
   for (const tab of tabs) shared.set(basename(tab.path), (shared.get(basename(tab.path)) ?? 0) + 1);
 
-  function activate(tab: EditorTab): void {
-    const pointerType = lastPointerType.current;
+  function activate(tab: EditorTab, eventPointerType: string | undefined): void {
+    const pointerType = eventPointerType ?? lastPointerType.current;
     lastPointerType.current = undefined;
-    if (drag.takeSuppressedClick()) return;
+    if (eventPointerType !== "keyboard" && drag.takeSuppressedClick()) return;
     const focus = shouldAutoFocusEditor(pointerType);
     if (!focus) blurEditorIfFocused();
     store.open(tab.path, { preview: tab.preview, focus });
@@ -318,7 +323,10 @@ export function TabBar(props: { store: EditorStore }) {
         className="editor-tabs-strip"
         role="tablist"
         aria-label={EDITOR_COPY.openFiles}
-        onScroll={overflow.measure}
+        onScroll={() => {
+          lastPointerType.current = undefined;
+          overflow.measure();
+        }}
       >
         {tabs.map((tab, index) => (
           <Tab
@@ -334,7 +342,10 @@ export function TabBar(props: { store: EditorStore }) {
               lastPointerType.current = event.pointerType;
               drag.start(event, index);
             }}
-            onActivate={() => activate(tab)}
+            onPointerCancel={() => {
+              lastPointerType.current = undefined;
+            }}
+            onActivate={(pointerType) => activate(tab, pointerType)}
             onContextMenu={(event) => {
               event.preventDefault();
               event.stopPropagation();
