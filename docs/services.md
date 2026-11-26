@@ -1,7 +1,7 @@
 # Import, share and export services
 
 These modules have no UI code. Each takes plain data or a `ProjectFs` (`src/lib/fs/types.ts`), so
-none depends on Solid or on Waffle directly.
+none depends on React or on Waffle directly.
 
 | Module                | Entry points                                                                                       |
 | --------------------- | -------------------------------------------------------------------------------------------------- |
