@@ -7,16 +7,15 @@
 // - a flag in the origin's cache storage, set when a build without previews retired it (by that
 //   build's page, retire.ts, or by the worker itself). Read every time the worker starts.
 // - the deploy: a build with previews publishes a small file saying so (`/preview-mode.json`),
-//   and a build without them does not. Asked when the worker starts, again for every page
-//   navigation, and otherwise at most every `RECHECK_MS`. A deploy that says no retires the worker.
+//   and a build without them does not. Asked for every request the worker would answer, and
+//   every socket: no earlier answer is trusted, however recent. A deploy that says no retires
+//   the worker, and a deploy that cannot be asked (offline, a server error) is not served
+//   for: the worker answers from the workspace only when the deploy has just said it may.
 export const RETIRED_CACHE = "sprockt-preview-worker";
 export const RETIRED_KEY = "/__preview/__retired";
 
 /** What `/preview-mode.json` holds in a build with mounted previews. */
 export const MOUNTED_MODE = { previews: "mounted" } as const;
-
-/** How long an answer from the deploy is good for, for requests that are not navigations. */
-export const RECHECK_MS = 30_000;
 
 /** The durable flag. Every method tolerates a browser without cache storage. */
 export interface RetiredFlag {
@@ -46,15 +45,15 @@ export interface RetirementOptions {
   /** Fetches the deploy's mode file, past every cache. Rejects when the network cannot be reached. */
   fetchMode(): Promise<Response>;
   unregister(): Promise<unknown>;
-  now?(): number;
 }
 
 export interface Retirement {
   /**
-   * Whether a request may be answered from the workspace. `fresh` asks the deploy now instead
-   * of trusting a recent answer: a navigation is what would show a page that should be gone.
+   * Whether a request may be answered from the workspace: only when the deploy, asked after
+   * the request arrived, says previews are on. `navigation` also reads the retired flag anew:
+   * a page load is where a build with previews gets its worker back.
    */
-  allowed(fresh: boolean): Promise<boolean>;
+  allowed(navigation: boolean): Promise<boolean>;
   /** Stops answering for good: sets the flag and removes the registration. */
   retire(): Promise<void>;
 }
@@ -71,12 +70,19 @@ async function deployAllows(fetchMode: () => Promise<Response>): Promise<boolean
   );
 }
 
+/** One question to the deploy, and the requests it answers: those that had arrived when it was asked. */
+interface Question {
+  readonly covers: number;
+  readonly answer: Promise<boolean>;
+}
+
 export function createRetirement(options: RetirementOptions): Retirement {
-  const now = options.now ?? Date.now;
   // Read once, when the worker starts: this is what a restart cannot forget.
   let retired: Promise<boolean> = options.flag.has().catch(() => false);
-  let checked: { readonly at: number; readonly allowed: boolean } | undefined;
-  let checking: Promise<boolean> | undefined;
+  /** How many requests have asked so far; each one's number is its place in that order. */
+  let arrivals = 0;
+  let asking: Question | undefined;
+  let next: Promise<boolean> | undefined;
 
   async function retire(): Promise<void> {
     retired = Promise.resolve(true);
@@ -86,30 +92,48 @@ export function createRetirement(options: RetirementOptions): Retirement {
 
   async function check(): Promise<boolean> {
     const verdict = await deployAllows(options.fetchMode);
-    if (verdict === false) {
-      await retire();
-      return false;
-    }
-    // No answer: what held before still holds. Development works offline, and a flagged worker
-    // is retired by the flag, not by this.
-    const allowed = verdict ?? checked?.allowed ?? true;
-    checked = { at: now(), allowed };
-    return allowed;
+    if (verdict === false) await retire();
+    // No answer is not a yes: a deploy that cannot be asked is not served for. It is not a no
+    // either, so the worker stays, and serves again once the deploy says it may.
+    return verdict === true;
+  }
+
+  /** Asks the deploy now, for every request that has arrived by now. */
+  function ask(): Promise<boolean> {
+    const question: Question = { covers: arrivals, answer: check() };
+    asking = question;
+    const forget = (): void => {
+      if (asking === question) asking = undefined;
+    };
+    question.answer.then(forget, forget);
+    return question.answer;
+  }
+
+  /**
+   * The deploy's word for the request that arrived as number `arrival`: from a question asked
+   * after it arrived, never from an earlier one. Requests that arrive while a question is out
+   * wait for it and then share the next one, so the deploy is asked one question at a time.
+   */
+  function verified(arrival: number): Promise<boolean> {
+    if (!asking) return ask();
+    if (asking.covers >= arrival) return asking.answer;
+    next ??= asking.answer.then(() => {
+      next = undefined;
+      return ask();
+    });
+    return next;
   }
 
   return {
     retire,
-    async allowed(fresh) {
+    async allowed(navigation) {
+      arrivals += 1;
+      const arrival = arrivals;
       // Retired stays retired, with one way back: a build with previews clears the flag before
       // it registers the worker again (mounted.ts), and a navigation reads the flag anew.
-      if (fresh && (await retired)) retired = options.flag.has().catch(() => true);
+      if (navigation && (await retired)) retired = options.flag.has().catch(() => true);
       if (await retired) return false;
-      const recent = checked !== undefined && now() - checked.at < RECHECK_MS;
-      if (recent && !fresh) return checked?.allowed ?? false;
-      checking ??= check().finally(() => {
-        checking = undefined;
-      });
-      const allowed = await checking;
+      const allowed = await verified(arrival);
       // It may have been retired by a message while the deploy was being asked.
       return allowed && !(await retired);
     },

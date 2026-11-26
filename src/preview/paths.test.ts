@@ -8,6 +8,7 @@ import {
   parseMountedUrl,
   serverMount,
   workspaceOfPath,
+  type RedirectRule,
 } from "./paths";
 
 const ORIGIN = "https://ide.test";
@@ -92,28 +93,63 @@ test("a loopback address is a server in the workspace, never the person's own ma
   expect(guestPlace("http://128.0.0.1/", "/", 3000)).toBe("elsewhere");
 });
 
+const HOME = { workspace: "abc", port: 3000 };
+const IDE = "https://sprockt.test";
+const redirect = (location: string, from = "/", ideOrigin = IDE) =>
+  mountedRedirect(HOME, location, from, ideOrigin);
+const keep: RedirectRule = { action: "keep" };
+const refuse: RedirectRule = { action: "refuse" };
+const mountAt = (location: string): RedirectRule => ({ action: "mount", location });
+
 test("a redirect is rewritten to the same place under the mount, wherever it tried to go", () => {
   const mount = serverMount("abc", 3000);
-  expect(mountedRedirect("abc", 3000, "/login", "/account")).toBe(`${mount}/login`);
-  expect(mountedRedirect("abc", 3000, "step-2", "/wizard/step-1")).toBe(`${mount}/wizard/step-2`);
+  expect(redirect("/login", "/account")).toEqual(mountAt(`${mount}/login`));
+  expect(redirect("step-2", "/wizard/step-1")).toEqual(mountAt(`${mount}/wizard/step-2`));
   // Climbing out with a relative or an absolute path ends at the server's root, inside its mount.
-  expect(mountedRedirect("abc", 3000, "../../../../w/abc", "/a")).toBe(`${mount}/w/abc`);
-  expect(mountedRedirect("abc", 3000, "/../5174/admin", "/")).toBe(`${mount}/5174/admin`);
-  expect(mountedRedirect("abc", 3000, `${mount}/../5174/admin`, "/")).toBe(
-    `${mount}/__preview/abc/5174/admin`,
-  );
+  expect(redirect("../../../../w/abc", "/a")).toEqual(mountAt(`${mount}/w/abc`));
+  expect(redirect("/../5174/admin")).toEqual(mountAt(`${mount}/5174/admin`));
+  expect(redirect(`${mount}/../5174/admin`)).toEqual(mountAt(`${mount}/__preview/abc/5174/admin`));
+  // Another workspace's mount, written as a path, is a path on this server like any other.
+  expect(redirect("/__preview/other/3000/secret")).toEqual(mountAt(`${mount}/__preview/other/3000/secret`));
   // Already in the mount, or another site: left as the server wrote it.
-  expect(mountedRedirect("abc", 3000, `${mount}/login`, "/")).toBeUndefined();
-  expect(mountedRedirect("abc", 3000, "https://example.test/login", "/")).toBeUndefined();
-  // The server's absolute address for itself, and for the server beside it: their mounts.
-  expect(mountedRedirect("abc", 3000, "http://localhost:3000/about?next=1", "/")).toBe(
-    `${mount}/about?next=1`,
+  expect(redirect(`${mount}/login`)).toEqual(keep);
+  expect(redirect("https://example.test/login")).toEqual(keep);
+  expect(redirect("//example.test/login")).toEqual(keep);
+  expect(redirect("http://[bad")).toEqual(keep);
+  // The server's absolute address for itself: its own mount.
+  expect(redirect("http://localhost:3000/about?next=1")).toEqual(mountAt(`${mount}/about?next=1`));
+  expect(redirect("http://127.0.0.1:3000/", "/deep/page")).toEqual(mountAt(`${mount}/`));
+  expect(redirect("//localhost:3000/about")).toEqual(mountAt(`${mount}/about`));
+});
+
+test("a redirect never leads to another server of the workspace, or to the person's own machine", () => {
+  // A loopback address with another port: another server here, or their machine as written.
+  expect(redirect("http://localhost:8787/api")).toEqual(refuse);
+  expect(redirect("http://127.0.0.1:5173/")).toEqual(refuse);
+  expect(redirect("//localhost:5173/admin")).toEqual(refuse);
+  expect(redirect("https://localhost/secure")).toEqual(refuse);
+  expect(redirect("http://api.localhost:8787/x")).toEqual(refuse);
+});
+
+test("a redirect to the IDE's own origin stays on the server: never the IDE, never another mount", () => {
+  const mount = serverMount("abc", 3000);
+  // Written out in full, these would show the IDE, or another workspace's server, in the frame.
+  expect(redirect(`${IDE}/w/other`)).toEqual(mountAt(`${mount}/w/other`));
+  expect(redirect(`${IDE}/`)).toEqual(mountAt(`${mount}/`));
+  expect(redirect(`${IDE}/__preview/other/3000/secret?x=1`)).toEqual(
+    mountAt(`${mount}/__preview/other/3000/secret?x=1`),
   );
-  expect(mountedRedirect("abc", 3000, "http://127.0.0.1:3000/", "/deep/page")).toBe(`${mount}/`);
-  expect(mountedRedirect("abc", 3000, "http://localhost:8787/api", "/")).toBe(
-    `${serverMount("abc", 8787)}/api`,
-  );
-  expect(mountedRedirect("abc", 3000, "//localhost:3000/about", "/")).toBe(`${mount}/about`);
+  expect(redirect(`${IDE}/__preview/abc/8787/admin`)).toEqual(mountAt(`${mount}/__preview/abc/8787/admin`));
+  expect(redirect(`${IDE}${mount}/../8787/admin`)).toEqual(mountAt(`${mount}/__preview/abc/8787/admin`));
+  // Without a scheme the browser takes the page's own, which makes it the IDE's origin too.
+  expect(redirect("//sprockt.test/w/other")).toEqual(mountAt(`${mount}/w/other`));
+  // Its own mount, written in full, is right as it is.
+  expect(redirect(`${IDE}${mount}/login`)).toEqual(keep);
+  // An IDE served from loopback, as in development: the server's own port is the server, and
+  // any other loopback port is refused, the IDE's included.
+  const dev = "http://localhost:5173";
+  expect(redirect("http://localhost:3000/x", "/", dev)).toEqual(mountAt(`${mount}/x`));
+  expect(redirect("http://localhost:5173/w/other", "/", dev)).toEqual(refuse);
 });
 
 test("a mounted URL is read back into workspace, port and path", () => {

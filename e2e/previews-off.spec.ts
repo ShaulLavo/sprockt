@@ -121,6 +121,27 @@ test.describe("with a tab of the earlier build still open", () => {
     expect(await registrations(fresh)).toBe(0);
   });
 
+  test("a preview that is still open gets nothing more from the workspace once the deploy changed", async ({
+    page,
+    context,
+  }) => {
+    const address = await hostAGuest(page, context);
+    const open = await context.newPage();
+    await open.goto(address);
+    await expect(open.getByRole("heading")).toHaveText("Guest page");
+    /** What the open page's own script gets from its server now. */
+    const again = () => open.evaluate(async () => (await fetch("./data")).text());
+    expect(await again()).toContain("Guest page");
+
+    // The deploy changes. No page is loaded, and the worker file is still the old one. The
+    // worker asks the deploy for every request, so the very next one is not answered from the
+    // workspace: it used to trust its last answer for half a minute.
+    await deployWithoutPreviews(context, "off-old-worker");
+    expect(await again()).not.toContain("Guest page");
+    await expect.poll(() => registrations(open)).toBe(0);
+    await expect(page.getByTestId("workbench")).toHaveAttribute("data-stage", "ready");
+  });
+
   test("a preview address opened right after the deploy changed is not served by the old worker", async ({
     page,
     context,

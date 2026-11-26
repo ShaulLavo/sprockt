@@ -9,6 +9,7 @@ import { STATUS_SLOT } from "../workbench/slots";
 import { useWorkspace } from "../workspace/session";
 import { frameCommand, type FrameMessage } from "./bridge";
 import { ui } from "./copy";
+import { createGreeting } from "./greeting";
 import {
   canGoBack,
   canGoForward,
@@ -62,15 +63,17 @@ export function PreviewPane() {
   const [noScript, setNoScript] = createSignal(false);
   const [frame, setFrame] = createSignal<HTMLIFrameElement>();
   /** Whether the document in the frame runs our client script and so understands commands. */
-  let bridged = false;
-  /** Whether the document that is loading has announced itself yet. */
-  let announced = false;
+  const greeting = createGreeting();
 
-  // A document that finished loading without a word from our script (an image, a download, a
-  // page of another charset) cannot take commands: the frame is steered by its `src` again.
-  function onFrameLoad(): void {
-    if (!announced) bridged = false;
-    announced = false;
+  // Every document that finishes loading is asked whether it takes commands. One that says
+  // nothing (an image, a download, a refusal, a page of another charset, any page of a
+  // transport whose pages take none) is steered by the frame's `src`.
+  function onFrameLoad(event: Event): void {
+    const id = greeting.ask();
+    const element = event.currentTarget;
+    const origin = element instanceof HTMLIFrameElement ? URL.parse(element.src)?.origin : undefined;
+    if (!preview.takesCommands || !(element instanceof HTMLIFrameElement) || !origin) return;
+    element.contentWindow?.postMessage(frameCommand({ command: "hello", id }), origin);
   }
 
   function mountFrame(element: HTMLIFrameElement): void {
@@ -122,7 +125,7 @@ export function PreviewPane() {
     const element = frame();
     if (active === undefined || !element) return;
     const href = preview.frameUrl(active, target);
-    if (bridged)
+    if (greeting.understood)
       element.contentWindow?.postMessage(frameCommand({ command: "navigate", href }), new URL(href).origin);
     else element.src = href;
   }
@@ -130,7 +133,8 @@ export function PreviewPane() {
   // A server appeared, was picked, or came back: start over at its root.
   createEffect(
     on([port, frame, usable], ([active, element, canLoad]) => {
-      bridged = false;
+      // Whatever answered before belongs to another server or another frame.
+      greeting.ask();
       setHistory(emptyHistory);
       setErrors([]);
       setDraft(undefined);
@@ -143,10 +147,9 @@ export function PreviewPane() {
       setErrors((list) => list.concat([message.message]).slice(-ERROR_LIMIT));
       return;
     }
+    if (message.type === "hello") return greeting.answer(message.id);
     const place = preview.locate(message.href);
     if (!place || place.port !== port()) return;
-    bridged = preview.takesCommands;
-    announced = true;
     if (message.type === "started") setErrors([]);
     setHistory((current) => visited(current, place.path));
     setDraft(undefined);
@@ -165,7 +168,7 @@ export function PreviewPane() {
     const active = port();
     if (!element || active === undefined) return;
     const href = preview.frameUrl(active, path());
-    if (bridged)
+    if (greeting.understood)
       return element.contentWindow?.postMessage(frameCommand({ command: "reload" }), new URL(href).origin);
     // A page that takes no commands is reloaded by its address. One that ends in a fragment
     // would only scroll there, so the page is asked for without it, in the same history entry.

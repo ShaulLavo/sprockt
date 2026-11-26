@@ -40,6 +40,8 @@ Bun.serve({
     // What a server builds from the request it was sent: its own loopback address, in full.
     if (url.pathname === "/absolute") return redirect(new URL("/about?from=absolute", request.url).href);
     if (url.pathname === "/absolute-ip") return redirect("http://127.0.0.1:3000/about?from=ip");
+    // Wherever the request says: what a server under someone else's control would send.
+    if (url.pathname === "/go") return redirect(url.searchParams.get("to") ?? "/");
     if (url.pathname === "/forms") return page("Forms", FORMS);
     if (url.pathname.startsWith("/submitted/")) return page("Submitted", "<h1>" + request.method + " " + url.pathname + url.search + "</h1>");
     if (url.pathname === "/echo") return page("Echo", "<h1 id='echo'>waiting</h1><script>const socket = new WebSocket('ws://' + location.host + '/ws'); socket.onopen = () => socket.send('ping'); socket.onmessage = (event) => { document.getElementById('echo').textContent = 'echo: ' + event.data; };</script>");
@@ -550,4 +552,91 @@ test("two workspaces on the same port do not see each other's server", async ({ 
   await expect(direct.getByRole("heading")).toHaveText("First workspace");
   await direct.goto(`/__preview/${second}/3000/`);
   await expect(direct.getByRole("heading")).toHaveText("Second workspace");
+});
+
+test("a previewed page is served by its own server only, whatever it asks for or is redirected to", async ({
+  page,
+  context,
+}) => {
+  const first = await newWorkspace(page);
+  await writeFile(page, "server.ts", SERVER.replace("Hello from Bun.serve", "First workspace"));
+  await runInTerminal(page, "bun server.ts");
+  await expect(frame(page).getByRole("heading")).toHaveText("First workspace");
+
+  const other = await context.newPage();
+  const second = await newWorkspace(other);
+  await writeFile(other, "server.ts", SERVER.replace("Hello from Bun.serve", "Second workspace"));
+  await runInTerminal(other, "bun server.ts");
+  await expect(frame(other).getByRole("heading")).toHaveText("Second workspace");
+
+  /** What the first workspace's page gets when its own script asks for `address`. */
+  const asked = (address: string) =>
+    frame(page)
+      .locator("html")
+      .evaluate(async (_html, url) => {
+        const response = await fetch(url);
+        return { status: response.status, at: new URL(response.url).pathname, text: await response.text() };
+      }, address);
+  const mine = `/__preview/${first}/3000`;
+  const theirs = `/__preview/${second}/3000`;
+
+  // Its own mount answers.
+  expect(await asked(`${mine}/about`)).toMatchObject({ status: 200, at: `${mine}/about` });
+  // The other workspace's mount does not, however the address is spelled. The address names
+  // that workspace, and the worker goes by the page that asks.
+  for (const address of [`${theirs}/`, `${theirs}/about`, `${mine}/../../${second}/3000/`]) {
+    // One request after the other, each from the same page.
+    // oxlint-disable-next-line no-await-in-loop
+    const answer = await asked(address);
+    expect(answer.status, address).toBe(403);
+    expect(answer.text, address).not.toContain("Second workspace");
+  }
+  // Nor does another server's mount in its own workspace: the pair is workspace and port.
+  expect((await asked(`/__preview/${first}/8787/`)).status).toBe(403);
+
+  // A redirect to the other workspace's mount, written in full with the IDE's origin, never
+  // shows the other one's page. Here the IDE is on a loopback address, so the redirect names a
+  // loopback port that is not this server's and is refused; on any other origin it is a path
+  // of this server (`mountedRedirect`, unit-tested).
+  const origin = new URL(page.url()).origin;
+  const sent = await asked(`${mine}/go?to=${encodeURIComponent(`${origin}${theirs}/`)}`);
+  expect(sent.at.startsWith(`${mine}/`)).toBe(true);
+  expect(sent.status).toBe(403);
+  expect(sent.text).not.toContain("Second workspace");
+  // Written as a path, it is a path of this server, which has nothing special there.
+  const pathed = await asked(`${mine}/go?to=${encodeURIComponent(`${theirs}/`)}`);
+  expect(pathed.at).toBe(`${mine}${theirs}/`);
+  expect(pathed.text).toContain("First workspace");
+  // A redirect to another server of the workspace is not passed on, from a mounted address and
+  // from a path at the root alike.
+  const elsewhere = encodeURIComponent("http://localhost:8787/admin");
+  expect((await asked(`${mine}/go?to=${elsewhere}`)).status).toBe(403);
+  expect((await asked(`/go?to=${elsewhere}`)).status).toBe(403);
+
+  // The page sends its own frame to the other workspace's mount: it does not get there. The
+  // frame is read from the workbench around it (a mounted preview shares its origin), because
+  // Playwright's Firefox loses track of a frame that lands on an empty answer.
+  const shown = () =>
+    page.evaluate(() => {
+      const element = document.querySelector<HTMLIFrameElement>("[data-testid=preview-frame]");
+      // While a browser's own error page is in the frame it cannot be read at all.
+      try {
+        const text = element?.contentDocument?.body?.textContent ?? "";
+        return { at: element?.contentWindow?.location.pathname, text: text.trim() };
+      } catch (error) {
+        return { at: "unreadable", text: String(error) };
+      }
+    });
+  await frame(page)
+    .locator("html")
+    .evaluate((_html, url) => location.assign(url), `${theirs}/`);
+  // What it gets is the worker's refusal: the bare status, and nothing of the other workspace.
+  await expect.poll(shown).toEqual({ at: `${theirs}/`, text: "403" });
+  // The other workspace is untouched, and so is this one once its frame is pointed home again:
+  // the refusal is a page without our script, and the URL bar still steers the frame.
+  await expect(frame(other).getByRole("heading")).toHaveText("Second workspace");
+  await navigate(page, "/about");
+  await expect
+    .poll(shown)
+    .toMatchObject({ at: `${mine}/about`, text: expect.stringContaining("About page") });
 });

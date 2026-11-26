@@ -252,9 +252,13 @@ domain that is not a plain host name fails the build.
   browser stops an idle worker and starts it again with nothing remembered, and an unregistered
   worker stays in charge of pages it already controls. So retiring sets a flag in the origin's
   cache storage, which the worker reads whenever it starts; and a build with previews publishes
-  `/preview-mode.json`, which the worker asks for when it starts, again before every page
-  navigation, and otherwise at most every thirty seconds. A deploy that has no such file
-  retires the worker on the spot.
+  `/preview-mode.json`, which the worker asks for before every request and every socket it
+  would answer. No earlier answer is trusted, however recent: a page that is still open gets
+  nothing more from the workspace after the deploy changed, not only a page that loads. A
+  request is answered only from a question asked after it arrived; requests that arrive while
+  one is out share the next one. A deploy that has no such file retires the worker on the
+  spot. A deploy that cannot be asked (offline, a server error) is not served for either, and
+  does not retire the worker: it serves again when the deploy says it may.
 - `isolated` (`preview/isolated.ts`, on bun-wasm's `RootPreviews` from
   `bun-wasm/preview-origins`): each server gets an origin of its own,
   `https://<id>-<port>-pv.sprockt.dev`, which is what keeps a previewed project away from the
@@ -329,17 +333,32 @@ How the mounted transport works:
   (`preview/host-protocol.ts`). A tab answers only for the workspace it has open and declines
   anything else at once. Tabs also tell the worker which workspace they host, so it asks the
   right tab first; that list only orders the asking and is rebuilt when the worker restarts.
+- **The page that asks decides, not the address** (`preview/boundary.ts`). A previewed page is
+  served by the one server it was loaded from: that workspace and that port. Its request for
+  another workspace's mount, or for another server's mount in its own workspace, is refused
+  (403), however the address is spelled. A page's own requests name it as their client; a page
+  load has no client yet, so the page that started it is taken from its referrer. A request
+  with no previewed page behind it (the pane pointing its frame at a server, a tab a person
+  opened) goes where its address says. A page's WebSocket reaches its own server's port and no
+  other, though the page names the port itself. This holds the worker to the pair; it does not
+  make mounted previews safe for untrusted code, which shares the IDE's origin and needs no
+  worker to reach its storage, and a page can leave the referrer out of a page load. That is
+  what isolated previews are for.
 - **Requests outside the mount.** A previewed page asks for `/src/main.tsx` or `/@vite/client`
   at the root of our origin. The worker sees which page asked and sends the request to that
-  page's server.
+  page's server. Redirects in answer to such requests follow the same rules as any other.
 - **Paths stay on their server.** A path from the URL bar is resolved against the server's own
   root, as a browser resolves it, before the mount is put in front (`preview/paths.ts`): `..`
   segments, written out or encoded, stop at that root and cannot reach another port's mount,
   another workspace's or the IDE. A redirect is resolved the same way, against the path that
-  was asked for, and rewritten to the same place under the mount. A loopback address
-  (`http://localhost:3000/…`, which is how a server names itself and the servers beside it)
-  is the mount of the server at that port, never the person's own machine; a redirect to
-  another site passes as the server wrote it.
+  was asked for, and rewritten to the same place under the mount (`mountedRedirect`). A
+  redirect only ever leads to the same server or away to another site. The server's loopback
+  name for itself (`http://localhost:3000/…`) is its own mount. A loopback address with
+  another port means another server of the workspace, or the person's own machine if followed
+  as written: that redirect is not passed on (403). An address on the IDE's own origin,
+  written in full or without its scheme, is a path on the server like any other, so it can
+  show neither the IDE nor another mount. A redirect to another site passes as the server
+  wrote it.
 - **Isolation headers.** Every response carries the opener, embedder and resource policies
   (`preview/isolation.ts`), so a preview opened in its own tab is cross-origin isolated like
   the framed one and has `SharedArrayBuffer`.
@@ -359,8 +378,14 @@ How the mounted transport works:
   address is resolved where the page is on its server, put under that server's mount, and
   written back with the element's own attribute functions (a form control named `action`
   hides `form.action`); `form.submit()` is covered as well as the submit event; a `_top` or
-  `_parent` target becomes the preview's own frame; and what would still land on the IDE's own
-  pages is not followed at all.
+  `_parent` target becomes the preview's own frame; and what would still land anywhere on our
+  origin outside the page's own server's mount (the IDE's pages, another workspace's mount,
+  another server's), or on a loopback address, is not followed at all.
+- **Does this page take commands?** The pane asks instead of guessing from the order of
+  messages and load events, which differs between browsers (`preview/greeting.ts`): every
+  document that finishes loading gets a numbered `hello`, and only an answer with that number
+  makes the pane send "reload" and "go to" as messages. A document that says nothing (an
+  image, a download, the worker's refusal) is steered by the frame's address.
 - **The pane** (`preview/PreviewPane.tsx`) keeps its own back and forward list
   (`preview/history.ts`). A frame's browser history is shared with the IDE page, so stepping
   through it could walk the IDE itself back. Its toolbar is the panes' header band with the
