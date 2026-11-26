@@ -40,6 +40,8 @@ export const STATUS_SLOT = {
   /** Cursor position and language of the open file (slice 3). */
   cursor: "cursor",
   language: "language",
+  /** TypeScript language server readiness (shown while waiting for `node_modules`). */
+  typescript: "typescript",
 } as const;
 
 export interface StatusEntry extends StatusItem {

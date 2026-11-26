@@ -6,7 +6,9 @@ import {
   hasOwnScriptFile,
   isScriptFile,
   isWatchedPath,
+  packageNeedsInstall,
   projectRelativeName,
+  touchesDependencyState,
 } from "./project";
 
 test("TypeScript and JavaScript sources of every flavour are script files", () => {
@@ -74,4 +76,23 @@ test("dependencies are watched, version control is not", () => {
   expect(isWatchedPath("src/a.ts")).toBe(true);
   expect(isWatchedPath(".git/index")).toBe(false);
   expect(isWatchedPath("sub/.git/HEAD")).toBe(false);
+});
+
+test("packageNeedsInstall detects declared dependencies and devDependencies safely", () => {
+  expect(packageNeedsInstall(undefined)).toBe(false);
+  expect(packageNeedsInstall("{not json")).toBe(false);
+  expect(packageNeedsInstall('{"name":"empty","scripts":{"dev":"bun server.ts"}}')).toBe(false);
+  expect(packageNeedsInstall('{"dependencies":{},"devDependencies":{}}')).toBe(false);
+  expect(packageNeedsInstall('{"dependencies":{"react":"19.3.1"}}')).toBe(true);
+  expect(packageNeedsInstall('{"devDependencies":{"@types/bun":"1.4.5"}}')).toBe(true);
+});
+
+test("touchesDependencyState notices package.json and node_modules changes only", () => {
+  expect(touchesDependencyState("/workspace", [change("workspace/src/App.tsx")])).toBe(false);
+  expect(touchesDependencyState("/workspace", [change("workspace/package.json")])).toBe(true);
+  expect(touchesDependencyState("/workspace", [rename("workspace/node_modules")])).toBe(true);
+  expect(
+    touchesDependencyState("/workspace", [rename("workspace/node_modules/@types/react/index.d.ts")]),
+  ).toBe(true);
+  expect(touchesDependencyState("/workspace", [change("other/package.json")])).toBe(false);
 });

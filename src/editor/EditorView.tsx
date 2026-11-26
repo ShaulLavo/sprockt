@@ -293,6 +293,7 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
         runtime: workspace.runtime,
         projectRoot: PROJECT_ROOT,
         rootUri: `file://${PROJECT_ROOT}`,
+        status: workspace.status,
         openFile: (path, position) => openProjectFile(store, path, position),
       },
       editor,
@@ -302,7 +303,7 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
       unmountPlugins.current = undefined;
       unmount();
     };
-  }, [editor, store, workspace.runtime]);
+  }, [editor, store, workspace.runtime, workspace.status]);
 
   // Once another tab owns the workspace this tab's files are not live: language servers stop.
   useEffect(() => {

@@ -78,6 +78,32 @@ describe("template catalog", () => {
     expect(swcVersion).toBe(nextVersion);
   });
 
+  test("no starter template pins Vite 8+, Rolldown, or @vitejs/plugin-react 6+ (breaks WASI wasm32 / iOS Safari)", () => {
+    for (const template of STARTER_TEMPLATES) {
+      const pkg = JSON.parse(template.files["package.json"] ?? "{}") as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+      const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+      expect(allDeps.rolldown, `${template.id} must not depend on rolldown`).toBeUndefined();
+      if (allDeps.vite) {
+        const major = Number(allDeps.vite.replace(/^[^\d]*/, "").split(".")[0]);
+        expect(major, `${template.id} vite major must stay < 8`).toBeLessThan(8);
+      }
+      if (allDeps["@vitejs/plugin-react"]) {
+        const major = Number(allDeps["@vitejs/plugin-react"].replace(/^[^\d]*/, "").split(".")[0]);
+        expect(major, `${template.id} @vitejs/plugin-react major must stay < 6`).toBeLessThan(6);
+      }
+    }
+  });
+
+  test("astro template disables telemetry in dev and build scripts", () => {
+    const astro = findTemplate("astro");
+    const pkg = JSON.parse(astro?.files["package.json"] ?? "{}") as { scripts?: Record<string, string> };
+    expect(pkg.scripts?.dev).toContain("ASTRO_TELEMETRY_DISABLED=1");
+    expect(pkg.scripts?.build).toContain("ASTRO_TELEMETRY_DISABLED=1");
+  });
+
   test("blank template starts with no files", () => {
     expect(Object.keys(BLANK_TEMPLATE.files)).toEqual([]);
   });

@@ -367,6 +367,23 @@ test("the Bun.serve + bun:sqlite starter starts from the pane's button and rende
   await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "running");
 });
 
+test("the Vite + React starter starts from the pane's button and renders", async ({ page }) => {
+  test.setTimeout(900_000);
+  const patient = { timeout: 600_000 };
+  await page.goto("/");
+  await page.getByTestId("template-vite-react").click();
+  await expect(page).toHaveURL(/\/w\/[a-z0-9-]+$/);
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+
+  await page.getByTestId("preview-task").click();
+  const app = frame(page);
+  await expect(app.getByRole("heading")).toHaveText("Hello from bun.wasm", patient);
+  await expect(page.getByTestId("preview-port")).toHaveValue("5173");
+  await app.getByRole("button", { name: "count is 0" }).click();
+  await expect(app.getByRole("button", { name: "count is 1" })).toBeVisible();
+  await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "running");
+});
+
 test("a tab that takes the workspace over is not left following the old tab's dev server", async ({
   page,
   context,

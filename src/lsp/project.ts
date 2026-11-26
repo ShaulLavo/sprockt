@@ -68,3 +68,38 @@ export function fileChangeType(event: "change" | "rename", exists: boolean): Fil
 export function isWatchedPath(relativePath: string): boolean {
   return !relativePath.split("/").includes(".git");
 }
+
+function hasDependencyEntries(value: unknown): boolean {
+  return (
+    typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length > 0
+  );
+}
+
+/**
+ * Whether a project's `package.json` declares dependencies that must be installed into
+ * `node_modules` before TypeScript checking can resolve its imports and ambient types.
+ */
+export function packageNeedsInstall(packageJsonText: string | undefined): boolean {
+  if (!packageJsonText) return false;
+  try {
+    const parsed = JSON.parse(packageJsonText) as { dependencies?: unknown; devDependencies?: unknown };
+    return hasDependencyEntries(parsed.dependencies) || hasDependencyEntries(parsed.devDependencies);
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a batch of watch events changed `package.json` or anything under `node_modules`. */
+export function touchesDependencyState(
+  projectRoot: string,
+  events: readonly { readonly name: string | null }[],
+): boolean {
+  for (const event of events) {
+    if (event.name === null) continue;
+    const relative = projectRelativeName(projectRoot, event.name);
+    if (relative === "package.json" || relative === "node_modules" || relative?.startsWith("node_modules/")) {
+      return true;
+    }
+  }
+  return false;
+}

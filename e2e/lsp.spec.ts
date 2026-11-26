@@ -228,7 +228,7 @@ export function jsxs(type: unknown, props: unknown): JSX.Element;
     'declare module "*.css" {\n  const css: string;\n  export default css;\n}\n',
 };
 
-test("the Vite + React starter checks clean once installed, and keeps its syntax colours", async ({
+test("the Vite + React starter stays clean before install, then activates LSP once installed", async ({
   page,
 }) => {
   await page.goto("/");
@@ -236,11 +236,16 @@ test("the Vite + React starter checks clean once installed, and keeps its syntax
   await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
   await page.getByTestId("file-tree").getByRole("button", { name: "App.tsx", exact: true }).click();
   await expect.poll(() => editorText(page)).toContain("Hello from bun.wasm");
-  // Before the install React has no types, so its import is an error, as in any editor.
-  await expect.poll(() => errorRanges(page)).toContain('"react"');
+  // Before dependencies are installed, the status bar explains that TS checks are waiting and
+  // the editor stays free of false-alarm missing-module/JSX red squiggles.
+  await expect(page.locator('[data-status="typescript"]')).toContainText("Install deps for TS");
+  await expect.poll(() => syntaxRanges(page)).toEqual(expect.arrayContaining(["main", "className"]));
+  expect(await errorRanges(page)).toEqual([]);
 
-  // The install's files arrive while the server runs, as they would from `bun install`.
+  // The install's files arrive, as they would from `bun install`: the waiting indicator clears
+  // and the language server starts cleanly with zero diagnostics.
   await writeProject(page, REACT_STARTER_TYPES);
+  await expect(page.locator('[data-status="typescript"]')).toHaveCount(0);
   await expect.poll(() => errorRanges(page)).toEqual([]);
   // The language server adds nothing over the JSX: the highlighter still paints it.
   await expect.poll(() => syntaxRanges(page)).toEqual(expect.arrayContaining(["main", "className"]));
