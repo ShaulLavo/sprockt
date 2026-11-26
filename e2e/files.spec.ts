@@ -1,7 +1,16 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { inflateRawSync } from "node:zlib";
 import type { Locator, Page } from "@playwright/test";
-import { editorText, expect, newWorkspace, runInTerminal, test, typeInEditor, writeFile } from "./helpers";
+import {
+  editorText,
+  expect,
+  newWorkspace,
+  runInTerminal,
+  test,
+  typeInEditor,
+  withoutAutosave,
+  writeFile,
+} from "./helpers";
 import { TAB_POLICY } from "../src/runtime/tab-policy";
 
 const readFile = (page: Page, path: string): Promise<string | undefined> =>
@@ -348,6 +357,7 @@ test("the tree always has one Tab stop, and Escape returns from the context menu
 test("a folder holding unsaved edits can be renamed, moved and deleted; the editor keeps the edits", async ({
   page,
 }) => {
+  await withoutAutosave(page);
   await newWorkspace(page);
   await runInTerminal(page, "mkdir -p docs other && echo hello > docs/a.txt");
   await expandRow(page, "docs");
@@ -440,6 +450,7 @@ test("what the terminal does to files shows up in the tree, in open folders too,
 });
 
 test("renaming a folder takes an unsaved file under node_modules along", async ({ page }) => {
+  await withoutAutosave(page);
   await newWorkspace(page);
   await runInTerminal(page, "mkdir -p node_modules/pkg && echo x > node_modules/pkg/index.js");
   await expandRow(page, "node_modules");

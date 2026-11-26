@@ -1,11 +1,12 @@
-// When another tab takes a workspace over, this tab can no longer save. The text storage does
-// not hold yet goes to localStorage, and the tab that now owns the workspace shows it as an
-// unsaved edit when the file is opened.
+// Text storage does not hold yet is left in localStorage whenever this tab may stop running: when
+// the page is hidden (a phone switching apps may never come back to it) and when another tab takes
+// the workspace over. The next tab that opens the file, in this browser, shows it as an unsaved
+// edit, or as a conflict when the file changed since.
 //
-// Each file's text has its own key. Nothing reads a shared list, changes it and writes it back,
-// so two tabs leaving or finishing text at the same moment cannot lose each other's entries.
-// An entry stays until its text is safely in storage or the person discards it; opening the
-// file does not remove it.
+// Each tab leaves its own entries, one key per file, so two tabs never overwrite each other's
+// text. A tab holds a Web Lock while it can still save its own text; a draft whose tab holds that
+// lock is that tab's business and is not taken by another one. An entry stays until its text is
+// safely in storage or the person discards it; opening the file does not remove it.
 
 /** Unsaved text of one file. */
 export interface Draft {
@@ -14,39 +15,219 @@ export interface Draft {
   readonly baseText?: string | undefined;
 }
 
-type TextStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+/** A draft some tab left, with where it is stored. */
+export interface LeftDraft extends Draft {
+  readonly key: string;
+  readonly tab: string;
+  /** When it was left, in milliseconds since the epoch. */
+  readonly at: number;
+}
 
-/** `v1` is the format of the stored value. */
-const key = (workspace: string, path: string) =>
-  `sprockt:recovery:v1:${workspace}:${encodeURIComponent(path)}`;
+type TextStore = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
 
-const isDraft = (value: unknown): value is Draft =>
+/** `v2`: one key per workspace, file and tab. A path is URI-encoded, so it holds no `:`. */
+const PREFIX = "sprockt:recovery:v2:";
+const fileKey = (workspace: string, path: string) => `${PREFIX}${workspace}:${encodeURIComponent(path)}:`;
+/** The key a tab leaves a file's text under. */
+export const draftKey = (workspace: string, path: string, tab: string) => fileKey(workspace, path) + tab;
+
+const isStored = (value: unknown): value is Draft & { readonly at: number } =>
   typeof value === "object" &&
   value !== null &&
   "text" in value &&
   typeof value.text === "string" &&
+  "at" in value &&
+  typeof value.at === "number" &&
   (!("baseText" in value) || value.baseText === undefined || typeof value.baseText === "string");
 
-/** Leaves each text where the tab that owns the workspace next will find it. */
-export function leaveForRecovery(
-  storage: TextStore,
-  workspace: string,
-  drafts: ReadonlyMap<string, Draft>,
-): void {
-  for (const [path, draft] of drafts) storage.setItem(key(workspace, path), JSON.stringify(draft));
+function keysStartingWith(storage: TextStore, prefix: string): string[] {
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(prefix)) keys.push(key);
+  }
+  return keys;
 }
 
-/** The text waiting for one file. It stays in place: see `discardRecovered`. */
-export function recovered(storage: TextStore, workspace: string, path: string): Draft | undefined {
+function read(storage: TextStore, key: string): LeftDraft | undefined {
   try {
-    const parsed: unknown = JSON.parse(storage.getItem(key(workspace, path)) ?? "null");
-    return isDraft(parsed) ? parsed : undefined;
+    const parsed: unknown = JSON.parse(storage.getItem(key) ?? "null");
+    if (!isStored(parsed)) return undefined;
+    const tab = key.slice(key.lastIndexOf(":") + 1);
+    return { text: parsed.text, baseText: parsed.baseText, at: parsed.at, key, tab };
   } catch {
     return undefined;
   }
 }
 
+function remove(storage: TextStore, key: string): void {
+  try {
+    storage.removeItem(key);
+  } catch {
+    // Storage blocked: there is nothing stored to remove either.
+  }
+}
+
+/**
+ * Leaves this tab's unsaved text for each file, replacing what it left before: a file saved or
+ * closed since loses its entry. Other tabs' entries are not touched.
+ */
+export function leaveForRecovery(
+  storage: TextStore,
+  workspace: string,
+  tab: string,
+  drafts: ReadonlyMap<string, Draft>,
+  now = Date.now(),
+): void {
+  const keep = new Set(Array.from(drafts.keys(), (path) => draftKey(workspace, path, tab)));
+  const mine = keysStartingWith(storage, `${PREFIX}${workspace}:`).filter((key) => key.endsWith(`:${tab}`));
+  for (const key of mine) if (!keep.has(key)) remove(storage, key);
+  for (const [path, draft] of drafts) {
+    try {
+      const value = { text: draft.text, baseText: draft.baseText, at: now };
+      storage.setItem(draftKey(workspace, path, tab), JSON.stringify(value));
+    } catch {
+      // Storage full or blocked: this text has no other copy than the page, as before.
+    }
+  }
+}
+
+/** Every draft any tab left for one file. */
+export function draftsLeftFor(storage: TextStore, workspace: string, path: string): LeftDraft[] {
+  try {
+    return keysStartingWith(storage, fileKey(workspace, path)).flatMap((key) => read(storage, key) ?? []);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The draft to show for a file: the newest one whose tab can no longer save it (`held` says a
+ * live tab still holds it). `keys` are that entry and every other such entry with the same text,
+ * to be removed together once the text is durable. A different text from another gone tab stays
+ * stored, and is offered when the file is opened again after this one was settled.
+ */
+export function pickRecovered(
+  drafts: readonly LeftDraft[],
+  held: (tab: string) => boolean,
+): { readonly draft: Draft; readonly keys: readonly string[] } | undefined {
+  const free = drafts.filter((draft) => !held(draft.tab)).toSorted((a, b) => b.at - a.at);
+  const newest = free[0];
+  if (!newest) return undefined;
+  const same = free.filter((draft) => draft.text === newest.text && draft.baseText === newest.baseText);
+  return {
+    draft: { text: newest.text, baseText: newest.baseText },
+    keys: same.map((draft) => draft.key),
+  };
+}
+
 /** Call once the file's text is safely in storage, or the person chose to drop it. */
-export function discardRecovered(storage: TextStore, workspace: string, path: string): void {
-  storage.removeItem(key(workspace, path));
+export function discardRecovered(storage: TextStore, keys: readonly string[]): void {
+  for (const key of keys) remove(storage, key);
+}
+
+/** One tab's side of recovery: what it leaves, what it took from gone tabs, and when they go. */
+export interface DraftKeeper {
+  /** The draft to show when `path` is opened in this tab, if a tab that can no longer save left one. */
+  recover(path: string): Promise<Draft | undefined>;
+  /** Leaves this tab's unsaved text, replacing what it left before (page hidden, workspace lost). */
+  leave(drafts: ReadonlyMap<string, Draft>): void;
+  /** The file's text is durable, or the person dropped it: this tab's entry and those it took go. */
+  settled(path: string): void;
+  /** Entries follow a file or folder this tab saw move. */
+  renamed(from: string, to: string): void;
+  /** This tab can no longer save (or is closing): other tabs may take what it left. */
+  release(): void;
+}
+
+export interface DraftKeeperOptions {
+  readonly storage: TextStore;
+  readonly workspace: string;
+  readonly tab: string;
+  readonly locks: LockManager | undefined;
+  /** Where a path is after a move (`tabs.ts` renamedPath). */
+  renamedPath(path: string, from: string, to: string): string;
+  now?(): number;
+}
+
+export function createDraftKeeper(options: DraftKeeperOptions): DraftKeeper {
+  const { storage, workspace, tab } = options;
+  const releaseLease = holdTabLease(tab, options.locks);
+  /** Entries other tabs left that this tab showed, by the path they are open at here. */
+  const taken = new Map<string, readonly string[]>();
+
+  /** This tab's own entries, by the path they are for. */
+  function ownEntries(): Map<string, string> {
+    const own = new Map<string, string>();
+    const prefix = `${PREFIX}${workspace}:`;
+    for (const key of keysStartingWith(storage, prefix)) {
+      if (!key.endsWith(`:${tab}`)) continue;
+      own.set(decodeURIComponent(key.slice(prefix.length, key.length - tab.length - 1)), key);
+    }
+    return own;
+  }
+
+  function moveOwn(path: string, key: string, from: string, to: string): void {
+    const target = options.renamedPath(path, from, to);
+    if (target === path) return;
+    const value = storage.getItem(key);
+    remove(storage, key);
+    if (value !== null) storage.setItem(draftKey(workspace, target, tab), value);
+  }
+
+  return {
+    async recover(path) {
+      const left = draftsLeftFor(storage, workspace, path);
+      if (left.length === 0) return undefined;
+      const live = await liveTabs(options.locks);
+      const picked = pickRecovered(left, (owner) => owner !== tab && live.has(owner));
+      if (!picked) return undefined;
+      taken.set(path, picked.keys);
+      return picked.draft;
+    },
+    leave(drafts) {
+      leaveForRecovery(storage, workspace, tab, drafts, options.now?.());
+    },
+    settled(path) {
+      discardRecovered(storage, (taken.get(path) ?? []).concat([draftKey(workspace, path, tab)]));
+      taken.delete(path);
+    },
+    renamed(from, to) {
+      for (const [path, keys] of Array.from(taken)) {
+        const target = options.renamedPath(path, from, to);
+        if (target === path) continue;
+        taken.delete(path);
+        taken.set(target, keys);
+      }
+      try {
+        for (const [path, key] of ownEntries()) moveOwn(path, key, from, to);
+      } catch {
+        // Storage blocked: nothing of this tab's is stored to move.
+      }
+    },
+    release: releaseLease,
+  };
+}
+
+const LEASE_PREFIX = "sprockt:editor-tab:";
+
+/**
+ * Holds this tab's lock while it can still save its own drafts; the returned function lets go
+ * (the tab lost the workspace). Closing the page lets go too.
+ */
+export function holdTabLease(tab: string, locks: LockManager | undefined): () => void {
+  if (!locks) return () => {};
+  const done = Promise.withResolvers<void>();
+  void locks.request(LEASE_PREFIX + tab, () => done.promise).catch(() => {});
+  return () => done.resolve();
+}
+
+/** The tabs that still hold their lock. Without Web Locks, none: every draft can be taken. */
+export async function liveTabs(locks: LockManager | undefined): Promise<ReadonlySet<string>> {
+  if (!locks) return new Set();
+  const state = await locks.query().catch(() => ({ held: [] }));
+  const names = (state.held ?? []).flatMap((lock) => lock.name ?? []);
+  return new Set(
+    names.filter((name) => name.startsWith(LEASE_PREFIX)).map((name) => name.slice(LEASE_PREFIX.length)),
+  );
 }

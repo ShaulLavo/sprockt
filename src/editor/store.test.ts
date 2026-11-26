@@ -11,12 +11,17 @@ beforeEach(() => {
     getItem: (key: string) => items.get(key) ?? null,
     setItem: (key: string, value: string) => void items.set(key, value),
     removeItem: (key: string) => void items.delete(key),
+    key: (index: number) => Array.from(items.keys())[index] ?? null,
+    get length() {
+      return items.size;
+    },
   } as Storage;
 });
 
 /** A store over an in-memory disk, with `emit` standing in for FileService change events. */
-function setUpStore(files: Record<string, string>) {
-  const disk = new Map(Object.entries(files));
+function setUpStore(files: Record<string, string>, shared?: Map<string, string>) {
+  // A second store over `shared` is another tab on the same files.
+  const disk = shared ?? new Map(Object.entries(files));
   const writes: string[] = [];
   const listeners = new Set<(change: FileChange) => void>();
   const workspace = {
@@ -43,7 +48,8 @@ function setUpStore(files: Record<string, string>) {
     const full: FileChange = { paths: [], reset: false, moves: [], removed: [], ...change };
     for (const listener of listeners) listener(full);
   };
-  return { store: createRoot(() => createEditorStore(workspace)), disk, emit, writes };
+  const { store, dispose } = createRoot((end) => ({ store: createEditorStore(workspace), dispose: end }));
+  return { store, dispose, disk, emit, writes };
 }
 
 const storeWith = (files: Record<string, string>) => setUpStore(files).store;
@@ -308,4 +314,55 @@ test("a folder moved onto a deleted folder with an unsaved file keeps that draft
   expect(disk.get("target/a (draft 2).txt")).toBe("draft old");
   expect(disk.get("target/a (draft).txt")).toBe("someone else's");
   expect(store.tabs().map((tab) => tab.path)).toContain("target/a (draft 2).txt");
+});
+
+const recoveryKeys = () =>
+  Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? "").filter((key) =>
+    key.startsWith("sprockt:recovery:"),
+  );
+
+test("a page hidden while its save waits for a lock leaves the text for the next tab until it is durable", async () => {
+  const first = setUpStore({ "a.ts": "a" });
+  first.store.open("a.ts");
+  await first.store.buffers.load("a.ts");
+  type(first.store, "a.ts", "draft ");
+  // A move holds the file, so the save the hidden page starts has to wait for it.
+  const lock = await first.store.lockPaths(["a.ts"]);
+  const hidden = first.store.pageHidden();
+  await tick();
+  expect(first.disk.get("a.ts")).toBe("a");
+  // The page is torn down before it gets the lock back: its save never runs.
+  first.dispose();
+  lock.release(false);
+  await hidden;
+  expect(first.disk.get("a.ts")).toBe("a");
+
+  // Another tab opening the file finds the text, unsaved, with no conflict: the disk is as it was.
+  const second = setUpStore({}, first.disk);
+  second.store.open("a.ts");
+  const buffer = await second.store.buffers.load("a.ts");
+  expect(buffer?.session.materializeFullText()).toBe("draft a");
+  expect(buffer?.dirty()).toBe(true);
+  expect(buffer?.conflict()).toBeUndefined();
+  expect(recoveryKeys()).toHaveLength(1);
+
+  // Once that tab's save of it is durable, the copy goes.
+  await second.store.save("a.ts");
+  await tick();
+  expect(first.disk.get("a.ts")).toBe("draft a");
+  expect(recoveryKeys()).toEqual([]);
+  second.dispose();
+});
+
+test("a hidden page's copy goes once its own save is durable, and a visible page leaves none", async () => {
+  const { store, disk, dispose } = setUpStore({ "a.ts": "a" });
+  store.open("a.ts");
+  await store.buffers.load("a.ts");
+  type(store, "a.ts", "typed ");
+  expect(recoveryKeys()).toEqual([]);
+  await store.pageHidden();
+  await tick();
+  expect(disk.get("a.ts")).toBe("typed a");
+  expect(recoveryKeys()).toEqual([]);
+  dispose();
 });

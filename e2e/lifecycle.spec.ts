@@ -7,6 +7,7 @@ import {
   runInTerminal,
   test,
   typeInEditor,
+  withoutAutosave,
   writeFile,
 } from "./helpers";
 import { TAB_POLICY } from "../src/runtime/tab-policy";
@@ -33,6 +34,7 @@ test("a second tab asks before it takes a workspace over, and unsaved text moves
 }) => {
   test.skip(TAB_POLICY === "attach", "a second tab takes over only with the takeover policy");
   // With the attach policy a second tab shares the workspace instead (e2e/tabs.spec.ts).
+  await withoutAutosave(page);
   const id = await newWorkspace(page);
   await expect(page.getByTestId("terminal-state")).toHaveText("ready");
   await writeFile(page, "draft.txt", "saved text\n");

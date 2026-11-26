@@ -11,6 +11,8 @@ import { colorScheme, setColorScheme, type ColorScheme } from "./theme";
 
 /** Workspace actions, in title bar order. */
 const ACTIONS = [COMMAND.share, COMMAND.download] as const;
+/** Saving, first in the phone menu: a phone has no keyboard shortcut for it. */
+const EDITOR_ACTIONS = [COMMAND.save, COMMAND.saveAll, COMMAND.autosave] as const;
 
 function ThemeOption(props: { scheme: ColorScheme; label: string }) {
   return (
@@ -77,7 +79,10 @@ function PhoneMenu(props: { session: WorkspaceSession | undefined }) {
   const commands = (): readonly Command[] => {
     const session = props.session;
     if (!session) return [];
-    const ids: readonly string[] = [COMMAND.switchWorkspace as string].concat(ACTIONS);
+    const ids: readonly string[] = (EDITOR_ACTIONS as readonly string[]).concat(
+      [COMMAND.switchWorkspace],
+      ACTIONS,
+    );
     return ids.flatMap((id) => session.commands.get(id) ?? []);
   };
   const badged = () => commands().some((command) => (command.badge?.() ?? 0) > 0);

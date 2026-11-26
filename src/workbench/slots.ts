@@ -91,6 +91,10 @@ export const COMMAND = {
   download: "download",
   /** Switch to another workspace (slice 1): the workspace name becomes a menu button. */
   switchWorkspace: "switch-workspace",
+  /** Save the file on screen, save every unsaved file, and turn autosave on or off (the editor). */
+  save: "save",
+  saveAll: "save-all",
+  autosave: "autosave",
 } as const;
 
 export interface Command {

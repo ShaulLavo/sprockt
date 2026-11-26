@@ -227,5 +227,14 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
     return current && instance ? caretOf(current, instance) : undefined;
   };
 
-  return <div class="editor-host" data-testid="editor" ref={(node) => (host = node)} />;
+  // Leaving the editor (a tap on the preview, the terminal, the tree) autosaves at once.
+  const onFocusOut = (event: FocusEvent) => {
+    const next = event.relatedTarget;
+    if (next instanceof Node && host.contains(next)) return;
+    void props.store.flushAutosave();
+  };
+
+  return (
+    <div class="editor-host" data-testid="editor" ref={(node) => (host = node)} onFocusOut={onFocusOut} />
+  );
 }

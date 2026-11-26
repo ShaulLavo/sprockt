@@ -57,6 +57,13 @@ export const SearchIcon = () => (
   </Icon>
 );
 
+/** A command row in quick open: a chevron prompt. */
+export const CommandIcon = () => (
+  <Icon>
+    <path d="m6 8 4 4-4 4M12 16h6" />
+  </Icon>
+);
+
 export const AlertIcon = () => (
   <Icon>
     <path d="M12 4 3 19.5h18z" />

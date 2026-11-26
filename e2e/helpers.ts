@@ -1,4 +1,5 @@
 import { expect, test as base, type Page } from "@playwright/test";
+import { AUTOSAVE_SETTING_KEY } from "../src/editor/autosave";
 
 /**
  * Where the workbench stood when a test failed: a test that times out while waiting says
@@ -61,6 +62,19 @@ export const test = base.extend<{ pageErrors: string[] }>({
 });
 
 export { expect };
+
+/**
+ * Turns autosave off in every page of the test's browser context, before anything loads: for tests
+ * that need typed text to stay unsaved until they save it (conflicts, unsaved drafts, Ctrl+S).
+ */
+export async function withoutAutosave(page: Page): Promise<void> {
+  await page.context().addInitScript((key) => {
+    // Frames without storage (a sandboxed preview) have nothing to turn off.
+    try {
+      localStorage.setItem(key, "off");
+    } catch {}
+  }, AUTOSAVE_SETTING_KEY);
+}
 
 /** Opens a new workspace from the landing page and returns its id. */
 export async function newWorkspace(page: Page): Promise<string> {

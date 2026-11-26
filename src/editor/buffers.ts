@@ -91,6 +91,10 @@ export interface Buffer {
   scroll: EditorScrollPosition | undefined;
 }
 
+export interface SaveOptions {
+  readonly when?: (buffer: Buffer) => boolean;
+}
+
 export interface BufferSet {
   /** The loaded buffer for a path. Reactive: re-runs when buffers load, close or move. */
   get(path: string): Buffer | undefined;
@@ -113,8 +117,11 @@ export interface BufferSet {
   /**
    * Writes the buffer's text to its own path if the file still holds what the buffer was last in
    * step with; otherwise the buffer gets a conflict. Edits made while the write runs stay unsaved.
+   * `when` is asked right before the write starts, after any earlier save of the file and any
+   * move lock: a save that is no longer wanted by then (autosave of a file deleted meanwhile, or
+   * of text already written) writes nothing.
    */
-  save(path: string): Promise<void>;
+  save(path: string, options?: SaveOptions): Promise<void>;
   /** Compares every buffer with the disk: reload clean ones, flag conflicts on dirty ones. */
   sync(): Promise<void>;
   /** Resolve a conflict by keeping the buffer: the next save expects what is on disk now. */
@@ -160,8 +167,10 @@ type Files = Pick<FileService, "read" | "writeIfUnchanged" | "saved">;
 export interface BufferSetOptions {
   /** Hears about the first unsaved edit after each clean state: the editor pins previews. */
   readonly onEdit?: (path: string) => void;
+  /** Hears about every edit the person makes (not reloads from disk): autosave waits for a pause. */
+  readonly onChange?: (path: string) => void;
   /** Unsaved text another tab left behind for a file, applied when the file is opened. */
-  readonly recover?: (path: string) => Draft | undefined;
+  readonly recover?: (path: string) => Draft | undefined | Promise<Draft | undefined>;
   /** A file's saved text has reached storage: a copy left for recovery is no longer needed. */
   readonly onDurable?: (path: string) => void;
 }
@@ -227,7 +236,10 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       setMissing,
       unsubscribe: () => {},
     };
-    entry.unsubscribe = session.buffer.subscribe(() => refreshDirty(entry));
+    entry.unsubscribe = session.buffer.subscribe(() => {
+      refreshDirty(entry);
+      if (!entry.applying) options.onChange?.(entry.buffer.path);
+    });
     return entry;
   }
 
@@ -325,10 +337,10 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     // A write from before the file was closed may still be on its way: read what it leaves.
     await writesSettled(path);
     const text = await files.read(path);
+    const draft = await options.recover?.(path);
     // Two opens of one file share the first buffer.
     const existing = entries.get(path);
     if (existing) return existing.buffer;
-    const draft = options.recover?.(path);
     if (text === undefined && !draft) return undefined;
     const entry = create(path, text);
     if (draft) {
@@ -409,11 +421,12 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
 
   const lockedFor = (entry: Entry) => Array.from(locks).some((held) => under(entry.buffer.path, held.roots));
 
-  async function saveNow(entry: Entry): Promise<void> {
+  async function saveNow(entry: Entry, when: SaveOptions["when"]): Promise<void> {
     // Only a locked path waits: otherwise the save captures the text exactly when it was asked for.
     if (lockedFor(entry)) await untilUnlocked(entry);
     // Nothing awaits between here and the write starting: a lock taken now sees this write.
     if (!live(entry) || isDetached(entry.buffer.path)) return;
+    if (when && !when(entry.buffer)) return;
     const target = entry.buffer.path;
     const snapshot = entry.buffer.session.getSnapshot();
     const text = entry.buffer.session.materializeFullText();
@@ -468,10 +481,10 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
   /** Resolves once every write already queued for `path` has settled. */
   const writesSettled = (path: string) => pathQueues.get(path)?.tail ?? Promise.resolve();
 
-  function save(path: string): Promise<void> {
+  function save(path: string, saveOptions: SaveOptions = {}): Promise<void> {
     const entry = entries.get(path);
     if (!entry) return Promise.resolve();
-    return enqueue(path, () => saveNow(entry));
+    return enqueue(path, () => saveNow(entry, saveOptions.when));
   }
 
   return {

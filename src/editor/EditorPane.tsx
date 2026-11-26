@@ -2,8 +2,10 @@
 // changed under unsaved edits, the editor itself, project search beside it, and quick open.
 import { detectPlatform, getHotkeyRegistry } from "@shaulavo/hotkeys";
 import type { Editor } from "@singapore-editor/core/editor";
-import { For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, For, onCleanup, onMount, Show, type Accessor } from "solid-js";
+import type { PaletteCommand } from "../search/commands";
 import { QuickOpen } from "../search/QuickOpen";
+import { COMMAND } from "../workbench/slots";
 import { SearchPanel } from "../search/SearchPanel";
 import { AlertIcon, ChevronIcon } from "../search/icons";
 import { useWorkspace } from "../workspace/session";
@@ -66,7 +68,7 @@ function ConflictBar(props: { store: EditorStore }) {
 
 /** Workbench-wide shortcuts, live while the editor pane is mounted. */
 function useEditorShortcuts(store: EditorStore, pane: () => HTMLElement, editor: () => Editor | undefined) {
-  const save = () => void store.save().catch((error: unknown) => console.error("Saving failed", error));
+  const save = () => void store.save().catch(reportSaveError);
   onMount(() => {
     const registry = getHotkeyRegistry();
     const options = { preventDefault: true, stopPropagation: true, conflictBehavior: "replace" as const };
@@ -84,12 +86,69 @@ function useEditorShortcuts(store: EditorStore, pane: () => HTMLElement, editor:
     });
   });
 
-  // Closing or reloading the page with unsaved edits asks first.
+  // Closing or reloading the page with unsaved edits asks first; the text is kept and autosaved.
   const beforeUnload = (event: BeforeUnloadEvent) => {
-    if (store.buffers.dirtyPaths().length > 0) event.preventDefault();
+    if (store.buffers.dirtyPaths().length === 0) return;
+    void store.pageHidden();
+    event.preventDefault();
   };
   window.addEventListener("beforeunload", beforeUnload);
   onCleanup(() => window.removeEventListener("beforeunload", beforeUnload));
+}
+
+const reportSaveError = (error: unknown) => console.error("Saving failed", error);
+
+/**
+ * A phone that switches apps hides the page and may never show it again. Unsaved text is left for
+ * recovery at once (a save may have to wait for a lock the page never gets back), and autosave
+ * does not wait for the idle pause.
+ */
+function useAutosaveTriggers(store: EditorStore) {
+  const flush = () => void store.pageHidden();
+  const onVisibility = () => {
+    if (document.visibilityState === "hidden") flush();
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+  window.addEventListener("pagehide", flush);
+  onCleanup(() => {
+    document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener("pagehide", flush);
+  });
+}
+
+/** Save, Save all and the autosave switch: in the phone menu, and in quick open. */
+function useSaveCommands(store: EditorStore): Accessor<readonly PaletteCommand[]> {
+  const workspace = useWorkspace();
+  const mac = detectPlatform() === "mac";
+  const unsavedCount = () => store.buffers.dirtyPaths().length;
+  const commands = createMemo((): PaletteCommand[] => [
+    {
+      id: COMMAND.save,
+      label: EDITOR_COPY.save,
+      shortcut: mac ? "⌘S" : "Ctrl S",
+      run: () => void store.save().catch(reportSaveError),
+    },
+    {
+      id: COMMAND.saveAll,
+      label: EDITOR_COPY.saveAll,
+      run: () => void store.saveAll().catch(reportSaveError),
+    },
+    {
+      id: COMMAND.autosave,
+      label: store.autosave() ? EDITOR_COPY.autosaveOff : EDITOR_COPY.autosaveOn,
+      run: () => store.setAutosave(!store.autosave()),
+    },
+  ]);
+  createEffect(() => {
+    for (const command of commands()) {
+      const icon = command.id === COMMAND.autosave ? "auto" : "save";
+      // With autosave off, the phone menu's dot says there is something to save.
+      const badge =
+        command.id === COMMAND.saveAll ? () => (store.autosave() ? 0 : unsavedCount()) : undefined;
+      onCleanup(workspace.commands.register(command.id, { ...command, icon, badge }));
+    }
+  });
+  return commands;
 }
 
 export function EditorPane(props: { store: EditorStore }) {
@@ -106,6 +165,8 @@ export function EditorPane(props: { store: EditorStore }) {
     () => pane,
     () => editor,
   );
+  useAutosaveTriggers(props.store);
+  const commands = useSaveCommands(props.store);
 
   const open = (path: string, location: { line?: number; column?: number }) =>
     props.store.open(path, { ...location, focus: true });
@@ -145,6 +206,7 @@ export function EditorPane(props: { store: EditorStore }) {
         recent={() => props.store.tabs().map((tab) => tab.path)}
         onOpen={open}
         onClose={() => props.store.setQuickOpen(false)}
+        commands={commands}
       />
     </section>
   );

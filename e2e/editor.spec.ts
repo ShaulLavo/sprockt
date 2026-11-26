@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { editorText, expect, newWorkspace, runInTerminal, test } from "./helpers";
+import { editorText, expect, newWorkspace, runInTerminal, test, withoutAutosave } from "./helpers";
 
 /** Opens a new workspace and writes `files` into it through the page's FileService. */
 async function workspaceWith(page: Page, files: Record<string, string>): Promise<string> {
@@ -40,6 +40,7 @@ async function openFromTree(page: Page, name: string): Promise<void> {
 }
 
 test("two files open in tabs, an edit is saved with the shortcut and survives a reload", async ({ page }) => {
+  await withoutAutosave(page);
   await workspaceWith(page, { "notes.txt": "first file\n", "todo.md": "# Todo\n" });
 
   await openFromTree(page, "notes.txt");
@@ -119,6 +120,7 @@ test("project search finds text and opens the file at the matching line", async 
 });
 
 test("a shell edit reloads a clean buffer and puts a conflict on a dirty one", async ({ page }) => {
+  await withoutAutosave(page);
   await workspaceWith(page, { "shell.txt": "before\n", "mine.txt": "base\n" });
 
   await openFromTree(page, "shell.txt");
@@ -171,6 +173,7 @@ const read = (page: Page, path: string) =>
 test("folders moved and deleted from the terminal leave open files open, marked deleted, unsaved text kept", async ({
   page,
 }) => {
+  await withoutAutosave(page);
   await workspaceWith(page, { "docs/a.txt": "hello\n", "notes/b.txt": "bee\n" });
   await treeRow(page, "docs/a.txt").click();
   await expect(tab(page, "docs/a.txt")).toHaveAttribute("aria-selected", "true");

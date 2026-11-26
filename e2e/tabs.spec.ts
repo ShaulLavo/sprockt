@@ -8,6 +8,7 @@ import {
   terminalText,
   test,
   typeInEditor,
+  withoutAutosave,
   writeFile,
 } from "./helpers";
 import { TAB_POLICY } from "../src/runtime/tab-policy";
@@ -103,6 +104,8 @@ async function saveRace(page: Page, second: Page, name: string): Promise<void> {
 test("two tabs saving one file at once: one save lands, the other tab keeps its text as a conflict", async ({
   page,
 }) => {
+  // Both tabs save by hand at one moment; autosave would settle the race before it starts.
+  await withoutAutosave(page);
   const id = await newWorkspace(page);
   const second = await openSecondTab(page, id);
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -148,6 +151,7 @@ test("two tabs moving files to one free name at once: one move fails and keeps i
 test("a save that never reached storage survives the hosting tab closing, as a conflict", async ({
   page,
 }) => {
+  await withoutAutosave(page);
   const id = await newWorkspace(page);
   await writeFile(page, "notes.txt", "durable\n");
   await expect(page.getByTestId("save-state")).toHaveText("saved");

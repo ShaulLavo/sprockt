@@ -34,6 +34,7 @@ const PATHS = {
   download:
     '<path d="M12 4.5V15M7.5 10.5 12 15l4.5-4.5"/><path d="M4.5 15v3.5a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1V15"/>',
   reload: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/>',
+  save: '<path d="M5 4.5h11.5l3 3v12h-14.5z"/><path d="M8.5 4.5v4h6.5v-4M8.5 19.5v-6h7v6"/>',
   cpu: '<rect x="6" y="6" width="12" height="12" rx="1.5"/><path d="M9.5 9.5h5v5h-5zM9 2.5V6M15 2.5V6M9 18v3.5M15 18v3.5M2.5 9H6M2.5 15H6M18 9h3.5M18 15h3.5"/>',
   drive: '<rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M5.5 13 8 5h8l2.5 8M7 16.5h.01"/>',
   "sidebar-left": '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9 4.5v15"/>',
