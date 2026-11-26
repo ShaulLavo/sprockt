@@ -300,12 +300,24 @@ test("landing demo explorer and tablists are keyboard accessible and pause stops
   expect(pkgPanelId).toBeTruthy();
   await expect(demo.locator(`#${pkgPanelId}`)).toHaveAttribute("aria-labelledby", pkgTabId!);
 
-  // ArrowRight works on Terminal tabs with matching aria-controls/aria-labelledby.
+  // ArrowRight works on Terminal tabs with matching aria-controls/aria-labelledby, and the
+  // focused terminal tab stays inside the visible hero frame and passes pointer hit-testing.
+  const heroFrame = page.locator(".lp-hero-frame");
   const termTabs = demo.getByRole("tablist", { name: "Terminal tabs" });
-  await termTabs.getByRole("tab", { name: "bash" }).focus();
-  await page.keyboard.press("ArrowRight");
+  const bashTab = termTabs.getByRole("tab", { name: "bash" });
   const devTab = termTabs.getByRole("tab", { name: "dev :5173" });
+  await bashTab.focus();
+  await page.keyboard.press("ArrowRight");
   await expect(devTab).toBeFocused();
+  await expect(devTab).toHaveAttribute("aria-selected", "true");
+  const frameBox = await heroFrame.boundingBox();
+  const devTabBox = await devTab.boundingBox();
+  expect(frameBox).not.toBeNull();
+  expect(devTabBox).not.toBeNull();
+  expect(devTabBox!.y + devTabBox!.height).toBeLessThanOrEqual(frameBox!.y + frameBox!.height + 1);
+  await bashTab.click();
+  await expect(bashTab).toHaveAttribute("aria-selected", "true");
+  await devTab.click();
   await expect(devTab).toHaveAttribute("aria-selected", "true");
 
   // Pause stops both playback and blinking cursors; reduced motion hides Replay.
@@ -316,6 +328,21 @@ test("landing demo explorer and tablists are keyboard accessible and pause stops
   await expect
     .poll(() => demo.locator(".lp-wb-caret").evaluate((el) => getComputedStyle(el).animationName))
     .toBe("none");
+
+  // At tablet width (768x900), the compact pane switcher stays inside the hero frame and can be clicked.
+  await page.setViewportSize({ width: 768, height: 900 });
+  const paneTabs = demo.getByRole("tablist", { name: "Panes" });
+  const codePaneTab = paneTabs.getByRole("tab", { name: "Code" });
+  const tabletFrameBox = await heroFrame.boundingBox();
+  const codeTabBox = await codePaneTab.boundingBox();
+  expect(tabletFrameBox).not.toBeNull();
+  expect(codeTabBox).not.toBeNull();
+  expect(codeTabBox!.y + codeTabBox!.height).toBeLessThanOrEqual(
+    tabletFrameBox!.y + tabletFrameBox!.height + 1,
+  );
+  await codePaneTab.click();
+  await expect(codePaneTab).toHaveAttribute("aria-selected", "true");
+  await expect(demo.getByRole("tabpanel", { name: "Code" })).toBeVisible();
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(demo.getByRole("button", { name: /Replay demo|Pause demo/ })).toHaveCount(0);

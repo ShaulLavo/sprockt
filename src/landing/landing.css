@@ -11,6 +11,8 @@
   --lp-muted: light-dark(#6b6b6b, #8891a1);
   --lp-line: light-dark(rgb(17 17 17 / 0.11), rgb(233 237 243 / 0.11));
   --lp-line-strong: light-dark(rgb(17 17 17 / 0.2), rgb(233 237 243 / 0.2));
+  /* >= 3:1 against --lp-bg (#ffffff light: 3.86:1, #0a0d14 dark: 4.06:1) for WCAG 1.4.11 */
+  --lp-field-line: light-dark(#7c828d, #687387);
   --lp-action: var(--primary-bg);
   --lp-action-ink: var(--primary-fg);
   --lp-action-hover: var(--primary-hover);
@@ -586,22 +588,51 @@ body:has(.landing-page) {
   flex: 1 1 0;
   min-height: clamp(220px, 32svh, 340px);
   margin-top: var(--space-8);
+}
+
+.lp-hero-backdrop {
+  position: absolute;
+  inset: 0;
   mask-image: linear-gradient(to bottom, #000 82%, transparent);
 }
 
-/* the running app sits at the top of its pane, so it shows above the frame's fade */
+/* keep every interactive bar inside the visible hero frame instead of clipping past the fade */
 .lp-hero-window .lp-wb-app {
   align-content: start;
+  padding: 14px;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.lp-hero-window .lp-wb-head {
+  height: 30px;
+}
+
+.lp-hero-window .lp-wb-tree {
+  padding: 4px 6px;
+  gap: 0;
+  overflow-y: auto;
+}
+
+.lp-hero-window .lp-wb-row {
+  height: 21px;
 }
 
 .lp-hero-window {
   position: absolute;
   z-index: 1;
-  top: var(--space-8);
+  top: var(--space-4);
+  bottom: 0;
   left: 50%;
   width: min(880px, 100% - 2 * var(--space-8));
   transform: translateX(-50%);
-  --lp-wb-h: 548px;
+  --lp-wb-h: 100%;
+}
+
+@container wb (min-width: 721px) {
+  .lp-hero-window .lp-wb {
+    grid-template-rows: 42px minmax(0, 1.15fr) 1px minmax(92px, 0.85fr) 26px;
+  }
 }
 
 /* the one-shot hero entrance (never on scroll) */
@@ -1162,7 +1193,7 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   min-width: 0;
   height: 44px;
   padding: 0 var(--space-3);
-  border: 1px solid var(--lp-line-strong);
+  border: 1px solid var(--lp-field-line);
   border-radius: 4px;
   background: var(--lp-bg);
   color: var(--lp-ink);
@@ -1279,6 +1310,8 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   --lp-ink: var(--inv-ink);
   --lp-muted: var(--inv-muted);
   --lp-line: color-mix(in oklab, var(--inv-ink) 11%, transparent);
+  /* >= 3:1 against --inv-bg (#111111 light: 8.79:1, #05070b dark: 9.39:1) for WCAG 1.4.11 */
+  --focus: #5ab9fc;
   background: var(--inv-bg);
   color: var(--inv-ink);
   border-block: 1px solid light-dark(transparent, #1a2130);
@@ -1311,6 +1344,7 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
 }
 
 .lp-device {
+  --focus: light-dark(#1a4be0, #5ab9fc);
   position: absolute;
   z-index: 1;
   top: var(--space-12);
@@ -1381,7 +1415,8 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   flex: none;
   width: 32px;
   height: 32px;
-  border: 1px solid var(--lp-line);
+  /* >= 3:1 against --inv-bg (#111111 light: 5.08:1, #05070b dark: 5.43:1) */
+  border: 1px solid #7d8594;
   border-radius: 999px;
   background: transparent;
   color: var(--lp-ink);
@@ -1830,12 +1865,16 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
     min-height: 0;
     margin-top: var(--space-8);
     padding: var(--space-4);
+  }
+
+  .lp-hero-backdrop {
     mask-image: none;
   }
 
   .lp-hero-window {
     position: relative;
     top: 0;
+    bottom: auto;
     left: 0;
     width: 100%;
     transform: none;

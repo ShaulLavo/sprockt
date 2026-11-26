@@ -370,7 +370,8 @@ export function Landing() {
                 </a>
               </div>
             </div>
-            <div class="lp-hero-frame lp-ground lp-grain" data-enter-media>
+            <div class="lp-hero-frame" data-enter-media>
+              <div class="lp-hero-backdrop lp-ground lp-grain" aria-hidden="true" />
               <div class="lp-hero-window lp-hero-tab">
                 <WorkbenchPreview demo={demo} pane="terminal" label={LANDING_COPY.showcaseBenchFrame} />
               </div>

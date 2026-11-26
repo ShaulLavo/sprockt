@@ -36,9 +36,10 @@ export const LANDING_COPY = {
   openError: "Enter owner/repo or a github.com URL.",
   openTry: "Try",
   altBlank: "New blank workspace",
-  templatesTitle: "Seven starters, or any public GitHub repo.",
+  templatesTitle: "Seven starters, or a public GitHub repo.",
   templatesTitleMuted: "Pick one and the workbench opens on it.",
-  templatesNote: "Installs packages and runs the dev server in this tab.",
+  templatesNote:
+    "Public repos up to 100 MiB compressed, 256 MiB unpacked and 20,000 files. Imports do not run commands automatically. When Sprockt detects a dev command, starting it from Preview runs bun install first if package.json is present.",
   templatesError: "Could not create workspace: {message}",
   templateAction: "Create",
   templateCreating: "Creating...",
@@ -99,7 +100,7 @@ export const LANDING_COPY = {
     "In your browser tab on your own device. GitHub imports go through Sprockt's proxy to fetch the public repo, and everything else runs in the tab.",
   faqReposQ: "Which GitHub repos can I open?",
   faqReposA:
-    "Any public GitHub repo. Paste a github.com URL or enter owner/repo, including a branch or subfolder. Sprockt does not support private repos.",
+    "Public GitHub repos up to 100 MiB compressed, 256 MiB unpacked and 20,000 files. Paste a github.com URL or enter owner/repo, including a branch or subfolder. Sprockt refuses private repos and larger archives.",
   faqFilesQ: "Where are my files stored?",
   faqFilesA: "In this browser's IndexedDB. Other tabs in the same browser open the same live workspace.",
   faqBrowsersQ: "Which browsers does Sprockt support?",
