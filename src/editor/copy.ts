@@ -10,8 +10,9 @@ export const EDITOR_COPY = {
   closeTab: "Close {name}",
   discardChanges: "{name} has unsaved changes. Close without saving?",
   deletedFile: "Deleted from disk",
-  // Placeholder until the copywriter names it.
   cursorPosition: "Ln {line}, Col {column}",
+  savedDraftName: "{stem} (draft){extension}",
+  savedDraftNameNumbered: "{stem} (draft {count}){extension}",
 } as const;
 
 export { fill } from "../search/copy";

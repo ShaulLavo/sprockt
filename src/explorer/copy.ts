@@ -1,13 +1,9 @@
-// User-facing strings of the explorer. Entries marked "ui.json" are verbatim from the copywriter's
-// `copy/ui.json`; the rest are functional placeholders the copywriter replaces (see the PR).
+// Explorer strings, synced with copy/ui.json.
 import type { NameProblem } from "../files/paths";
 
 export const copy = {
-  /** ui.json panels.explorer */
   title: "Explorer",
-  /** The final string main shipped for the explorer's empty state (PR 13). */
   empty: "No files yet.",
-  /** ui.json confirm.deleteFile and confirm.deleteFolder */
   confirmFile: {
     title: "Delete {name}?",
     body: "This removes the file from your browser workspace and cannot be undone.",
@@ -20,14 +16,12 @@ export const copy = {
     confirm: "Delete folder",
     cancel: "Cancel",
   },
-  // Placeholders: a delete of several items has no copy yet.
   confirmMany: {
     title: "Delete {count} items?",
-    body: "This removes the selected files and folders, and everything inside the folders, from your browser workspace. This cannot be undone.",
+    body: "This removes the selected items and their contents from your browser workspace. This cannot be undone.",
     confirm: "Delete items",
     cancel: "Cancel",
   },
-  // Placeholders: the mock's action labels, menu items and messages.
   actions: {
     newFile: "New file",
     newFolder: "New folder",
@@ -40,20 +34,21 @@ export const copy = {
     more: "More actions",
     menu: "File actions",
   },
-  drop: "Drop to upload",
-  unsaved: "unsaved",
+  unsaved: "Unsaved changes",
   problems: {
     empty: "Enter a name.",
-    separator: "A name cannot contain slashes or backslashes.",
-    reserved: "This name is reserved.",
-    "too-long": "This name is too long.",
+    separator: "Names cannot include slashes or backslashes.",
+    reserved: "The names . and .. are reserved.",
+    "too-long": "Names must be 255 bytes or fewer.",
     exists: "A file or folder with this name already exists here.",
   } satisfies Record<NameProblem, string>,
   notices: {
-    moveExists: "{name} already exists in the destination.",
-    failed: "That did not work: {message}",
-    skipped: "{count} items were skipped.",
-    zipFailed: "Could not create the ZIP: {message}",
+    moveExists: "{name} already exists in that folder.",
+    folderGone: "The folder for {path} was moved or deleted.",
+    failed: "File operation failed: {message}",
+    skippedOne: "Skipped 1 item.",
+    skipped: "Skipped {count} items.",
+    zipFailed: "Could not create ZIP: {message}",
   },
 } as const;
 

@@ -1,4 +1,4 @@
-// Preview pane strings. Placeholders until the copy pass; `{…}` marks a value filled in at use.
+// Preview pane strings, synced with copy/ui.json. `{…}` marks a value filled in at use.
 export const ui = {
   preview: "Preview",
   back: "Back",
@@ -9,25 +9,26 @@ export const ui = {
   /** A port, as the picker and the title bar's dev server pill both print it. */
   port: ":{port}",
   serverRunning: "Dev server running on port {port}",
-  serverElsewhere: "Dev server running in another tab on port {port}",
-  stopElsewhere: "The dev server runs in another tab. Stop it there.",
+  serverElsewhere: "Dev server running on port {port} in another tab",
+  stopElsewhere: "Dev server is running in another tab. Stop it there.",
   serverStarting: "Starting",
   stopAction: "Stop dev server",
-  viewport: "Viewport",
+  viewport: "Preview viewport",
   desktop: "Desktop viewport",
   tablet: "Tablet viewport",
   phone: "Phone viewport",
-  errors: "Errors in the preview: {count}",
+  errors: "Preview errors: {count}",
   startServer: "Start dev server",
-  stopServer: "Dev server running on port {port}. Click to stop.",
+  stopServer: "Stop dev server on port {port}",
   openInTab: "Open preview in new tab",
-  unavailable: "Previews are not available in this browser.",
+  unavailable:
+    "Previews are unavailable in this window. Enable service workers or open Sprockt in a regular window.",
   starting: "Starting the dev server. The preview will load once a port opens.",
   empty: "No dev server is running yet. Start one in the terminal to preview it here.",
   /** The same moment for a project the pane can start itself; the Start button follows it. */
-  emptyStartable: "No dev server is running yet. Start it to preview this project here.",
-  nothingToStart: "Nothing to start in this project.",
-  serverEnded: "The dev server stopped. Its last output:",
+  emptyStartable: "No dev server is running yet. Start one to preview this project.",
+  nothingToStart: "No dev script or server entry file found in this project.",
+  serverEnded: "The dev server stopped.",
   restartHeld:
-    "The server was restarted {restarts} times in {seconds} seconds, so your last change is not in it yet. Save again in a moment, or stop and start the server.",
+    "Auto-restart paused after {restarts} restarts in {seconds} seconds, so your latest edit is not live yet. Save again in a moment, or stop and start the server.",
 } as const;

@@ -62,7 +62,7 @@ export function IncompleteRow(props: IncompleteRowProps) {
         return;
       }
       setConfirming(false);
-      setError(COPY.placeholder.deleteBusy);
+      setError(COPY.errors.deleteBusy);
     } finally {
       setBusy(false);
     }
@@ -87,7 +87,7 @@ export function IncompleteRow(props: IncompleteRowProps) {
         const href = () => retryPath(props.id, meta());
         const canRetryTemplate = () => !href() && !meta().source && Boolean(props.onRetryTemplate);
         const label = () =>
-          meta().source ? COPY.placeholder.importIncomplete : LANDING_COPY.recentIncompleteSeeding;
+          meta().source ? COPY.importer.importIncomplete : LANDING_COPY.recentIncompleteSeeding;
 
         return (
           <div class="lp-incomplete-row" data-testid="incomplete-import">
@@ -102,7 +102,7 @@ export function IncompleteRow(props: IncompleteRowProps) {
                     <Show when={href()}>
                       {(path) => (
                         <a class="lp-ws-btn" href={path()} data-testid="incomplete-retry">
-                          {COPY.placeholder.tryAgain}
+                          {COPY.importer.tryAgain}
                         </a>
                       )}
                     </Show>
@@ -120,7 +120,7 @@ export function IncompleteRow(props: IncompleteRowProps) {
                     <button
                       type="button"
                       class="lp-ws-icon-btn is-danger"
-                      title={COPY.placeholder.delete}
+                      title={COPY.importer.delete}
                       aria-label={`${LANDING_COPY.recentDelete}: ${meta().name}`}
                       disabled={busy()}
                       data-testid="incomplete-delete"

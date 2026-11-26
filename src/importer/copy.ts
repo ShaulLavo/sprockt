@@ -52,13 +52,6 @@ export const COPY = {
   },
   importer: IMPORTER,
   share: SHARE,
-  // Kept for src/landing/IncompleteRow.tsx until the landing branch switches to COPY.importer/errors.
-  placeholder: {
-    importIncomplete: IMPORTER.importIncomplete,
-    delete: IMPORTER.delete,
-    deleteBusy: ERRORS.deleteBusy,
-    tryAgain: IMPORTER.tryAgain,
-  },
 } as const;
 
 /** Fills `{name}` slots in a copy string. */

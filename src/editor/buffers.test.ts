@@ -516,17 +516,17 @@ test("a move onto a path whose buffer has unsaved text moves that draft aside in
   expect(buffers.get(aside)?.dirty()).toBe(true);
   expect(Array.from(buffers.unsaved().keys())).toEqual([aside]);
   // The draft is at no real path: a file named like it opens as that file, not as the draft.
-  expect(await buffers.load("target/a (unsaved).txt")).toBeUndefined();
+  expect(await buffers.load("target/a (draft).txt")).toBeUndefined();
   // And it is never written implicitly: saving through the buffer set is the store's job.
   await buffers.save(aside);
   expect(buffers.get(aside)?.dirty()).toBe(true);
 });
 
 test("free names keep the extension and count up", () => {
-  const taken = new Set(["a (unsaved).txt", "dir.v2/Makefile (unsaved)"]);
-  expect(freeName("a.txt", (path) => taken.has(path))).toBe("a (unsaved 2).txt");
-  expect(freeName("dir.v2/Makefile", (path) => taken.has(path))).toBe("dir.v2/Makefile (unsaved 2)");
-  expect(freeName(".env", () => false)).toBe(".env (unsaved)");
+  const taken = new Set(["a (draft).txt", "dir.v2/Makefile (draft)"]);
+  expect(freeName("a.txt", (path) => taken.has(path))).toBe("a (draft 2).txt");
+  expect(freeName("dir.v2/Makefile", (path) => taken.has(path))).toBe("dir.v2/Makefile (draft 2)");
+  expect(freeName(".env", () => false)).toBe(".env (draft)");
 });
 
 test("a save whose flush failed stays unsaved, and older text from storage is a conflict, not a reload", async () => {
