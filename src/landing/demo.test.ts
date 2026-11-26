@@ -89,7 +89,7 @@ describe("landing workbench demo lifecycle", () => {
     expect(fake.reducedListenerCount()).toBe(0);
   });
 
-  test("cancels every pending timer when hidden mid-playback and resumes when visible again", () => {
+  test("hidden mid-playback settles on the finished scene and keeps what was chosen", () => {
     const fake = createFakeEnv({ hidden: false });
     const demo = createDemoController(fake.env);
     demo.start();
@@ -98,28 +98,20 @@ describe("landing workbench demo lifecycle", () => {
     expect(fake.pendingCount()).toBeGreaterThan(0);
 
     fake.advance(600);
+    demo.setActiveFile("App.css");
+    demo.setActiveTerm("dev");
     fake.setHidden(true);
     expect(demo.playing()).toBe(false);
     expect(fake.pendingCount()).toBe(0);
-
-    fake.advance(10_000);
-    expect(demo.playing()).toBe(false);
-    expect(demo.step()).toBeLessThan(DEMO_SAVED_HMR);
-
-    fake.setHidden(false);
-    expect(demo.playing()).toBe(true);
-    expect(fake.pendingCount()).toBeGreaterThan(0);
-
-    fake.advance(10_000);
     expect(demo.step()).toBe(DEMO_SAVED_HMR);
-    expect(demo.playing()).toBe(false);
-    expect(fake.pendingCount()).toBe(0);
 
-    // Hiding and returning after natural completion does not replay.
-    fake.setHidden(true);
+    // Coming back neither restarts the scene nor drops the chosen file and terminal tab.
     fake.setHidden(false);
     expect(demo.playing()).toBe(false);
     expect(fake.pendingCount()).toBe(0);
+    expect(demo.step()).toBe(DEMO_SAVED_HMR);
+    expect(demo.activeFile()).toBe("App.css");
+    expect(demo.activeTerm()).toBe("dev");
 
     demo.dispose();
   });

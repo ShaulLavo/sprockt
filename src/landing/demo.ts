@@ -218,12 +218,9 @@ export function createDemoController(env: DemoEnvironment = browserDemoEnvironme
   function handleVisibilityChange(): void {
     if (disposed) return;
     if (env.isHidden()) {
-      if (playing()) {
-        clearTimers();
-        setHmrFlash(false);
-        setPlaying(false);
-        resumeOnVisible = true;
-      }
+      // Hidden mid-playback: settle on the finished scene rather than restart it later, so
+      // coming back keeps the chosen file and terminal tab and the ready preview.
+      if (playing()) settleCalm();
       return;
     }
     if (resumeOnVisible && !reducedMotion()) {
