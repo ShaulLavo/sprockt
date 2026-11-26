@@ -99,9 +99,16 @@ WorkspaceSession
 - **Autosave goes through the same save.** `editor/autosave.ts` saves unsaved buffers about a
   second after the last edit, and at once when the page is hidden, another file is shown or the
   editor loses focus, by calling `BufferSet.save` like Ctrl+S does. A buffer with a conflict, a
-  deleted file or a detached draft is never autosaved: those wait for the person. The setting
-  (default on) is kept in this browser's `localStorage`; Save, Save all and the switch are in the
-  phone menu and in quick open.
+  deleted file or a detached draft is never autosaved: those wait for the person, and that is
+  checked again right before the write starts, after the path queue and any move lock. A buffer
+  has at most one autosave queued behind the one running. The setting (default on) is kept in
+  this browser's `localStorage`; Save, Save all and the switch are in the phone menu and in
+  quick open.
+- **A hidden page is never the only copy.** When the page is hidden or left, every unsaved text
+  goes to `localStorage` (`editor/recovery.ts`) before the save is tried, since that save may
+  wait for a lock the page never gets back. Each tab keeps its own keys and holds a Web Lock
+  while it can still save them; another tab offers a draft as an unsaved edit when it opens the
+  file, and only once the tab that left it is gone. A copy is removed once the text is durable.
 - **Text is recoverable until storage holds it.** A save acknowledged from memory is not
   durable yet. The editor keeps such text recoverable until the flush that covers it is done
   (`FileService.saved()`), together with what storage held before it, even after its tab
@@ -142,7 +149,7 @@ started (`workspaceIsOpenElsewhere`) only decides what is shown first.
 When a tab loses its workspace, its FileService refuses every write, the editor becomes
 read-only and the status shows `failed`. Every text storage does not hold yet (unsaved edits,
 and saves whose flush never finished) is left in `localStorage` (`editor/recovery.ts`), one key
-per file, for the tab that now owns the workspace. There it shows up as an unsaved edit when
+per file and tab, for the tab that now owns the workspace; the tab lets go of its lock on them. There it shows up as an unsaved edit when
 the file is opened, and it stays stored until that tab has saved and flushed it, or the person
 takes the version on disk: opening the file, or reloading, does not use it up.
 
