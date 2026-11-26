@@ -1,9 +1,6 @@
-// Crisp 24x24 stroke icons. The logo is the filled sprocket mark from ../ui/sprocket.
+// Crisp 24x24 stroke icons. The logo is the 8-tooth sprocket with `< >` brackets from ../ui/SprocktLogo.
 import type { JSX } from "solid-js";
-import { MARK, sprocketPath, toothPath } from "../ui/sprocket";
-
-const MARK_BODY = sprocketPath(MARK);
-const MARK_LIT = toothPath(MARK, 1, 0.9);
+import { SPROCKT_BRACKETS_PATH, SPROCKT_GEAR_PATH } from "../ui/SprocktLogo";
 
 export type IconName =
   | "logo"
@@ -53,8 +50,20 @@ function iconBody(name: IconName): JSX.Element {
     case "logo":
       return (
         <>
-          <path fill="currentColor" stroke="none" fill-rule="evenodd" d={MARK_BODY} />
-          <path class="mark-lit" stroke="none" d={MARK_LIT} />
+          <path
+            d={SPROCKT_GEAR_PATH}
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linejoin="round"
+          />
+          <path
+            d={SPROCKT_BRACKETS_PATH}
+            fill="none"
+            stroke="var(--accent, #1a4be0)"
+            stroke-width="1.9"
+            stroke-linecap="square"
+          />
         </>
       );
     case "github":

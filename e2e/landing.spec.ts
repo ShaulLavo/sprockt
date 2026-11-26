@@ -30,7 +30,7 @@ test("landing renders cleanly without loading workbench or Waffle runtime code a
 
   await page.goto("/");
   await expect(page.getByTestId("landing-page")).toBeVisible();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Real Bun in any browser tab.");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("An open-source IDE in your browser tab");
 
   // Wait for workspace discovery to finish so lazy imports (if any) have settled.
   await expect(page.getByTestId("workspace-empty")).toContainText("No saved workspaces yet.");
@@ -203,7 +203,7 @@ test("phone viewport has no horizontal overflow, exposes menu/theme controls, an
   await page.getByTestId("phone-menu-toggle").click();
   const menu = page.getByTestId("phone-menu");
   await expect(menu).toBeVisible();
-  await expect(menu).toContainText("Templates");
+  await expect(menu).toContainText("Starters");
   await expect(menu).toContainText("GitHub");
 });
 

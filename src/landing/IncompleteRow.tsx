@@ -62,7 +62,7 @@ export function IncompleteRow(props: IncompleteRowProps) {
         return;
       }
       setConfirming(false);
-      setError(COPY.errors.deleteBusy);
+      setError(result === "busy" ? COPY.errors.deleteBusy : COPY.errors.deleteFailed);
     } finally {
       setBusy(false);
     }

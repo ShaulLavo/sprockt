@@ -18,11 +18,23 @@ function systemTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
+const CHROME_COLOR: Readonly<Record<Theme, string>> = { light: "#ffffff", dark: "#0a0d14" };
+
 function applyThemeAttribute(theme: Theme | undefined): void {
   if (theme) {
     document.documentElement.dataset.theme = theme;
   } else {
     delete document.documentElement.dataset.theme;
+  }
+  const metas = Array.from(document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'));
+  for (const meta of metas) {
+    if (theme) {
+      meta.content = CHROME_COLOR[theme];
+    } else if (meta.media.includes("light")) {
+      meta.content = CHROME_COLOR.light;
+    } else if (meta.media.includes("dark")) {
+      meta.content = CHROME_COLOR.dark;
+    }
   }
 }
 

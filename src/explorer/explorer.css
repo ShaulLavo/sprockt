@@ -3,18 +3,18 @@
    is scoped to .explorer-pane because the class names (.row, .name, .dirty) are generic. */
 
 .explorer-pane {
-  --e-bg: var(--bg-panel, var(--surface-raised, #121821));
-  --e-fg: var(--fg, var(--text, #e6ebf2));
-  --e-muted: var(--fg-muted, var(--text-muted, #a0acbc));
-  --e-subtle: var(--fg-subtle, var(--text-muted, #7f8b9c));
-  --e-line: var(--line, var(--border, #222c39));
-  --e-hover: var(--bg-hover, #1b2431);
-  --e-active: var(--bg-active, #2a1d29);
-  --e-accent: var(--accent, var(--accent-color, #ff5c8a));
-  --e-accent-soft: var(--accent-soft, #2c1724);
-  --e-focus: var(--focus, #ff7ea2);
-  --e-modified: var(--git-modified, #f0bd4f);
-  --e-danger: var(--danger, #ff6b6b);
+  --e-bg: var(--bg-panel, var(--surface-raised, #fafafa));
+  --e-fg: var(--fg, var(--text, #111111));
+  --e-muted: var(--fg-muted, var(--text-muted, #4a4e57));
+  --e-subtle: var(--fg-subtle, var(--text-muted, #5c616b));
+  --e-line: var(--line, var(--border, #e5e7eb));
+  --e-hover: var(--bg-hover, #f1f3f7);
+  --e-active: var(--bg-active, #e8eeff);
+  --e-accent: var(--accent, #1a4be0);
+  --e-accent-soft: var(--accent-soft, #eaf0ff);
+  --e-focus: var(--focus, #1a4be0);
+  --e-modified: var(--git-modified, #9a5b00);
+  --e-danger: var(--danger, #c81e2b);
   --e-indent: var(--indent, 12px);
 
   display: flex;

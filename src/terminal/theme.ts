@@ -41,7 +41,7 @@ const onPhone = typeof matchMedia === "function" && matchMedia("(max-width: 768p
 
 /** The terminal font: the workbench's code face, with the platform monospace as a fallback. */
 export const TERMINAL_FONT: Partial<TerminalFontSettings> = {
-  family: '"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  family: '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   size: onPhone ? 12 : 13,
   lineHeight: 1.15,
   weight: 400,

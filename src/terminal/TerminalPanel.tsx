@@ -5,6 +5,7 @@ import { debugHandle } from "../app/debug";
 import { Icon } from "../ui/icons";
 import { fill } from "../ui/format";
 import { trackOverflowFade } from "../ui/fade";
+import { terminalTabTone } from "../ui/tab-colors";
 import { useWorkspace } from "../workspace/session";
 import { ui } from "./copy";
 import type { SessionState } from "./session";
@@ -61,6 +62,7 @@ function RenameField(props: { tab: TerminalTab; onDone(title: string | undefined
 
 function Tab(props: {
   tab: TerminalTab;
+  index: number;
   store: TerminalStore;
   onSelect(id: string): void;
   onKey(event: KeyboardEvent, id: string): void;
@@ -71,7 +73,11 @@ function Tab(props: {
   const shown = () => state().active === props.tab.id || state().split === props.tab.id;
   const focused = () => state().focused === props.tab.id;
   return (
-    <div class="ttab" classList={{ "is-active": focused(), "is-shown": shown() }}>
+    <div
+      class="ttab"
+      classList={{ "is-active": focused(), "is-shown": shown() }}
+      data-tab-tone={terminalTabTone(props.tab.title, props.index)}
+    >
       <Show
         when={props.renaming}
         fallback={
@@ -210,11 +216,12 @@ export function TerminalPanel(props: TerminalPanelProps) {
       <div class="term-bar">
         <div class="term-tabs" role="tablist" aria-label={ui.tabs} ref={(element) => (strip = element)}>
           <For each={ids()}>
-            {(id) => (
+            {(id, index) => (
               <Show when={tabById(id)}>
                 {(tab) => (
                   <Tab
                     tab={tab()}
+                    index={index()}
                     store={terminals}
                     onSelect={select}
                     onKey={onTabKey}

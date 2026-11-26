@@ -1,6 +1,5 @@
-/* Terminal panel. Tabs follow the workbench's one tab rule: a tab is a tooth. Inactive tabs are
-   labels on the darker strip; the shown tab is a tooth of the panel's own surface, rising out of
-   it. Its flat top carries the lamp color only while the terminal has the keyboard. */
+/* Terminal panel: crisp rectangular multicolor tabs matching the editor's tab strip. Each
+   terminal carries its own role color (`--tab-accent`) from src/ui/tab-colors.ts. */
 
 .terminal-panel {
   background: var(--term-bg);
@@ -22,9 +21,9 @@
 .term-tabs {
   display: flex;
   flex: 0 1 auto;
-  align-items: flex-end;
+  align-items: stretch;
   min-width: 0;
-  padding-left: var(--space-2);
+  padding-left: 0;
   overflow-x: auto;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
@@ -40,78 +39,56 @@
   display: flex;
   flex: none;
   align-items: center;
-  height: calc(var(--tab-h) - var(--tooth-top));
-  margin-bottom: -1px;
+  height: 100%;
+  border-right: 1px solid var(--line);
   color: var(--fg-subtle);
   font-size: var(--text-xs);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
-.ttab::before,
 .ttab::after {
   content: "";
   position: absolute;
-  z-index: -1;
-  inset: 0;
-  clip-path: var(--tooth-shape);
-  opacity: 0;
-}
-
-.ttab::before {
-  background: var(--line-strong);
-}
-
-.ttab::after {
-  inset: 1px 1px 0;
-  background: var(--term-bg);
-}
-
-.ttab.is-shown::before,
-.ttab.is-shown::after {
-  opacity: 1;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: var(--tab-indicator);
+  background: var(--tab-accent, var(--accent));
+  opacity: 0.22;
+  transform: scaleX(0.45);
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 
 /* The other half of a split: on screen, but not taking input. */
 .ttab.is-shown {
+  background: color-mix(in oklab, var(--term-bg) 65%, var(--bg-tabstrip));
   color: var(--fg-muted);
-}
-
-.ttab.is-shown::after {
-  background: color-mix(in oklab, var(--term-bg) 60%, var(--bg-tabstrip));
 }
 
 .ttab.is-active {
-  color: var(--fg-muted);
+  background: var(--term-bg);
+  color: var(--fg);
+  font-weight: var(--weight-medium);
 }
 
-/* Full ink and weight only while the terminal has the keyboard, as in the editor's strip. */
+.ttab.is-active::after {
+  opacity: 0.55;
+  transform: scaleX(1);
+}
+
 .terminal-panel:focus-within .ttab.is-active {
+  background: color-mix(in oklab, var(--tab-accent, var(--accent)) 6%, var(--term-bg));
   color: var(--fg);
   font-weight: var(--weight-semibold);
 }
 
-.ttab.is-active::after {
-  background: var(--term-bg);
-}
-
-/* The bar along the tooth's flat top: quiet while the terminal is not taking input, the lamp
-   color once it has the keyboard. It spans exactly the flat, so it meets the flanks squarely. */
-.ttab.is-active .ttab-main::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: var(--tooth-flank);
-  left: var(--tooth-flank);
-  height: var(--tab-indicator);
-  background: var(--fg-subtle);
-}
-
-.terminal-panel:focus-within .ttab.is-active .ttab-main::before {
-  background: var(--accent);
-}
-
-.terminal-panel.is-collapsed .ttab::before,
-.terminal-panel.is-collapsed .ttab::after {
-  bottom: 1px;
+.terminal-panel:focus-within .ttab.is-active::after {
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 .ttab-main {
@@ -119,13 +96,14 @@
   align-items: center;
   gap: var(--space-1_5);
   height: 100%;
-  padding: 0 var(--space-1) 0 calc(var(--tooth-flank) + var(--space-2));
+  padding: 0 var(--space-1) 0 var(--space-3);
   border-radius: 0;
 }
 
 .ttab-main .ico {
   width: 14px;
   height: 14px;
+  color: var(--tab-accent, var(--fg-muted));
 }
 
 .ttab-main:focus-visible {
@@ -144,7 +122,7 @@
   height: 7px;
   margin: 0 var(--space-0_5);
   border-radius: 50%;
-  background: var(--ok);
+  background: var(--tab-accent, var(--ok));
 }
 
 .ttab-dot[data-state="failed"] {
@@ -160,7 +138,7 @@
   place-items: center;
   width: 20px;
   height: 20px;
-  margin-right: calc(var(--tooth-flank) + var(--space-0_5));
+  margin-right: var(--space-1_5);
   border-radius: var(--radius-xs);
   color: var(--fg-muted);
   opacity: 0;
@@ -326,14 +304,14 @@
     height: 44px;
   }
 
-  /* The one pane on screen is the one in use, so its open tab is lit and set in full ink. */
+  /* The one pane on screen is the one in use, so its open tab carries its full accent bar. */
   .ttab.is-active {
     color: var(--fg);
     font-weight: var(--weight-semibold);
   }
 
-  .ttab.is-active .ttab-main::before {
-    background: var(--accent);
+  .ttab.is-active::after {
+    opacity: 1;
   }
 
   .ttab {

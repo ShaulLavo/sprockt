@@ -14,6 +14,7 @@ const ERRORS = {
   shareLinkInvalid: "This share link is damaged or incomplete.",
   shareFailed: "Could not create share link: {message}",
   deleteBusy: "Close this workspace in other tabs before deleting it.",
+  deleteFailed: "Could not delete this workspace. Try again.",
   storageFull: "Browser storage is full. Delete an unused workspace or clear site data to free space.",
 } as const;
 
