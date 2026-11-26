@@ -9,7 +9,7 @@ export const LANDING_COPY = {
   navThemeLight: "Light theme",
   navThemeDark: "Dark theme",
   skip: "Skip to content",
-  heroPill: "Bun 1.4.5 in WebAssembly",
+  heroPill: "Bun 1.4.4 in WebAssembly",
   heroTitle: "Real Bun in any browser tab.",
   heroLede:
     "Open a public GitHub repo or a starter template. Sprockt installs packages and runs your app in Chrome, Firefox, Safari and iPhone Safari.",

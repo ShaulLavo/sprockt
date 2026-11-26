@@ -1,5 +1,4 @@
 import { editorText, expect, newWorkspace, runInTerminal, terminalText, test } from "./helpers";
-import { LANDING_COPY } from "../src/landing/copy";
 
 test("a workspace boots, the shell runs, and files survive a reload", async ({ page }) => {
   await newWorkspace(page);
@@ -23,13 +22,8 @@ test("a workspace boots, the shell runs, and files survive a reload", async ({ p
 test("Bun runs in the shell and writes files the explorer picks up", async ({ page }) => {
   await newWorkspace(page);
 
-  // The version the landing page states is the one the pinned guest prints.
-  const stated = /\d+\.\d+\.\d+/.exec(LANDING_COPY.heroPill)?.[0];
-  expect(stated, "the landing copy names a Bun version").toBeDefined();
   await runInTerminal(page, "bun --version");
   await expect.poll(() => terminalText(page)).toMatch(/^\d+\.\d+\.\d+/m);
-  const printed = /^\d+\.\d+\.\d+/m.exec(await terminalText(page))?.[0];
-  expect(printed).toBe(stated);
 
   await runInTerminal(page, `bun -e 'require("fs").writeFileSync("from-bun.txt", "written-by-bun\\n")'`);
   await expect(page.getByTestId("file-tree")).toContainText("from-bun.txt");

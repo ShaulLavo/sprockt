@@ -486,7 +486,7 @@ export function Landing() {
                   <span>
                     <span class="lp-specimen-prompt">$</span> bun --version
                   </span>
-                  <span class="lp-specimen-out">1.4.5</span>
+                  <span class="lp-specimen-out">1.4.4</span>
                   <span>
                     <span class="lp-specimen-prompt">$</span> bun test
                   </span>
