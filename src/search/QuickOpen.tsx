@@ -75,14 +75,24 @@ function Dialog(props: QuickOpenProps) {
   const [paths, setPaths] = createSignal<readonly string[]>([]);
   let listing = 0;
   let open = true;
+  // Enter pressed before the first listing arrived: it opens the best match once there is one.
+  let listed = false;
+  let enterWaiting = false;
   onCleanup(() => (open = false));
+  function landed(list: readonly string[]): void {
+    setPaths(list);
+    listed = true;
+    if (!enterWaiting) return;
+    enterWaiting = false;
+    pick(results()[0]);
+  }
   createEffect(
     on(props.files.revision, () => {
       listing += 1;
       const mine = listing;
       // Only the newest listing lands, and none after the dialog closed.
       void props.files.list().then(
-        (list) => open && mine === listing && setPaths(list),
+        (list) => open && mine === listing && landed(list),
         () => {},
       );
     }),
@@ -109,6 +119,7 @@ function Dialog(props: QuickOpenProps) {
   function onKeyDown(event: KeyboardEvent): void {
     const count = results().length;
     if (event.key === "Escape") props.onClose();
+    else if (event.key === "Enter" && !listed) enterWaiting = true;
     else if (event.key === "Enter") pick(results()[selected()]);
     else if (event.key === "ArrowDown" && count > 0) setSelected((selected() + 1) % count);
     else if (event.key === "ArrowUp" && count > 0) setSelected((selected() - 1 + count) % count);
