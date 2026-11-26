@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import { createRoot } from "solid-js";
 import type { FileChange } from "../files/service";
+import { ProjectPathError } from "../workspace/paths";
 import { isDetached, originalPath } from "./buffers";
 import { createEditorStore } from "./store";
 
@@ -24,18 +25,29 @@ function setUpStore(files: Record<string, string>, shared?: Map<string, string>)
   const disk = shared ?? new Map(Object.entries(files));
   const writes: string[] = [];
   const listeners = new Set<(change: FileChange) => void>();
+  const flushes: PromiseWithResolvers<void>[] = [];
+  let holdingFlushes = false;
   const workspace = {
     id: "test",
     files: {
-      read: async (path: string) => disk.get(path),
+      read: async (path: string) => {
+        if (path.includes("\u0000")) throw new ProjectPathError(path, "it contains a NUL");
+        return disk.get(path);
+      },
       async writeIfUnchanged(path: string, content: string, expected: string | undefined) {
+        if (path.includes("\u0000")) throw new ProjectPathError(path, "it contains a NUL");
         const current = disk.get(path);
         if (current !== expected) return { written: false as const, current };
         writes.push(path);
         disk.set(path, content);
         return { written: true as const };
       },
-      saved: async () => {},
+      saved() {
+        if (!holdingFlushes) return Promise.resolve();
+        const flush = Promise.withResolvers<void>();
+        flushes.push(flush);
+        return flush.promise;
+      },
       revision: () => 0,
       writable: () => true,
       subscribe(listener: (change: FileChange) => void) {
@@ -49,7 +61,20 @@ function setUpStore(files: Record<string, string>, shared?: Map<string, string>)
     for (const listener of listeners) listener(full);
   };
   const { store, dispose } = createRoot((end) => ({ store: createEditorStore(workspace), dispose: end }));
-  return { store, dispose, disk, emit, writes };
+  return {
+    store,
+    dispose,
+    disk,
+    emit,
+    writes,
+    flushes,
+    holdFlushes() {
+      holdingFlushes = true;
+    },
+    releaseFlushes() {
+      holdingFlushes = false;
+    },
+  };
 }
 
 const storeWith = (files: Record<string, string>) => setUpStore(files).store;
@@ -365,4 +390,537 @@ test("a hidden page's copy goes once its own save is durable, and a visible page
   expect(disk.get("a.ts")).toBe("typed a");
   expect(recoveryKeys()).toEqual([]);
   dispose();
+});
+
+test("an earlier flush finishing does not delete a newer page-hide draft", async () => {
+  const first = setUpStore({ "a.ts": "base" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("a.ts");
+  await first.store.buffers.load("a.ts");
+  // Save edit A and hold its flush.
+  type(first.store, "a.ts", "A:");
+  await first.store.save("a.ts");
+  expect(first.disk.get("a.ts")).toBe("A:base");
+  expect(first.flushes).toHaveLength(1);
+
+  // Type edit B, then hide the page: recovery stores B+A.
+  type(first.store, "a.ts", "B:");
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+
+  // Now the earlier flush for A completes: it must NOT delete the newer B+A recovery entry.
+  first.flushes.shift()?.resolve();
+  await tick();
+  expect(recoveryKeys()).toHaveLength(1);
+  first.dispose();
+
+  // Reopening in a new tab recovers B+A instead of losing B.
+  const second = setUpStore({}, first.disk);
+  second.store.open("a.ts");
+  const buffer = await second.store.buffers.load("a.ts");
+  expect(buffer?.session.materializeFullText()).toBe("B:A:base");
+  expect(buffer?.dirty()).toBe(true);
+  second.store.setDisplayed("a.ts");
+  await second.store.keepMine();
+  await tick();
+  expect(first.disk.get("a.ts")).toBe("B:A:base");
+  expect(recoveryKeys()).toEqual([]);
+  second.dispose();
+});
+
+test("a detached draft left on page hide opens on reload and is discovered even if another tab wrote the tab list", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "new", "other.txt": "o" });
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+  type(first.store, "target/a.txt", "draft ");
+  first.disk.delete("target/a.txt");
+  first.emit({ removed: ["target", "target/a.txt"] });
+  first.store.open("src/a.txt");
+  await first.store.buffers.load("src/a.txt");
+  first.disk.set("target/a.txt", "new");
+  first.disk.delete("src/a.txt");
+  first.emit({
+    moves: [
+      { from: "src", to: "target", operation: 1 },
+      { from: "src/a.txt", to: "target/a.txt", operation: 1 },
+    ],
+  });
+  await tick();
+  const aside = first.store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+
+  // Tab 1 hides and closes, leaving the detached draft in recovery.
+  await first.store.pageHidden();
+  first.dispose();
+
+  // Another attached tab opens a different file and overwrites the saved tab list without the detached key.
+  const attached = setUpStore({}, first.disk);
+  attached.store.open("other.txt");
+  attached.dispose();
+
+  // Reopening discovers the detached draft from recovery and loads it without FileService rejecting the NUL key.
+  const reopened = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  expect(reopened.store.tabs().map((tab) => tab.path)).toContain(aside as string);
+  const buffer = await reopened.store.buffers.load(aside as string);
+  expect(buffer?.session.materializeFullText()).toBe("draft old");
+  expect(buffer?.dirty()).toBe(true);
+  expect(buffer?.missing()).toBe(true);
+
+  // Saving attaches it to a free name and clears the recovery entry once durable.
+  await reopened.store.save(aside);
+  await tick();
+  expect(first.disk.get("target/a (draft).txt")).toBe("draft old");
+  expect(recoveryKeys()).toEqual([]);
+  reopened.dispose();
+});
+
+test("an earlier flush finishing does not erase a draft detached after its file was deleted and replaced", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+  // Save an edit to target/a.txt and hold its flush.
+  type(first.store, "target/a.txt", "saved-but-unflushed ");
+  await first.store.save("target/a.txt");
+  expect(first.flushes).toHaveLength(1);
+
+  // Shell deletes target/a.txt and the editor syncs: the buffer becomes dirty and missing.
+  first.disk.delete("target/a.txt");
+  await first.store.buffers.sync();
+  expect(first.store.buffers.get("target/a.txt")?.dirty()).toBe(true);
+  expect(first.store.buffers.get("target/a.txt")?.missing()).toBe(true);
+
+  // Move another open file into target/a.txt, detaching the original buffer, then hide the page.
+  first.store.open("src/a.txt");
+  await first.store.buffers.load("src/a.txt");
+  first.disk.set("target/a.txt", "replacement");
+  first.disk.delete("src/a.txt");
+  first.emit({
+    moves: [
+      { from: "src", to: "target", operation: 1 },
+      { from: "src/a.txt", to: "target/a.txt", operation: 1 },
+    ],
+  });
+  await tick();
+  const aside = first.store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+
+  // Completing the old flush for target/a.txt must NOT delete the detached draft's recovery copy.
+  first.flushes.shift()?.resolve();
+  await tick();
+  expect(recoveryKeys()).toHaveLength(1);
+  first.dispose();
+
+  // Reloading recovers the detached draft while the replacement file stays intact on disk.
+  const reopened = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  const buffer = await reopened.store.buffers.load(aside as string);
+  expect(buffer?.session.materializeFullText()).toBe("saved-but-unflushed old");
+  expect(first.disk.get("target/a.txt")).toBe("replacement");
+  reopened.dispose();
+});
+
+test("a move reported before editor sync preserves a clean buffer's pending undurable write as a detached draft", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+  first.store.open("src/a.txt");
+  await first.store.buffers.load("src/a.txt");
+
+  // Edit and save target/a.txt, holding its flush so the buffer is clean in memory but undurable.
+  type(first.store, "target/a.txt", "unflushed ");
+  await first.store.save("target/a.txt");
+  expect(first.store.buffers.get("target/a.txt")?.dirty()).toBe(false);
+  expect(first.flushes).toHaveLength(1);
+
+  // First page hide records the pending undurable write for recovery.
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+
+  // Delete target/a.txt and move src -> target BEFORE editor sync runs.
+  first.disk.set("target/a.txt", "replacement");
+  first.disk.delete("src/a.txt");
+  first.emit({
+    moves: [
+      { from: "src", to: "target", operation: 1 },
+      { from: "src/a.txt", to: "target/a.txt", operation: 1 },
+    ],
+  });
+  await tick();
+  const detachedTabs = first.store.tabs().filter((tab) => isDetached(tab.path));
+  expect(detachedTabs).toHaveLength(1);
+  const aside = detachedTabs[0]!.path;
+  expect(first.store.buffers.get(aside)?.dirty()).toBe(true);
+
+  // Reject the held flush and hide the page again: the detached draft's recovery copy must stay.
+  first.flushes.shift()?.reject(new Error("flush failed"));
+  await tick();
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+  first.dispose();
+
+  // Reopening recovers the unflushed edit while keeping the replacement file on disk.
+  const reopened = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  expect(reopened.store.tabs().map((tab) => tab.path)).toContain(aside);
+  const buffer = await reopened.store.buffers.load(aside);
+  expect(buffer?.session.materializeFullText()).toBe("unflushed old");
+  expect(first.disk.get("target/a.txt")).toBe("replacement");
+  reopened.dispose();
+});
+
+test("closing and reopening a clean tab while its save flush is pending preserves the edit across replacement", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+  first.store.open("src/a.txt");
+  await first.store.buffers.load("src/a.txt");
+
+  // Save target/a.txt with its flush held, then close and reopen the clean tab.
+  type(first.store, "target/a.txt", "unflushed ");
+  await first.store.save("target/a.txt");
+  first.store.close("target/a.txt");
+  first.store.open("target/a.txt");
+  const reopenedClean = await first.store.buffers.load("target/a.txt");
+  expect(reopenedClean?.session.materializeFullText()).toBe("unflushed old");
+  expect(reopenedClean?.dirty()).toBe(false);
+
+  // First page hide records the pending undurable write for recovery.
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+
+  // Move src -> target before editor sync runs, then reject the held flush and hide again.
+  first.disk.set("target/a.txt", "replacement");
+  first.disk.delete("src/a.txt");
+  first.emit({
+    moves: [
+      { from: "src", to: "target", operation: 1 },
+      { from: "src/a.txt", to: "target/a.txt", operation: 1 },
+    ],
+  });
+  await tick();
+  const aside = first.store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+
+  first.flushes.shift()?.reject(new Error("flush failed"));
+  await tick();
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+  first.dispose();
+
+  const recovered = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  expect(recovered.store.tabs().map((tab) => tab.path)).toContain(aside as string);
+  const buffer = await recovered.store.buffers.load(aside as string);
+  expect(buffer?.session.materializeFullText()).toBe("unflushed old");
+  expect(first.disk.get("target/a.txt")).toBe("replacement");
+  recovered.dispose();
+});
+
+test("a move replacing a closed file with a pending undurable write converts it into a detached draft", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+
+  // Save target/a.txt with flush held, hide once, then close the clean tab without reopening it.
+  type(first.store, "target/a.txt", "closed-unflushed ");
+  await first.store.save("target/a.txt");
+  await first.store.pageHidden();
+  first.store.close("target/a.txt");
+  expect(first.store.buffers.get("target/a.txt")).toBeUndefined();
+  expect(recoveryKeys()).toHaveLength(1);
+
+  // Another file (not even open in the editor) moves onto target/a.txt.
+  first.disk.set("target/a.txt", "replacement");
+  first.disk.delete("src/a.txt");
+  first.emit({
+    moves: [
+      { from: "src", to: "target", operation: 1 },
+      { from: "src/a.txt", to: "target/a.txt", operation: 1 },
+    ],
+  });
+  await tick();
+  const aside = first.store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+  expect(first.store.buffers.get(aside as string)?.session.materializeFullText()).toBe(
+    "closed-unflushed old",
+  );
+
+  // Rejecting the held flush and hiding again keeps the detached draft recoverable.
+  first.flushes.shift()?.reject(new Error("flush failed"));
+  await tick();
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+  first.dispose();
+
+  const recovered = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  const buffer = await recovered.store.buffers.load(aside as string);
+  expect(buffer?.session.materializeFullText()).toBe("closed-unflushed old");
+  expect(first.disk.get("target/a.txt")).toBe("replacement");
+  recovered.dispose();
+});
+
+test("a move whose source is not open still detaches a displaced open buffer with a pending write", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+
+  type(first.store, "target/a.txt", "unflushed ");
+  await first.store.save("target/a.txt");
+  await first.store.pageHidden();
+
+  // src/a.txt is NOT open; moving src -> target must still detach target/a.txt.
+  first.disk.set("target/a.txt", "replacement");
+  first.disk.delete("src/a.txt");
+  first.emit({ moves: [{ from: "src", to: "target", operation: 1 }] });
+  await tick();
+  const aside = first.store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+
+  first.flushes.shift()?.reject(new Error("flush failed"));
+  await tick();
+  await first.store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+  first.dispose();
+
+  const recovered = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  const buffer = await recovered.store.buffers.load(aside as string);
+  expect(buffer?.session.materializeFullText()).toBe("unflushed old");
+  recovered.dispose();
+});
+
+test("a clean open file replaced by a move from an unopened file keeps its buffer and saves edits", async () => {
+  const { store, disk, emit } = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  store.setAutosave(false);
+  store.open("target/a.txt");
+  const before = await store.buffers.load("target/a.txt");
+
+  // Delete target/a.txt through FileService, then move the unopened src/a.txt onto it.
+  disk.delete("target/a.txt");
+  emit({ removed: ["target/a.txt"] });
+  disk.set("target/a.txt", "replacement");
+  disk.delete("src/a.txt");
+  emit({ moves: [{ from: "src/a.txt", to: "target/a.txt", operation: 1 }] });
+  await tick();
+  await store.buffers.sync();
+
+  // The editor still shows the same session: it stays registered and follows the new file.
+  const after = store.buffers.get("target/a.txt");
+  expect(after).toBe(before);
+  expect(after?.session.materializeFullText()).toBe("replacement");
+  expect(after?.dirty()).toBe(false);
+  expect(store.tabs().filter((tab) => isDetached(tab.path))).toHaveLength(0);
+
+  // Typing into the mounted session is saved and recorded on page hide.
+  type(store, "target/a.txt", "typed ");
+  await store.pageHidden();
+  expect(recoveryKeys()).toHaveLength(1);
+  await store.save("target/a.txt");
+  expect(disk.get("target/a.txt")).toBe("typed replacement");
+});
+
+test("a reopened replacement never takes over an older pending write at its path", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+
+  // Save with the flush held, close the tab, replace the file through the shell and reopen it.
+  type(first.store, "target/a.txt", "unflushed ");
+  await first.store.save("target/a.txt");
+  first.store.close("target/a.txt");
+  first.disk.set("target/a.txt", "shell");
+  first.store.open("target/a.txt");
+  const replacement = await first.store.buffers.load("target/a.txt");
+  expect(replacement?.session.materializeFullText()).toBe("shell");
+
+  // Delete the replacement through the shell and let sync run; the old flush fails.
+  first.disk.delete("target/a.txt");
+  await first.store.buffers.sync();
+  expect(replacement?.dirty()).toBe(false);
+  first.flushes.shift()?.reject(new Error("flush failed"));
+  await tick();
+
+  // Move an unopened file into the vacated path.
+  first.disk.set("target/a.txt", "replacement");
+  first.disk.delete("src/a.txt");
+  first.emit({ moves: [{ from: "src/a.txt", to: "target/a.txt", operation: 1 }] });
+  await tick();
+  await first.store.buffers.sync();
+
+  // The original edit is set aside on its own tab; the open tab follows the new file.
+  const aside = first.store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+  expect(first.store.buffers.get(aside as string)?.session.materializeFullText()).toBe("unflushed old");
+  expect(first.store.buffers.get("target/a.txt")).toBe(replacement);
+  expect(replacement?.session.materializeFullText()).toBe("replacement");
+  expect(replacement?.dirty()).toBe(false);
+
+  await first.store.pageHidden();
+  first.dispose();
+  const recovered = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  const buffer = await recovered.store.buffers.load(aside as string);
+  expect(buffer?.session.materializeFullText()).toBe("unflushed old");
+  expect(first.disk.get("target/a.txt")).toBe("replacement");
+  recovered.dispose();
+});
+
+test("saving the older of two drafts split from one path keeps the newer draft's recovery copy", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+
+  // A save whose flush is held, then different shell text reopened at the path and edited.
+  type(first.store, "target/a.txt", "unflushed ");
+  await first.store.save("target/a.txt");
+  first.store.close("target/a.txt");
+  first.disk.set("target/a.txt", "shell");
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+  type(first.store, "target/a.txt", "newer ");
+  await first.store.pageHidden();
+
+  // An unopened file moves onto the path: the pending write and the newer edits split apart.
+  first.disk.set("target/a.txt", "replacement");
+  first.disk.delete("src/a.txt");
+  first.emit({ moves: [{ from: "src/a.txt", to: "target/a.txt", operation: 1 }] });
+  await tick();
+  const asides = first.store.tabs().filter((tab) => isDetached(tab.path));
+  expect(asides).toHaveLength(2);
+  const textOf = (path: string) => first.store.buffers.get(path)?.session.materializeFullText();
+  const older = asides.find((tab) => textOf(tab.path) === "unflushed old")?.path;
+  const newer = asides.find((tab) => textOf(tab.path) === "newer shell")?.path;
+  expect(older).toBeDefined();
+  expect(newer).toBeDefined();
+
+  // Save only the older one, durably, then the page ends without another snapshot.
+  first.releaseFlushes();
+  await first.store.save(older as string);
+  await tick();
+  await tick();
+  first.dispose();
+
+  const recovered = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  const buffer = await recovered.store.buffers.load(newer as string);
+  expect(buffer?.session.materializeFullText()).toBe("newer shell");
+  recovered.dispose();
+});
+
+test("a recovered draft set aside with its pending write never comes back over a matching replacement", async () => {
+  // A closed browser tab left a draft of target/a.txt.
+  const gone = setUpStore({ "target/a.txt": "base", "src/a.txt": "base" });
+  gone.store.setAutosave(false);
+  gone.store.open("target/a.txt");
+  await gone.store.buffers.load("target/a.txt");
+  type(gone.store, "target/a.txt", "draft ");
+  await gone.store.pageHidden();
+  gone.dispose();
+
+  // This tab recovers it, saves it with the flush held and closes the tab.
+  const tab = setUpStore({}, gone.disk);
+  tab.store.setAutosave(false);
+  tab.holdFlushes();
+  tab.store.open("target/a.txt");
+  const recovered = await tab.store.buffers.load("target/a.txt");
+  expect(recovered?.session.materializeFullText()).toBe("draft base");
+  await tab.store.save("target/a.txt");
+  tab.store.close("target/a.txt");
+
+  // A file matching the draft's base moves onto the path; the pending write is set aside.
+  tab.disk.delete("src/a.txt");
+  tab.disk.set("target/a.txt", "base");
+  tab.emit({ moves: [{ from: "src/a.txt", to: "target/a.txt", operation: 1 }] });
+  await tick();
+  const aside = tab.store.tabs().find((entry) => isDetached(entry.path))?.path;
+  expect(aside).toBeDefined();
+
+  // Saving the set-aside draft durably clears the draft it came from.
+  tab.releaseFlushes();
+  await tab.store.save(aside as string);
+  await tick();
+  await tick();
+  expect(tab.disk.get("target/a (draft).txt")).toBe("draft base");
+
+  // Reopening the replacement shows the replacement, clean.
+  tab.store.open("target/a.txt");
+  const reopened = await tab.store.buffers.load("target/a.txt");
+  expect(reopened?.session.materializeFullText()).toBe("base");
+  expect(reopened?.dirty()).toBe(false);
+  tab.dispose();
+});
+
+test("saving a set-aside draft recovered from this tab keeps the incoming file's recovery copy", async () => {
+  const first = setUpStore({ "target/a.txt": "base", "src/a.txt": "incoming" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+
+  // Save with the flush held, leave a copy on page hide, close the clean file.
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+  type(first.store, "target/a.txt", "first ");
+  await first.store.save("target/a.txt");
+  await first.store.pageHidden();
+  first.store.close("target/a.txt");
+
+  // The file returns to its base text; reopening recovers this tab's own copy; save and close.
+  first.disk.set("target/a.txt", "base");
+  first.store.open("target/a.txt");
+  const again = await first.store.buffers.load("target/a.txt");
+  expect(again?.session.materializeFullText()).toBe("first base");
+  await first.store.save("target/a.txt");
+  first.store.close("target/a.txt");
+
+  // Another file with unsaved edits moves onto the path.
+  first.store.open("src/a.txt");
+  await first.store.buffers.load("src/a.txt");
+  type(first.store, "src/a.txt", "edited ");
+  first.disk.set("target/a.txt", "incoming");
+  first.disk.delete("src/a.txt");
+  first.emit({ moves: [{ from: "src/a.txt", to: "target/a.txt", operation: 1 }] });
+  await tick();
+  const aside = first.store.tabs().find((tab) => isDetached(tab.path))?.path;
+  expect(aside).toBeDefined();
+
+  // Saving the set-aside draft durably must not delete the incoming edit's copy.
+  first.releaseFlushes();
+  await first.store.save(aside as string);
+  await tick();
+  await tick();
+  first.dispose();
+
+  const reloaded = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  const buffer = await reloaded.store.buffers.load("target/a.txt");
+  expect(buffer?.session.materializeFullText()).toBe("edited incoming");
+  reloaded.dispose();
 });

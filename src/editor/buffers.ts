@@ -61,6 +61,13 @@ export interface PathLock {
 export interface Displacement {
   readonly from: string;
   readonly to: string;
+  /**
+   * True when the buffer open at `from` moved aside (its tab follows it); false when only a pending
+   * write that no open buffer holds was set aside (it gets a tab of its own).
+   */
+  readonly buffer: boolean;
+  /** The version of the text set aside, before it was detached. */
+  readonly version: number;
 }
 
 /** `dir/a.txt` becomes `dir/a (draft).txt`, then `dir/a (draft 2).txt`, until one is free. */
@@ -135,12 +142,21 @@ export interface BufferSet {
    * unsaved edits, and saved text whose flush has not finished (even of a closed tab).
    */
   unsaved(): ReadonlyMap<string, Draft>;
+  /** Unsaved text together with the buffer version each entry represents, for durability matching. */
+  unsavedSnapshot(): UnsavedSnapshot;
   readonly dirtyPaths: Accessor<readonly string[]>;
   dispose(): void;
 }
 
+export interface UnsavedSnapshot {
+  readonly drafts: ReadonlyMap<string, Draft>;
+  readonly versions: ReadonlyMap<string, number>;
+}
+
 interface Entry {
   buffer: Buffer & { path: string };
+  /** Monotonic version incremented on edits/loads/detach, matched against durable flushes. */
+  version: number;
   /** The disk text this buffer was last in step with; undefined: the file did not exist. */
   disk: string | undefined;
   /** The buffer's text as it is on disk: "dirty" means the text differs from this. */
@@ -170,9 +186,9 @@ export interface BufferSetOptions {
   /** Hears about every edit the person makes (not reloads from disk): autosave waits for a pause. */
   readonly onChange?: (path: string) => void;
   /** Unsaved text another tab left behind for a file, applied when the file is opened. */
-  readonly recover?: (path: string) => Draft | undefined | Promise<Draft | undefined>;
-  /** A file's saved text has reached storage: a copy left for recovery is no longer needed. */
-  readonly onDurable?: (path: string) => void;
+  readonly recover?: (path: string, version: number) => Draft | undefined | Promise<Draft | undefined>;
+  /** A file's saved text has reached storage: recovery entries up to `version` are covered. */
+  readonly onDurable?: (path: string, version: number) => void;
 }
 
 export function createBufferSet(files: Files, options: BufferSetOptions = {}): BufferSet {
@@ -181,6 +197,8 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
   const [dirtyPaths, setDirtyPaths] = createSignal<readonly string[]>([]);
   // Moves whenever buffers come, go or move, so `get` can be read reactively.
   const [generation, setGeneration] = createSignal(0);
+  let versionSeq = 0;
+  const nextVersion = () => (versionSeq += 1);
   let syncing: Promise<void> | undefined;
   let syncAgain = false;
 
@@ -201,7 +219,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
    * Cheap in the usual cases: equal snapshots, a different length or a shared tree answer at once.
    */
   function isUnsaved(entry: Entry): boolean {
-    if (entry.unconfirmed) return true;
+    if (entry.unconfirmed || isDetached(entry.buffer.path)) return true;
     const current = entry.buffer.session.getSnapshot();
     // Clean only when the text is on disk and no running save is about to replace it with
     // something else: a write is not counted until it has succeeded.
@@ -217,7 +235,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     if (dirty && !entry.applying) options.onEdit?.(entry.buffer.path);
   }
 
-  function create(path: string, text: string | undefined): Entry {
+  function create(path: string, text: string | undefined, version = nextVersion()): Entry {
     const session = createEditorBufferSession(createEditorTextBuffer(text ?? ""));
     const [dirty, setDirty] = createSignal(false);
     const [conflict, setConflict] = createSignal<Conflict>();
@@ -225,6 +243,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     const buffer = { path, session, dirty, conflict, missing, scroll: undefined };
     const entry: Entry = {
       buffer,
+      version,
       disk: text,
       persisted: session.getSnapshot(),
       inflight: undefined,
@@ -237,6 +256,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       unsubscribe: () => {},
     };
     entry.unsubscribe = session.buffer.subscribe(() => {
+      if (!entry.applying) entry.version = nextVersion();
       refreshDirty(entry);
       if (!entry.applying) options.onChange?.(entry.buffer.path);
     });
@@ -257,6 +277,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
   /** Takes the disk text as the buffer's clean state. */
   function adopt(entry: Entry, text: string | undefined): void {
     replaceText(entry, text ?? "");
+    entry.version = nextVersion();
     entry.persisted = entry.buffer.session.getSnapshot();
     entry.disk = text;
     entry.unconfirmed = false;
@@ -283,8 +304,10 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       return entry.setConflict(undefined);
     }
     // Storage moved away from a save it never confirmed: the save may be lost, so the buffer's
-    // text stays, unsaved, instead of being replaced by what storage came back with.
-    if (undurable.has(path)) setUnconfirmed(entry, true);
+    // text stays, unsaved, instead of being replaced by what storage came back with. Only a buffer
+    // in step with that save holds it; a buffer opened on later text at the path does not.
+    const pending = undurable.get(path);
+    if (pending && holds(entry, pending)) setUnconfirmed(entry, true);
     if (text === undefined) return markGone(entry);
     entry.setMissing(false);
     const current = entry.buffer.session.materializeFullText();
@@ -292,29 +315,61 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     entry.setConflict({ diskText: text });
   }
 
+  function detachBuffer(entry: Entry, target: string, buffer: boolean, version: number): Displacement {
+    let aside = detachedKey(target);
+    while (entries.has(aside)) aside = detachedKey(target);
+    entry.buffer.path = aside;
+    entry.version = nextVersion();
+    markGone(entry);
+    entry.setDirty(true);
+    entries.set(aside, entry);
+    return { from: target, to: aside, buffer, version };
+  }
+
   /**
-   * Before buffers move onto paths, a buffer already at one of those paths gives way: a clean
-   * one is let go (its file was replaced), one with unsaved text is detached (a key no file can
-   * open at) and marked deleted, so no draft is dropped. Returns where the drafts went.
+   * The buffer holds the pending write: it wrote it, or was opened on it, so its text is that write
+   * or edits made on top of it. A buffer marked unconfirmed already took the write over (its file
+   * may since be gone). A buffer opened on text that replaced the write does not hold it.
    */
-  function makeRoom(moving: readonly Entry[], from: string, to: string): Displacement[] {
-    const movingSet = new Set(moving);
+  const holds = (entry: Entry, pending: UndurableRecord) =>
+    entry.unconfirmed || entry.disk === pending.draft.text;
+
+  /**
+   * What gives way at one replaced path. A pending write no open buffer holds is set aside on its
+   * own. An unsaved buffer, or one holding the pending write, moves aside with its tab. A clean
+   * buffer is let go only when a moving buffer takes the path; otherwise it stays open there (the
+   * editor may be showing it) and the sync after the move loads the new file into it.
+   */
+  function displaceTarget(target: string, arriving: boolean): Displacement[] {
+    const occupant = entries.get(target);
+    const pending = undurable.get(target);
+    undurable.delete(target);
+    const held = occupant !== undefined && pending !== undefined && holds(occupant, pending);
     const displaced: Displacement[] = [];
-    for (const entry of moving) {
-      const target = renamedPath(entry.buffer.path, from, to);
-      const occupant = entries.get(target);
-      if (!occupant || movingSet.has(occupant)) continue;
+    if (pending && !held)
+      displaced.push(detachBuffer(create(target, pending.draft.text), target, false, pending.version));
+    if (!occupant) return displaced;
+    if (occupant.buffer.dirty() || held) {
       entries.delete(target);
-      if (!occupant.buffer.dirty()) {
-        occupant.unsubscribe();
-        continue;
-      }
-      occupant.buffer.path = detachedKey(target);
-      markGone(occupant);
-      entries.set(occupant.buffer.path, occupant);
-      displaced.push({ from: target, to: occupant.buffer.path });
+      displaced.push(detachBuffer(occupant, target, true, occupant.version));
+      return displaced;
     }
+    if (!arriving) return displaced;
+    entries.delete(target);
+    occupant.unsubscribe();
     return displaced;
+  }
+
+  /**
+   * Before buffers move onto paths, any buffer or pending undurable write already at a destination
+   * gives way (see `displaceTarget`), so no draft and no unflushed write is dropped.
+   */
+  function makeRoom(from: string, to: string, arriving: ReadonlySet<string>): Displacement[] {
+    const replaced = (path: string) => isSameOrInside(path, to) && !isSameOrInside(path, from);
+    const targets = new Set<string>();
+    for (const path of entries.keys()) if (replaced(path)) targets.add(path);
+    for (const path of undurable.keys()) if (replaced(path)) targets.add(path);
+    return Array.from(targets).flatMap((target) => displaceTarget(target, arriving.has(target)));
   }
 
   /** A deleted file stays open, marked, with any unsaved text; saving writes it again. */
@@ -333,23 +388,38 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     syncing = undefined;
   }
 
+  function applyRecoveredDraft(
+    entry: Entry,
+    draft: Draft,
+    text: string | undefined,
+    detached: boolean,
+  ): void {
+    replaceText(entry, draft.text);
+    if (detached) {
+      markGone(entry);
+      entry.setDirty(isUnsaved(entry));
+      return;
+    }
+    // The draft was made against `baseText`; a disk that moved on since is a conflict.
+    entry.disk = draft.baseText;
+    if (draft.baseText !== text) entry.setConflict({ diskText: text });
+    entry.setDirty(isUnsaved(entry));
+  }
+
   async function read(path: string): Promise<Buffer | undefined> {
+    const detached = isDetached(path);
     // A write from before the file was closed may still be on its way: read what it leaves.
-    await writesSettled(path);
-    const text = await files.read(path);
-    const draft = await options.recover?.(path);
+    if (!detached) await writesSettled(path);
+    // Detached keys start with NUL and have no file on disk: load them from recovery only.
+    const text = detached ? undefined : await files.read(path);
+    const version = nextVersion();
+    const draft = await options.recover?.(path, version);
     // Two opens of one file share the first buffer.
     const existing = entries.get(path);
     if (existing) return existing.buffer;
     if (text === undefined && !draft) return undefined;
-    const entry = create(path, text);
-    if (draft) {
-      replaceText(entry, draft.text);
-      // The draft was made against `baseText`; a disk that moved on since is a conflict.
-      entry.disk = draft.baseText;
-      if (draft.baseText !== text) entry.setConflict({ diskText: text });
-      refreshDirty(entry);
-    }
+    const entry = create(path, text, version);
+    if (draft) applyRecoveredDraft(entry, draft, text, detached);
     entries.set(path, entry);
     membershipChanged();
     return entry.buffer;
@@ -357,33 +427,55 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
 
   /**
    * Writes acknowledged from memory but not yet flushed, by path, with what storage held before
-   * the first of them. They are recoverable text until the flush is done, even if the tab closed.
+   * the first of them. Owned independently of any open buffer so closing, reopening, or moving
+   * never loses track of unflushed bytes.
    */
-  const undurable = new Map<string, Draft>();
+  interface UndurableRecord {
+    path: string;
+    readonly draft: Draft;
+    readonly version: number;
+  }
+  const undurable = new Map<string, UndurableRecord>();
+
+  function renameUndurable(from: string, to: string): void {
+    const moved = Array.from(undurable.entries()).filter(([path]) => renamedPath(path, from, to) !== path);
+    for (const [path] of moved) undurable.delete(path);
+    for (const [path, record] of moved) {
+      record.path = renamedPath(path, from, to);
+      undurable.set(record.path, record);
+    }
+  }
 
   function setUnconfirmed(entry: Entry, unconfirmed: boolean): void {
     entry.unconfirmed = unconfirmed;
     refreshDirty(entry);
   }
 
-  async function untilDurable(path: string, written: Draft): Promise<void> {
-    const draft = { text: written.text, baseText: undurable.get(path)?.baseText ?? written.baseText };
-    undurable.set(path, draft);
+  async function untilDurable(path: string, written: Draft, version: number): Promise<void> {
+    const record: UndurableRecord = {
+      path,
+      draft: { text: written.text, baseText: undurable.get(path)?.draft.baseText ?? written.baseText },
+      version,
+    };
+    undurable.set(path, record);
     const durable = await files.saved().then(
       () => true,
       () => false,
     );
-    // A later save of the same path may have replaced the record; it settles itself.
-    if (undurable.get(path) !== draft) return;
-    const entry = entries.get(path);
+    // A later save or displacement may have replaced or evicted the record; it settles itself.
+    if (undurable.get(record.path) !== record) return;
+    const currentPath = record.path;
+    // A filesystem flush can never make a detached draft durable.
+    if (isDetached(currentPath)) return;
+    const entry = entries.get(currentPath);
     // The flush failed: the text stays recoverable, and its buffer unsaved.
     if (!durable) {
       if (entry && entry.disk === written.text) setUnconfirmed(entry, true);
       return;
     }
-    undurable.delete(path);
+    undurable.delete(currentPath);
     if (entry && entry.disk === written.text) setUnconfirmed(entry, false);
-    options.onDurable?.(path);
+    options.onDurable?.(currentPath, record.version);
   }
 
   /** One save, run when the file's earlier saves have finished: it captures its text and baseline now. */
@@ -421,13 +513,45 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
 
   const lockedFor = (entry: Entry) => Array.from(locks).some((held) => under(entry.buffer.path, held.roots));
 
-  async function saveNow(entry: Entry, when: SaveOptions["when"]): Promise<void> {
-    // Only a locked path waits: otherwise the save captures the text exactly when it was asked for.
-    if (lockedFor(entry)) await untilUnlocked(entry);
+  /**
+   * Saves serialize along two axes: by stable buffer identity (so a rename between two saves of
+   * the same buffer never lets them overlap with the same baseline) and by final write path (so
+   * distinct or closed-then-reopened buffers writing the same path never overlap either).
+   */
+  interface Queue {
+    tail: Promise<void>;
+    count: number;
+  }
+  const entryQueues = new Map<Entry, Queue>();
+  const pathQueues = new Map<string, Queue>();
+
+  function enqueueIn<K, T>(queues: Map<K, Queue>, key: K, run: () => Promise<T>): Promise<T> {
+    const queue = queues.get(key) ?? { tail: Promise.resolve(), count: 0 };
+    // With nothing queued the work starts at once, so a save captures the text as it is right now.
+    const started = queue.count === 0 ? run() : queue.tail.then(run);
+    queue.count += 1;
+    queues.set(key, queue);
+    const done = started.finally(() => {
+      queue.count -= 1;
+      if (queue.count === 0 && queues.get(key) === queue) queues.delete(key);
+    });
+    queue.tail = done.then(
+      () => undefined,
+      () => undefined,
+    );
+    return done;
+  }
+
+  /** Resolves once every write already queued for `path` has settled. */
+  const writesSettled = (path: string) => pathQueues.get(path)?.tail ?? Promise.resolve();
+
+  async function writeOnPath(entry: Entry, target: string, when: SaveOptions["when"]): Promise<boolean> {
+    if (!live(entry) || isDetached(entry.buffer.path)) return true;
+    // The buffer moved or became locked while waiting in the path queue: re-enter for the new state.
+    if (entry.buffer.path !== target || lockedFor(entry)) return false;
+    if (when && !when(entry.buffer)) return true;
     // Nothing awaits between here and the write starting: a lock taken now sees this write.
-    if (!live(entry) || isDetached(entry.buffer.path)) return;
-    if (when && !when(entry.buffer)) return;
-    const target = entry.buffer.path;
+    const version = entry.version;
     const snapshot = entry.buffer.session.getSnapshot();
     const text = entry.buffer.session.materializeFullText();
     entry.saving += 1;
@@ -438,10 +562,10 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       const record = { path: target, done: write };
       writing.add(record);
       const outcome = await write.finally(() => writing.delete(record));
-      if (outcome.written) void untilDurable(target, { text, baseText: entry.disk });
+      if (outcome.written) void untilDurable(target, { text, baseText: entry.disk }, version);
       // The file moved while the write ran: what was written went to the old path, so it says
       // nothing about this buffer's file. The buffer stays unsaved.
-      if (entry.buffer.path !== target) return;
+      if (entry.buffer.path !== target) return true;
       if (outcome.written) {
         entry.persisted = snapshot;
         entry.disk = text;
@@ -450,6 +574,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       } else {
         entry.setConflict({ diskText: outcome.current });
       }
+      return true;
     } finally {
       // Whatever the outcome, including a write that threw, dirty is worked out again.
       entry.saving -= 1;
@@ -458,33 +583,44 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     }
   }
 
-  /**
-   * Writes to one path run one after another, per path rather than per buffer: closing and
-   * reopening a file while its write is pending must not start a second, overlapping line.
-   */
-  const pathQueues = new Map<string, { tail: Promise<void>; count: number }>();
-
-  function enqueue(path: string, run: () => Promise<void>): Promise<void> {
-    const queue = pathQueues.get(path) ?? { tail: Promise.resolve(), count: 0 };
-    // With nothing queued the save starts at once, so it captures the text as it is right now.
-    const started = queue.count === 0 ? run() : queue.tail.then(run);
-    queue.count += 1;
-    pathQueues.set(path, queue);
-    const done = started.finally(() => {
-      queue.count -= 1;
-      if (queue.count === 0 && pathQueues.get(path) === queue) pathQueues.delete(path);
-    });
-    queue.tail = done.catch(() => {});
-    return done;
+  async function saveEntry(entry: Entry, when: SaveOptions["when"]): Promise<void> {
+    for (;;) {
+      // Only a locked path waits: otherwise the save captures the text exactly when it was asked for.
+      // oxlint-disable-next-line no-await-in-loop -- a lock may appear while waiting in the path queue
+      if (lockedFor(entry)) await untilUnlocked(entry);
+      if (!live(entry) || isDetached(entry.buffer.path)) return;
+      const target = entry.buffer.path;
+      // oxlint-disable-next-line no-await-in-loop -- retries only if the buffer moved or locked while waiting
+      const handled = await enqueueIn(pathQueues, target, () => writeOnPath(entry, target, when));
+      if (handled) return;
+    }
   }
-
-  /** Resolves once every write already queued for `path` has settled. */
-  const writesSettled = (path: string) => pathQueues.get(path)?.tail ?? Promise.resolve();
 
   function save(path: string, saveOptions: SaveOptions = {}): Promise<void> {
     const entry = entries.get(path);
     if (!entry) return Promise.resolve();
-    return enqueue(path, () => saveNow(entry, saveOptions.when));
+    return enqueueIn(entryQueues, entry, () => saveEntry(entry, saveOptions.when));
+  }
+
+  function unsavedSnapshot(): UnsavedSnapshot {
+    // Saves storage does not hold yet first; a buffer's newer unsaved text replaces its entry.
+    const drafts = new Map<string, Draft>();
+    const versions = new Map<string, number>();
+    for (const [path, record] of undurable) {
+      drafts.set(path, record.draft);
+      versions.set(path, record.version);
+    }
+    for (const entry of entries.values()) {
+      if (!entry.buffer.dirty()) continue;
+      const path = entry.buffer.path;
+      const text = entry.buffer.session.materializeFullText();
+      drafts.set(path, {
+        text,
+        baseText: undurable.get(path)?.draft.baseText ?? entry.disk,
+      });
+      versions.set(path, entry.version);
+    }
+    return { drafts, versions };
   }
 
   return {
@@ -517,13 +653,15 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       const moved = Array.from(entries.values()).filter(
         (entry) => renamedPath(entry.buffer.path, from, to) !== entry.buffer.path,
       );
-      const displaced = makeRoom(moved, from, to);
+      const arriving = new Set(moved.map((entry) => renamedPath(entry.buffer.path, from, to)));
+      const displaced = makeRoom(from, to, arriving);
+      renameUndurable(from, to);
       for (const entry of moved) entries.delete(entry.buffer.path);
       for (const entry of moved) {
         entry.buffer.path = renamedPath(entry.buffer.path, from, to);
         entries.set(entry.buffer.path, entry);
       }
-      membershipChanged();
+      if (moved.length > 0 || displaced.length > 0) membershipChanged();
       return displaced;
     },
     lock,
@@ -541,6 +679,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       if (!entry?.buffer.conflict()) return;
       const text = await files.read(entry.buffer.path);
       if (!live(entry)) return;
+      entry.version = nextVersion();
       entry.disk = text;
       entry.setMissing(text === undefined);
       entry.setConflict(undefined);
@@ -557,19 +696,8 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
       markGone(entry);
     },
     paths: () => Array.from(entries.keys()),
-    unsaved() {
-      // Saves storage does not hold yet first; a buffer's newer unsaved text replaces its entry.
-      const all = new Map(undurable);
-      for (const entry of entries.values()) {
-        if (!entry.buffer.dirty()) continue;
-        const text = entry.buffer.session.materializeFullText();
-        all.set(entry.buffer.path, {
-          text,
-          baseText: undurable.get(entry.buffer.path)?.baseText ?? entry.disk,
-        });
-      }
-      return all;
-    },
+    unsaved: () => unsavedSnapshot().drafts,
+    unsavedSnapshot,
     dispose() {
       for (const entry of entries.values()) entry.unsubscribe();
       entries.clear();

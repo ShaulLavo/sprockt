@@ -167,10 +167,16 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
   const buffers = createBufferSet(workspace.files, {
     onEdit: edited,
     onChange: () => autosave.edited(),
-    // A copy a gone tab left stays until this tab's text for the file is durable.
-    recover: (path) => drafts.recover(path),
-    onDurable: (path) => drafts.settled(path),
+    // A copy a gone tab left stays until a flush covering that version is durable.
+    recover: (path, version) => drafts.recover(path, version),
+    onDurable: (path, version) => drafts.settled(path, version),
   });
+
+  function leaveUnsaved(): void {
+    const snapshot = buffers.unsavedSnapshot();
+    drafts.leave(snapshot.drafts, snapshot.versions);
+  }
+
   const shownBuffer = () => {
     const path = displayed();
     return path === undefined ? undefined : buffers.get(path);
@@ -183,29 +189,47 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
 
   /** Moves a single tab, the file on screen and the selection from one exact path to another. */
   function retarget(from: string, to: string, current: string | undefined): string | undefined {
-    commit(
-      tabs().map((tab) => (tab.path === from ? { path: to, preview: false } : tab)),
-      current === from ? to : current,
-    );
+    const list = tabs();
+    const nextTabs = list.some((tab) => tab.path === from)
+      ? list.map((tab) => (tab.path === from ? { path: to, preview: false } : tab))
+      : list.concat([{ path: to, preview: false }]);
+    commit(nextTabs, current === from ? to : current);
     if (displayed() === from) setDisplayed(to);
     return current === from ? to : current;
   }
 
   /**
-   * Tabs, the file on screen and buffers (with unsaved text and undo) follow a move. A draft
-   * already open at a destination is not dropped: it moves aside to a free name first.
+   * Tabs, the file on screen and buffers (with unsaved text and undo) follow a move. A draft or
+   * pending undurable write at a destination is not dropped: it moves aside to a free name first.
    */
   function applyRename(from: string, to: string): void {
     const follows = (path: string) => renamedPath(path, from, to) !== path;
     const shown = displayed();
-    const affected = tabs().some((tab) => follows(tab.path)) || buffers.paths().some(follows);
-    if (!affected && (shown === undefined || !follows(shown))) return;
+    const displaced = buffers.rename(from, to);
+    const affected =
+      displaced.length > 0 ||
+      tabs().some((tab) => follows(tab.path)) ||
+      (shown !== undefined && follows(shown));
+    if (!affected) {
+      drafts.renamed(from, to);
+      return;
+    }
     let current = active();
+    for (const aside of displaced) {
+      // Drafts recovered from other tabs go with the oldest text set aside that covers them
+      // (displacements come oldest first), so that text's durable save clears them.
+      drafts.handedOver(aside.from, aside.to, aside.version);
+      if (aside.buffer) current = retarget(aside.from, aside.to, current);
+      else commit(tabs().concat([{ path: aside.to, preview: false }]), current);
+    }
     drafts.renamed(from, to);
-    for (const aside of buffers.rename(from, to)) current = retarget(aside.from, aside.to, current);
     const moved = displayed();
     commit(renameTabs(tabs(), from, to), current === undefined ? undefined : renamedPath(current, from, to));
     if (moved !== undefined) setDisplayed(renamedPath(moved, from, to));
+    // One path can split into two detached drafts (a pending write and newer edits), and this
+    // tab's single recovery copy at that path belongs to only one of them. A fresh snapshot gives
+    // each its own copy, with its own version, before anything can settle the wrong one.
+    if (displaced.length > 0) leaveUnsaved();
   }
 
   /** The last move operation applied; FileService numbers them in the order they happened. */
@@ -284,12 +308,35 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
   // that tab finds it when it opens the file, and this tab no longer holds it.
   createEffect(() => {
     if (workspace.files.writable()) return;
-    drafts.leave(buffers.unsaved());
+    leaveUnsaved();
     drafts.release();
   });
   // Showing another file autosaves the one that was on screen (and any other pending edit).
   createEffect(on(displayed, () => void autosave.flush(), { defer: true }));
+  // Detached drafts have no path in the file tree: if another attached tab last wrote the saved
+  // tab list, surface any recoverable detached drafts from gone tabs as open tabs here.
+  let disposed = false;
+  async function discoverDetached(): Promise<void> {
+    const detached = await drafts.recoverablePaths(isDetached);
+    if (disposed || detached.length === 0) return;
+    const openPaths = new Set(tabs().map((tab) => tab.path));
+    const missing = detached.filter((path) => !openPaths.has(path));
+    if (missing.length > 0) {
+      commit(tabs().concat(missing.map((path) => ({ path, preview: false }))), active() ?? missing[0]);
+    }
+    const loaded = await Promise.all(
+      detached.map(async (path) => ({ path, buffer: await buffers.load(path) })),
+    );
+    if (disposed) return;
+    for (const item of loaded) {
+      if (item.buffer) continue;
+      const next = closeTab(tabs(), item.path, active());
+      commit(next.tabs, next.active);
+    }
+  }
+  void discoverDetached();
   onCleanup(() => {
+    disposed = true;
     autosave.dispose();
     buffers.dispose();
     drafts.release();
@@ -329,7 +376,7 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     flushAutosave: () => autosave.flush(),
     pageHidden() {
       // The page may never run again: the text goes to storage first, then the save is tried.
-      drafts.leave(buffers.unsaved());
+      leaveUnsaved();
       return autosave.flush();
     },
     setSearchOpen(open) {
@@ -355,11 +402,13 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
       setReveal({ path, line: options.line, column: options.column, seq: revealSeq });
     },
     close(path) {
+      const wasDirty = buffers.get(path)?.dirty() ?? false;
       const next = closeTab(tabs(), path, active());
       commit(next.tabs, next.active);
       buffers.release(path);
-      // Closing confirmed dropping any unsaved text, a recovered copy included.
-      drafts.settled(path);
+      // Closing a dirty tab confirmed dropping its unsaved edits. Closing a clean tab whose
+      // save has not flushed yet keeps any recovery copy until that flush finishes.
+      if (wasDirty || !buffers.unsaved().has(path)) drafts.settled(path);
     },
     move: (from, to) => commit(moveTab(tabs(), from, to), active()),
     pin,

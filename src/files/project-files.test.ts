@@ -28,7 +28,7 @@ function memoryFilesystem(setup: Setup = {}) {
   const flushes: PromiseWithResolvers<void>[] = [];
 
   function real(path: string, followLast: boolean, hops = 0): string {
-    if (hops > 16) throw new Error("ELOOP: too many levels of symbolic links");
+    if (hops > 40) throw new Error("ELOOP: too many levels of symbolic links");
     const parts = path.split("/").filter(Boolean);
     const walked: string[] = [];
     for (const [index, name] of parts.entries()) {
@@ -495,4 +495,301 @@ test("a write that waited while another tab deleted its folder fails instead of 
   expect(write).rejects.toBeInstanceOf(FolderGoneError);
   await write.catch(() => {});
   expect(memory.files.has("/workspace/src/file.txt")).toBe(false);
+});
+
+test("a bulk upload through a directory link locks the canonical destination against another tab's conditional save", async () => {
+  const memory = memoryFilesystem({
+    links: { "/workspace/container/alias": "/workspace/sibling" },
+    directories: ["/workspace/container", "/workspace/sibling", "/workspace/sibling/deep"],
+    files: {
+      "/workspace/container/ordinary.txt": "ordinary",
+      "/workspace/sibling/deep/notes.txt": "base",
+    },
+  });
+  const locks = localPathLocks();
+  // Hold Tab 2 between its read and write; without a lock on the canonical destination, Tab 1's
+  // upload lands in that window and Tab 2 silently overwrites it without a conflict.
+  const tab2ReadDone = Promise.withResolvers<void>();
+  const releaseTab2Write = Promise.withResolvers<void>();
+  const tab2Fs: ProjectFilesystem = {
+    ...memory.filesystem,
+    async readFile(path) {
+      const bytes = await memory.filesystem.readFile(path);
+      if (path === "/workspace/sibling/deep/notes.txt") {
+        tab2ReadDone.resolve();
+        await releaseTab2Write.promise;
+      }
+      return bytes;
+    },
+  };
+  const uploader = createProjectFiles(memory.filesystem, noWatch, undefined, locks);
+  const saver = createProjectFiles(tab2Fs, noWatch, undefined, locks);
+
+  const save = saver.writeIfUnchanged("sibling/deep/notes.txt", "from tab 2", "base");
+  await tab2ReadDone.promise;
+
+  let uploadFinished = false;
+  const upload = uploader
+    .upload(
+      [
+        { path: "ordinary.txt", data: new Blob(["new ordinary"]) },
+        { path: "alias/deep/notes.txt", data: new Blob(["from upload"]) },
+      ],
+      "container",
+    )
+    .then((result) => {
+      uploadFinished = true;
+      return result;
+    });
+  await later(15);
+  // Tab 1's upload must wait on the canonical destination lock while Tab 2 holds it.
+  expect(uploadFinished).toBe(false);
+  expect(memory.text("/workspace/sibling/deep/notes.txt")).toBe("base");
+
+  releaseTab2Write.resolve();
+  const [saveOutcome] = await Promise.all([save, upload]);
+  expect(saveOutcome).toEqual({ written: true });
+  // Tab 1 ran after Tab 2 released the lock, so Tab 1's upload was not overwritten unseen.
+  expect(memory.text("/workspace/sibling/deep/notes.txt")).toBe("from upload");
+});
+
+test("writeMany through a directory link locks the canonical destination against another tab's conditional save", async () => {
+  const memory = memoryFilesystem({
+    links: { "/workspace/container/alias": "/workspace/sibling" },
+    directories: ["/workspace/container", "/workspace/sibling", "/workspace/sibling/deep"],
+    files: {
+      "/workspace/container/ordinary.txt": "ordinary",
+      "/workspace/sibling/deep/notes.txt": "base",
+    },
+  });
+  const locks = localPathLocks();
+  const uploader = createProjectFiles(slowed(memory.filesystem, 20), noWatch, undefined, locks);
+  const saver = createProjectFiles(slowed(memory.filesystem, 20), noWatch, undefined, locks);
+
+  const [saveOutcome] = await Promise.all([
+    saver.writeIfUnchanged("sibling/deep/notes.txt", "from saver", "base"),
+    uploader.writeMany({
+      "container/ordinary.txt": "new ordinary",
+      "container/alias/deep/notes.txt": "from writeMany",
+    }),
+  ]);
+  // Either writeMany ran first (saver saw a conflict) or saver ran first (writeMany replaced it after).
+  if (saveOutcome.written) expect(memory.text("/workspace/sibling/deep/notes.txt")).toBe("from writeMany");
+  else expect(saveOutcome).toEqual({ written: false, current: "from writeMany" });
+});
+
+test("a bulk write revalidates under the lock when a symlink is repointed before locks are granted", async () => {
+  const links: Record<string, string> = { "/workspace/container/alias": "/workspace/first" };
+  const memory = memoryFilesystem({
+    links,
+    directories: ["/workspace/container", "/workspace/first", "/workspace/second"],
+    files: { "/workspace/first/notes.txt": "first", "/workspace/second/notes.txt": "second" },
+  });
+  const shared = localPathLocks();
+  const lockedPaths: string[][] = [];
+  let repointed = false;
+  const spyLocks: PathLocks = {
+    async hold(request, work) {
+      lockedPaths.push(request.exclusive.toSorted());
+      if (!repointed) {
+        repointed = true;
+        links["/workspace/container/alias"] = "/workspace/second";
+      }
+      return shared.hold(request, work);
+    },
+  };
+  const service = createProjectFiles(memory.filesystem, noWatch, undefined, spyLocks);
+  await service.writeMany({
+    "container/ordinary.txt": "ok",
+    "container/alias/notes.txt": "updated",
+  });
+  // First attempt planned against /workspace/first, revalidated and saw /workspace/second, then retried with /workspace/second locked.
+  expect(lockedPaths).toHaveLength(2);
+  expect(lockedPaths[0]).toContain("/workspace/first/notes.txt");
+  expect(lockedPaths[1]).toContain("/workspace/second/notes.txt");
+  expect(memory.text("/workspace/first/notes.txt")).toBe("first");
+  expect(memory.text("/workspace/second/notes.txt")).toBe("updated");
+});
+
+test("a bulk write through a symlink holds a shared lock on the traversed link entry", async () => {
+  const memory = memoryFilesystem({
+    links: { "/workspace/container/alias": "/workspace/sibling" },
+    directories: ["/workspace/container", "/workspace/sibling", "/workspace/sibling/deep"],
+    files: { "/workspace/sibling/deep/notes.txt": "base" },
+  });
+  const locks = localPathLocks();
+  const writeStarted = Promise.withResolvers<void>();
+  const finishWrite = Promise.withResolvers<void>();
+  const gatedFs: ProjectFilesystem = {
+    ...memory.filesystem,
+    async writeFile(path, content, mode) {
+      if (path === "/workspace/container/alias/deep/notes.txt") {
+        writeStarted.resolve();
+        await finishWrite.promise;
+      }
+      return memory.filesystem.writeFile(path, content, mode);
+    },
+  };
+  const uploader = createProjectFiles(gatedFs, noWatch, undefined, locks);
+  const remover = createProjectFiles(memory.filesystem, noWatch, undefined, locks);
+
+  const bulk = uploader.writeMany({ "container/alias/deep/notes.txt": "updated" });
+  await writeStarted.promise;
+
+  let removed = false;
+  const removing = remover.remove("container/alias").then(() => (removed = true));
+  await later(15);
+  // Removing the traversed link must wait while the bulk write holds its shared lock.
+  expect(removed).toBe(false);
+
+  finishWrite.resolve();
+  await Promise.all([bulk, removing]);
+  expect(removed).toBe(true);
+  expect(memory.text("/workspace/sibling/deep/notes.txt")).toBe("updated");
+});
+
+test("a failed upload keeps its lock until started operations settle, stops new work, and publishes partial writes", async () => {
+  const memory = memoryFilesystem({ directories: ["/workspace/docs"] });
+  const locks = localPathLocks();
+  const uploader = createProjectFiles(memory.filesystem, noWatch, undefined, locks);
+  const deleter = createProjectFiles(memory.filesystem, noWatch, undefined, locks);
+
+  const edits: (readonly string[])[] = [];
+  uploader.subscribeEdits((paths) => edits.push(paths));
+  const changes: string[][] = [];
+  uploader.subscribe((change) => changes.push(Array.from(change.paths)));
+
+  const badRead = Promise.withResolvers<ArrayBuffer>();
+  const slowRead = Promise.withResolvers<ArrayBuffer>();
+  const badBlob = { arrayBuffer: () => badRead.promise } as unknown as Blob;
+  const slowBlob = { arrayBuffer: () => slowRead.promise } as unknown as Blob;
+
+  let uploadSettled = false;
+  const upload = uploader
+    .upload(
+      [
+        { path: "done.txt", data: new Blob(["already written"]) },
+        { path: "bad.txt", data: badBlob },
+        { path: "slow.txt", data: slowBlob },
+      ],
+      "docs",
+    )
+    .catch((error: unknown) => {
+      uploadSettled = true;
+      return error;
+    });
+
+  // Wait for done.txt to finish writing, then fail bad.txt while slow.txt is still reading.
+  await later(15);
+  expect(memory.text("/workspace/docs/done.txt")).toBe("already written");
+  badRead.reject(new Error("source file disappeared"));
+  await later(15);
+
+  // Another tab tries to delete the upload directory right after bad.txt failed.
+  let deleted = false;
+  const removal = deleter.remove("docs").then(() => (deleted = true));
+  await later(15);
+
+  // Lock must still be held (and upload not settled) until slow.txt settles.
+  expect(uploadSettled).toBe(false);
+  expect(deleted).toBe(false);
+
+  // Once slow.txt's delayed read resolves, it must NOT write because the upload already aborted.
+  slowRead.resolve(new TextEncoder().encode("late sibling").buffer);
+  const error = await upload;
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toBe("source file disappeared");
+  await removal;
+  expect(deleted).toBe(true);
+  // The delayed sibling never recreated docs after the delete.
+  expect(memory.files.has("/workspace/docs/slow.txt")).toBe(false);
+  expect(memory.files.has("/workspace/docs/done.txt")).toBe(false);
+
+  // Partial write of done.txt published persistence and change/edit notifications.
+  expect(uploader.saveState()).toBe("saving");
+  expect(edits).toEqual([["docs/done.txt"]]);
+  await later(70);
+  expect(changes.flat()).toContain("docs/done.txt");
+  await memory.finishFlushes();
+  expect(uploader.saveState()).toBe("saved");
+});
+
+test("a bulk write locks every link in a 17-hop chain supported by Waffle against a concurrent move", async () => {
+  const links: Record<string, string> = {};
+  for (let index = 1; index < 17; index += 1) {
+    links[`/workspace/chain/l${index}`] = `/workspace/chain/l${index + 1}`;
+  }
+  links["/workspace/chain/l17"] = "/workspace/original";
+  const memory = memoryFilesystem({
+    links,
+    directories: ["/workspace/chain", "/workspace/original", "/workspace/replacement"],
+    files: {
+      "/workspace/original/notes.txt": "before",
+      "/workspace/replacement/notes.txt": "untouched",
+    },
+  });
+  const locks = localPathLocks();
+  const writeStarted = Promise.withResolvers<void>();
+  const finishWrite = Promise.withResolvers<void>();
+  const gatedFs: ProjectFilesystem = {
+    ...memory.filesystem,
+    async writeFile(path, content, mode) {
+      if (path === "/workspace/chain/l1/notes.txt") {
+        writeStarted.resolve();
+        await finishWrite.promise;
+      }
+      return memory.filesystem.writeFile(path, content, mode);
+    },
+  };
+  const writer = createProjectFiles(gatedFs, noWatch, undefined, locks);
+  const mover = createProjectFiles(memory.filesystem, noWatch, undefined, locks);
+
+  const bulk = writer.writeMany({ "chain/l1/notes.txt": "from bulk" });
+  await writeStarted.promise;
+
+  // A second FileService tries to move the 17th link aside while the bulk write holds its locks.
+  let moved = false;
+  const swap = mover.move("chain/l17", "chain/l17-aside").then(() => (moved = true));
+  await later(15);
+  expect(moved).toBe(false);
+
+  finishWrite.resolve();
+  await Promise.all([bulk, swap]);
+  expect(moved).toBe(true);
+  expect(memory.text("/workspace/original/notes.txt")).toBe("from bulk");
+  expect(memory.text("/workspace/replacement/notes.txt")).toBe("untouched");
+});
+
+function symlinkChainFilesystem(length: number) {
+  const links: Record<string, string> = {};
+  for (let index = 1; index < length; index += 1) {
+    links[`/workspace/chain/l${index}`] = `/workspace/chain/l${index + 1}`;
+  }
+  links[`/workspace/chain/l${length}`] = "/workspace/target";
+  return memoryFilesystem({
+    links,
+    directories: ["/workspace/chain", "/workspace/target"],
+    files: { "/workspace/target/notes.txt": "before" },
+  });
+}
+
+test("a bulk write locks a 40-hop symlink chain and fails closed on a 41-hop chain", async () => {
+  const forty = symlinkChainFilesystem(40);
+  const lockedShared: string[][] = [];
+  const spyLocks: PathLocks = {
+    hold(request, work) {
+      lockedShared.push(Array.from(request.shared ?? []));
+      return localPathLocks().hold(request, work);
+    },
+  };
+  const okService = createProjectFiles(forty.filesystem, noWatch, undefined, spyLocks);
+  await okService.writeMany({ "chain/l1/notes.txt": "forty" });
+  expect(forty.text("/workspace/target/notes.txt")).toBe("forty");
+  expect(lockedShared[0]).toContain("/workspace/chain/l40");
+
+  // 41 hops exceeds the resolver cap: must fail closed and write nothing.
+  const fortyOne = symlinkChainFilesystem(41);
+  const failService = createProjectFiles(fortyOne.filesystem, noWatch);
+  await expect(failService.writeMany({ "chain/l1/notes.txt": "too deep" })).rejects.toThrow(/ELOOP/);
+  expect(fortyOne.text("/workspace/target/notes.txt")).toBe("before");
 });

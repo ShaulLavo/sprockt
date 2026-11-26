@@ -12,7 +12,7 @@ import {
 } from "../workspace/paths";
 import { DestinationExistsError, FolderGoneError, MoveIntoItselfError } from "./errors";
 import { isSameOrInside, joinPath, rebase, safeRelativePath } from "./paths";
-import { ancestorsOf, localPathLocks, type PathLocks } from "./path-locks";
+import { ancestorsOf, localPathLocks, type LockRequest, type PathLocks } from "./path-locks";
 import { createPersistence, type SaveState } from "./persistence";
 import type { DirEntry, FileChange, FileService, UploadItem, UploadResult, WriteOutcome } from "./service";
 import { isHeavyPath, sortEntries, toProjectPath } from "./tree";
@@ -71,31 +71,64 @@ interface Effects {
   readonly paths: string[];
   readonly moves: { from: string; to: string; operation: number }[];
   readonly removed: string[];
+  /** Paths written or created so far: published even if a bulk operation fails partway. */
+  readonly partial: string[];
 }
 
 const emptyPending = (): Pending => ({ paths: new Set(), moves: [], removed: new Set(), reset: false });
 
-async function inBatches<T>(items: readonly T[], work: (item: T) => Promise<void>): Promise<void> {
+async function inBatches<T>(
+  items: readonly T[],
+  work: (item: T, isAborted: () => boolean) => Promise<void>,
+): Promise<void> {
+  let aborted = false;
+  let failed = false;
+  let firstError: unknown;
+  const fail = (error: unknown) => {
+    aborted = true;
+    if (failed) return;
+    failed = true;
+    firstError = error;
+  };
+  const runOne = async (item: T) => {
+    if (aborted) return;
+    try {
+      await work(item, () => aborted);
+    } catch (error) {
+      fail(error);
+      throw error;
+    }
+  };
   for (let start = 0; start < items.length; start += BATCH) {
-    // Each batch finishes before the next starts; that is what bounds the memory.
+    if (aborted) break;
+    // Each batch settles completely before the next starts or an error escapes (and unlocks).
     // oxlint-disable-next-line no-await-in-loop
-    await Promise.all(items.slice(start, start + BATCH).map(work));
+    const outcomes = await Promise.allSettled(items.slice(start, start + BATCH).map(runOne));
+    for (const outcome of outcomes) {
+      if (outcome.status === "rejected") fail(outcome.reason);
+    }
   }
+  if (failed) throw firstError;
 }
 
 const parentOf = (absolute: string) => absolute.slice(0, absolute.lastIndexOf("/"));
 type Lookup = (path: string) => Promise<ResolvedEntry | undefined>;
 
-/** Where an entry really is; see `locate`. */
+/** Where an entry really is; see `createInspector`. */
 interface Located {
   readonly real: string;
   readonly exists: boolean;
   /** The real path of the nearest existing directory above the entry. */
   readonly base: string;
+  /** Canonical paths of symbolic links traversed on the way to this entry, sorted. */
+  readonly links: readonly string[];
 }
 
 /** Whether `path` lies strictly inside `directory` ("" is the filesystem root). */
 const isBelow = (path: string, directory: string) => path.startsWith(`${directory}/`);
+
+const sameStrings = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((item, index) => item === b[index]);
 
 /** The deepest directory that holds every one of `paths` (absolute, normalized). */
 function commonDirectory(paths: readonly string[]): string {
@@ -106,6 +139,133 @@ function commonDirectory(paths: readonly string[]): string {
     while (shared !== "" && path !== shared && !isBelow(path, shared)) shared = parentOf(shared);
     return shared;
   }, first);
+}
+
+/** Drops exclusive lock roots already covered by an ancestor root in the same request. */
+function pruneExclusive(roots: readonly string[]): string[] {
+  const sorted = Array.from(new Set(roots)).sort();
+  const kept: string[] = [];
+  for (const root of sorted) {
+    if (kept.some((parent) => isBelow(root, parent))) continue;
+    kept.push(root);
+  }
+  return kept;
+}
+
+/**
+ * Plans locks for a bulk write: direct files share one folder lock, while any link-redirected
+ * destinations get exclusive locks on their canonical destination(s) and shared locks on every
+ * traversed link entry and ancestor.
+ */
+function planBulkLocks(places: readonly Located[]): LockRequest {
+  const groups = new Map<string, string[]>();
+  const shared = new Set<string>();
+  for (const place of places) {
+    const key = place.links.join("\0");
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(place.real);
+    else groups.set(key, [place.real]);
+    for (const link of place.links) {
+      shared.add(link);
+      for (const ancestor of ancestorsOf(link)) shared.add(ancestor);
+    }
+  }
+  const rawExclusive = Array.from(groups.values(), (reals) =>
+    reals.length === 1 ? reals[0]! : commonDirectory(reals),
+  );
+  const exclusive = pruneExclusive(rawExclusive);
+  for (const root of exclusive) {
+    for (const ancestor of ancestorsOf(root)) shared.add(ancestor);
+  }
+  return { exclusive, shared: Array.from(shared) };
+}
+
+/** Matches Waffle's symlink expansion cap (`walkTree` in `waffle/fs/memory.ts` rejects at 40). */
+const MAX_LINK_EXPANSIONS = 40;
+
+/**
+ * Memoized path inspector for one planning or revalidation pass: resolves canonical destinations
+ * and collects every symbolic link entry traversed along the way. Fails closed if a link target
+ * is missing, cycles, or exceeds the resolver's expansion cap so no partial lock set is ever used.
+ */
+function createInspector(resolve: Lookup): (absolute: string) => Promise<Located> {
+  const resolved = new Map<string, Promise<ResolvedEntry | undefined>>();
+  const dirs = new Map<string, Promise<Located>>();
+
+  const lookup: Lookup = (path) => {
+    const known = resolved.get(path) ?? resolve(path);
+    resolved.set(path, known);
+    return known;
+  };
+
+  async function collectLinks(
+    entry: ResolvedEntry,
+    links: Set<string>,
+    visiting: Set<string>,
+    done: Set<string>,
+  ): Promise<void> {
+    if (entry.kind !== "symlink") return;
+    if (visiting.has(entry.path)) throw new Error("ELOOP: too many levels of symbolic links");
+    if (done.has(entry.path)) return;
+    if (links.size >= MAX_LINK_EXPANSIONS) throw new Error("ELOOP: too many levels of symbolic links");
+    if (!entry.target) throw new Error(`Cannot resolve symbolic link target for ${entry.path}`);
+    links.add(entry.path);
+    visiting.add(entry.path);
+    try {
+      const next = entry.target.startsWith("/") ? entry.target : `${parentOf(entry.path)}/${entry.target}`;
+      const parts = next.split("/").filter(Boolean);
+      const steps = await Promise.all(
+        parts.map((_, index) => lookup(`/${parts.slice(0, index + 1).join("/")}`)),
+      );
+      for (const step of steps) {
+        if (step?.kind !== "symlink") continue;
+        // oxlint-disable-next-line no-await-in-loop -- depth-first so `visiting` accurately tracks cycles
+        await collectLinks(step, links, visiting, done);
+      }
+      done.add(entry.path);
+    } finally {
+      visiting.delete(entry.path);
+    }
+  }
+
+  function inspectDir(directory: string): Promise<Located> {
+    const cached = dirs.get(directory);
+    if (cached) return cached;
+    const promise = computeDir(directory);
+    dirs.set(directory, promise);
+    return promise;
+  }
+
+  async function computeDir(directory: string): Promise<Located> {
+    if (directory === "") return { real: "", exists: true, base: "", links: [] };
+    const parent = await inspectDir(parentOf(directory));
+    const name = directory.slice(directory.lastIndexOf("/") + 1);
+    if (!parent.exists) {
+      return { real: `${parent.real}/${name}`, exists: false, base: parent.base, links: parent.links };
+    }
+    const entry = await lookup(directory);
+    if (!entry) {
+      return { real: `${parent.real}/${name}`, exists: false, base: parent.real, links: parent.links };
+    }
+    if (entry.kind !== "symlink") {
+      return { real: entry.path, exists: true, base: parentOf(entry.path), links: parent.links };
+    }
+    const links = new Set(parent.links);
+    await collectLinks(entry, links, new Set(), new Set(parent.links));
+    return { real: entry.path, exists: true, base: parentOf(entry.path), links: Array.from(links).sort() };
+  }
+
+  return async function inspect(absolute: string): Promise<Located> {
+    if (absolute === "") return { real: "", exists: true, base: "", links: [] };
+    const parent = await inspectDir(parentOf(absolute));
+    const name = absolute.slice(absolute.lastIndexOf("/") + 1);
+    if (!parent.exists) {
+      return { real: `${parent.real}/${name}`, exists: false, base: parent.base, links: parent.links };
+    }
+    const entry = await lookup(absolute);
+    if (entry) return { real: entry.path, exists: true, base: parentOf(entry.path), links: parent.links };
+    return { real: `${parent.real}/${name}`, exists: false, base: parent.real, links: parent.links };
+  };
 }
 
 /** WASI error numbers for "no such file or directory" and "not a directory". */
@@ -239,20 +399,25 @@ export function createProjectFiles(
     };
   }
 
+  function publishEffects(effects: Partial<Effects>, edited: readonly string[]): void {
+    persistence.touch();
+    changedProject(effects);
+    // Told at once and apart from the watcher's news: this change was made through the service.
+    for (const listener of editListeners) listener(edited);
+  }
+
   /** Runs a change: refused when storage is gone, `saving` from now until it is flushed. */
   async function mutate<T>(change: (effects: Effects) => Promise<T>, paths: readonly string[]): Promise<T> {
     if (revoked) throw revoked;
     const end = persistence.begin();
-    const effects: Effects = { paths: Array.from(paths), moves: [], removed: [] };
+    const effects: Effects = { paths: Array.from(paths), moves: [], removed: [], partial: [] };
     try {
       const result = await change(effects);
-      persistence.touch();
-      changedProject(effects);
-      // Told at once and apart from the watcher's news: this change was made through the service.
-      for (const listener of editListeners) listener(effects.paths);
+      publishEffects(effects, effects.paths);
       return result;
     } catch (error) {
       remember(error);
+      if (effects.partial.length > 0) publishEffects({ paths: effects.partial }, effects.partial);
       throw error;
     } finally {
       end();
@@ -271,48 +436,45 @@ export function createProjectFiles(
   }
 
   /**
-   * Where an entry really is: its real path (links on the way followed, the last name not), and
-   * the real path of the nearest existing directory above it. An entry that does not exist yet
-   * is placed under its nearest existing directory.
-   */
-  async function locate(absolute: string): Promise<Located> {
-    const entry = absolute === "" ? undefined : await found(absolute);
-    if (entry) return { real: entry.path, exists: true, base: parentOf(entry.path) };
-    if (absolute === "") return { real: "", exists: true, base: "" };
-    const parent = await locate(parentOf(absolute));
-    const name = absolute.slice(absolute.lastIndexOf("/") + 1);
-    return { real: `${parent.real}/${name}`, exists: false, base: parent.exists ? parent.real : parent.base };
-  }
-
-  /**
    * Runs a change on `targets` (absolute paths) under their locks, across every tab: each target's
-   * real path exclusively, every directory above it shared (by its real path and by how it was
-   * spelled, so swapping a link on the way also waits). Under the locks the targets are located
-   * again. A directory that held a target when the change began and is gone now was moved or
-   * deleted by another tab: the change fails instead of recreating it. A target that now resolves
-   * elsewhere (a link changed) is tried once more.
+   * real path exclusively, every directory above it and every traversed symbolic link shared.
+   * Under the locks the targets are inspected again. A directory that held a target when the
+   * change began and is gone now was moved or deleted by another tab: the change fails instead of
+   * recreating it. A target whose real destination or traversed links changed is tried once more.
    */
   async function locked<T>(
     targets: readonly string[],
     change: () => Promise<T>,
-    first?: Located[],
+    options: { readonly bulk?: boolean; readonly first?: readonly Located[] } = {},
   ): Promise<T> {
-    const before = await Promise.all(targets.map(locate));
-    const origin = first ?? before;
-    const request = {
-      exclusive: before.map((place) => place.real),
-      shared: targets.flatMap(ancestorsOf).concat(before.flatMap((place) => ancestorsOf(place.real))),
-    };
+    const before = await Promise.all(targets.map(createInspector(found)));
+    const origin = options.first ?? before;
+    const request: LockRequest = options.bulk
+      ? planBulkLocks(before)
+      : {
+          exclusive: before.map((place) => place.real),
+          shared: targets
+            .flatMap(ancestorsOf)
+            .concat(
+              before.flatMap((place) =>
+                ancestorsOf(place.real).concat(place.links, place.links.flatMap(ancestorsOf)),
+              ),
+            ),
+        };
     const outcome = await locks.hold(request, async () => {
-      const now = await Promise.all(targets.map(locate));
+      const now = await Promise.all(targets.map(createInspector(found)));
       const gone = now.findIndex((place, index) => isBelow(origin[index]!.base, place.base));
       if (gone >= 0) throw new FolderGoneError(projectRelative(targets[gone]!) ?? targets[gone]!);
-      if (now.some((place, index) => place.real !== before[index]!.real)) return undefined;
+      const moved = now.some(
+        (place, index) =>
+          place.real !== before[index]!.real || !sameStrings(place.links, before[index]!.links),
+      );
+      if (moved) return undefined;
       return { value: await change() };
     });
     if (outcome) return outcome.value;
-    if (first) throw new Error("A symbolic link changed during this file operation. Try again.");
-    return locked(targets, change, origin);
+    if (options.first) throw new Error("A symbolic link changed during this file operation. Try again.");
+    return locked(targets, change, { bulk: options.bulk, first: origin });
   }
 
   async function readConfined(path: string): Promise<Uint8Array | undefined> {
@@ -360,6 +522,47 @@ export function createProjectFiles(
     return files.flatMap((file) => projectRelative(file) ?? []);
   }
 
+  async function uploadEntry(
+    item: { readonly path: string; readonly data?: Blob },
+    isAborted: () => boolean,
+    effects: Effects,
+  ): Promise<void> {
+    // The bytes are read first and the links checked afterwards, with a fresh check per
+    // entry: the check must describe the filesystem as it is when the write happens.
+    const bytes = item.data && new Uint8Array(await item.data.arrayBuffer());
+    if (isAborted()) return;
+    const absolute = projectPath(item.path);
+    await confiner()(absolute, true);
+    if (isAborted()) return;
+    if (bytes) {
+      await filesystem.mkdirp(parentOf(absolute));
+      effects.partial.push(item.path);
+      await filesystem.writeFile(absolute, bytes);
+      return;
+    }
+    effects.partial.push(item.path);
+    await filesystem.mkdirp(absolute);
+  }
+
+  async function writeManyEntries(
+    entries: readonly (readonly [string, string | Uint8Array])[],
+    targets: readonly string[],
+    effects: Effects,
+  ): Promise<void> {
+    const confine = confiner();
+    // Links are checked for the whole set first, so a bad entry writes nothing.
+    const checks = await Promise.allSettled(targets.map((absolute) => confine(absolute, true)));
+    const failed = checks.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+    if (failed) throw failed.reason;
+    await inBatches(entries, async ([path, content], isAborted) => {
+      if (isAborted()) return;
+      const absolute = projectPath(path);
+      await filesystem.mkdirp(parentOf(absolute));
+      effects.partial.push(path);
+      await filesystem.writeFile(absolute, content);
+    });
+  }
+
   async function upload(items: readonly UploadItem[], directory: string): Promise<UploadResult> {
     let skipped = 0;
     const accepted = items.flatMap((item) => {
@@ -371,22 +574,16 @@ export function createProjectFiles(
       }
       return [{ path, data: item.data }];
     });
+    if (directory !== "") projectPath(directory);
     // Every path is checked before the first byte is written, as in writeMany.
-    for (const { path } of accepted) projectPath(path);
-    // One lock on the folder that holds them all, as in writeMany.
-    const common = commonDirectory(accepted.map(({ path }) => projectPath(path)));
+    const targets = accepted.map(({ path }) => projectPath(path));
+    if (accepted.length === 0) return { written: [], skipped };
     await mutate(
-      () =>
-        locked([common], () =>
-          inBatches(accepted, async ({ path, data }) => {
-            // The bytes are read first and the links checked afterwards, with a fresh check per
-            // entry: the check must describe the filesystem as it is when the write happens.
-            const bytes = data && new Uint8Array(await data.arrayBuffer());
-            if (bytes) return writeConfined(confiner(), path, bytes);
-            const absolute = projectPath(path);
-            await confiner()(absolute, true);
-            await filesystem.mkdirp(absolute);
-          }),
+      (effects) =>
+        locked(
+          targets,
+          () => inBatches(accepted, (item, isAborted) => uploadEntry(item, isAborted, effects)),
+          { bulk: true },
         ),
       accepted.map((item) => item.path),
     );
@@ -461,18 +658,11 @@ export function createProjectFiles(
       ),
     async writeMany(files) {
       const entries = Object.entries(files);
+      if (entries.length === 0) return;
       // Every path is checked before the first byte is written: a bad entry writes nothing.
-      for (const [path] of entries) projectPath(path);
-      const confine = confiner();
-      // One lock on the folder that holds them all, not one per file: an import writes thousands.
-      const common = commonDirectory(entries.map(([path]) => projectPath(path)));
+      const targets = entries.map(([path]) => projectPath(path));
       await mutate(
-        () =>
-          locked([common], async () => {
-            // Links are checked for the whole set first, for the same reason.
-            await Promise.all(entries.map(([path]) => confine(projectPath(path), true)));
-            await Promise.all(entries.map(([path, content]) => writeConfined(confine, path, content)));
-          }),
+        (effects) => locked(targets, () => writeManyEntries(entries, targets, effects), { bulk: true }),
         entries.map(([path]) => path),
       );
     },
