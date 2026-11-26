@@ -329,7 +329,7 @@ where the bytes live.
 1. **Attach mode under load in WebKit.** With Waffle 0.0.150 in Playwright's WebKit, when many
    workspaces boot at once (ten parallel test workers), about half the shells fail to start
    with "filesystem errno 11" (sometimes 22), and the file watcher fails with the same error.
-   One worker at a time passes, and the takeover policy passes under the same load. Chromium
+   Four workers and one worker pass, and the takeover policy passes under the same load. Chromium
    and Firefox pass. The cause is in Waffle's attach mode; the PR that flipped the policy has
    the reproduction.
 2. **Runtime.dispose() after takeover keeps the filesystem worker.** Waffle 0.0.148 to 0.0.150:
