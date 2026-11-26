@@ -66,6 +66,8 @@ export interface Displacement {
    * write that no open buffer holds was set aside (it gets a tab of its own).
    */
   readonly buffer: boolean;
+  /** The version of the text set aside, before it was detached. */
+  readonly version: number;
 }
 
 /** `dir/a.txt` becomes `dir/a (draft).txt`, then `dir/a (draft 2).txt`, until one is free. */
@@ -313,7 +315,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     entry.setConflict({ diskText: text });
   }
 
-  function detachBuffer(entry: Entry, target: string, buffer: boolean): Displacement {
+  function detachBuffer(entry: Entry, target: string, buffer: boolean, version: number): Displacement {
     let aside = detachedKey(target);
     while (entries.has(aside)) aside = detachedKey(target);
     entry.buffer.path = aside;
@@ -321,7 +323,7 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     markGone(entry);
     entry.setDirty(true);
     entries.set(aside, entry);
-    return { from: target, to: aside, buffer };
+    return { from: target, to: aside, buffer, version };
   }
 
   /**
@@ -344,11 +346,12 @@ export function createBufferSet(files: Files, options: BufferSetOptions = {}): B
     undurable.delete(target);
     const held = occupant !== undefined && pending !== undefined && holds(occupant, pending);
     const displaced: Displacement[] = [];
-    if (pending && !held) displaced.push(detachBuffer(create(target, pending.draft.text), target, false));
+    if (pending && !held)
+      displaced.push(detachBuffer(create(target, pending.draft.text), target, false, pending.version));
     if (!occupant) return displaced;
     if (occupant.buffer.dirty() || held) {
       entries.delete(target);
-      displaced.push(detachBuffer(occupant, target, true));
+      displaced.push(detachBuffer(occupant, target, true, occupant.version));
       return displaced;
     }
     if (!arriving) return displaced;

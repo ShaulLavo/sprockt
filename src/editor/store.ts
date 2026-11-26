@@ -216,13 +216,11 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     }
     let current = active();
     for (const aside of displaced) {
-      // Drafts recovered from other tabs belong to the buffer that showed them, so they follow it.
-      if (!aside.buffer) {
-        commit(tabs().concat([{ path: aside.to, preview: false }]), current);
-        continue;
-      }
-      drafts.renamed(aside.from, aside.to);
-      current = retarget(aside.from, aside.to, current);
+      // Drafts recovered from other tabs go with the oldest text set aside that covers them
+      // (displacements come oldest first), so that text's durable save clears them.
+      drafts.handedOver(aside.from, aside.to, aside.version);
+      if (aside.buffer) current = retarget(aside.from, aside.to, current);
+      else commit(tabs().concat([{ path: aside.to, preview: false }]), current);
     }
     drafts.renamed(from, to);
     const moved = displayed();

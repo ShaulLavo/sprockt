@@ -834,3 +834,46 @@ test("saving the older of two drafts split from one path keeps the newer draft's
   expect(buffer?.session.materializeFullText()).toBe("newer shell");
   recovered.dispose();
 });
+
+test("a recovered draft set aside with its pending write never comes back over a matching replacement", async () => {
+  // A closed browser tab left a draft of target/a.txt.
+  const gone = setUpStore({ "target/a.txt": "base", "src/a.txt": "base" });
+  gone.store.setAutosave(false);
+  gone.store.open("target/a.txt");
+  await gone.store.buffers.load("target/a.txt");
+  type(gone.store, "target/a.txt", "draft ");
+  await gone.store.pageHidden();
+  gone.dispose();
+
+  // This tab recovers it, saves it with the flush held and closes the tab.
+  const tab = setUpStore({}, gone.disk);
+  tab.store.setAutosave(false);
+  tab.holdFlushes();
+  tab.store.open("target/a.txt");
+  const recovered = await tab.store.buffers.load("target/a.txt");
+  expect(recovered?.session.materializeFullText()).toBe("draft base");
+  await tab.store.save("target/a.txt");
+  tab.store.close("target/a.txt");
+
+  // A file matching the draft's base moves onto the path; the pending write is set aside.
+  tab.disk.delete("src/a.txt");
+  tab.disk.set("target/a.txt", "base");
+  tab.emit({ moves: [{ from: "src/a.txt", to: "target/a.txt", operation: 1 }] });
+  await tick();
+  const aside = tab.store.tabs().find((entry) => isDetached(entry.path))?.path;
+  expect(aside).toBeDefined();
+
+  // Saving the set-aside draft durably clears the draft it came from.
+  tab.releaseFlushes();
+  await tab.store.save(aside as string);
+  await tick();
+  await tick();
+  expect(tab.disk.get("target/a (draft).txt")).toBe("draft base");
+
+  // Reopening the replacement shows the replacement, clean.
+  tab.store.open("target/a.txt");
+  const reopened = await tab.store.buffers.load("target/a.txt");
+  expect(reopened?.session.materializeFullText()).toBe("base");
+  expect(reopened?.dirty()).toBe(false);
+  tab.dispose();
+});

@@ -141,6 +141,11 @@ export interface DraftKeeper {
   settled(path: string, version?: number): void;
   /** Entries follow a file or folder this tab saw move. */
   renamed(from: string, to: string): void;
+  /**
+   * Drafts taken from other tabs at exactly `from` move to `to` when the text set aside there
+   * (at `version`) covers them, so its durable save clears them. Returns whether they moved.
+   */
+  handedOver(from: string, to: string, version: number): boolean;
   /** This tab can no longer save (or is closing): other tabs may take what it left. */
   release(): void;
 }
@@ -266,6 +271,13 @@ export function createDraftKeeper(options: DraftKeeperOptions): DraftKeeper {
         ownVersions.delete(path);
       }
       if (keys.length > 0) discardRecovered(storage, keys);
+    },
+    handedOver(from, to, version) {
+      const entry = taken.get(from);
+      if (!entry || entry.version > version) return false;
+      taken.delete(from);
+      taken.set(to, entry);
+      return true;
     },
     renamed(from, to) {
       renameMap(taken, from, to);
