@@ -1,14 +1,23 @@
 import { resolve } from "node:path";
-import { chromium, firefox, webkit, type Browser, type BrowserType } from "@playwright/test";
+import {
+  chromium,
+  firefox,
+  webkit,
+  type Browser,
+  type BrowserContext,
+  type BrowserType,
+  type Response,
+} from "@playwright/test";
 import {
   CLI_USAGE,
+  isProductionUrl,
   parseCliArgs,
   VIEWPORT_PRESETS,
   type BrowserEngine,
   type ParsedArgs,
   type ViewportSpec,
 } from "./args.ts";
-import { createEvidenceSession } from "./evidence.ts";
+import { createEvidenceSession, type EvidenceSession, type LayoutSnapshot } from "./evidence.ts";
 import { findScenario, SCENARIOS } from "./scenarios/index.ts";
 import { startThrowawayPreviewServer, type PreviewServerHandle } from "./server.ts";
 
@@ -18,15 +27,6 @@ function pickBrowserType(engine: BrowserEngine): BrowserType {
   if (engine === "webkit") return webkit;
   if (engine === "firefox") return firefox;
   return chromium;
-}
-
-function isProductionUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname === "sprockt.dev" || parsed.hostname.endsWith(".sprockt.dev");
-  } catch {
-    return false;
-  }
 }
 
 async function resolveTarget(args: ParsedArgs): Promise<PreviewServerHandle> {
@@ -43,15 +43,17 @@ async function resolveTarget(args: ParsedArgs): Promise<PreviewServerHandle> {
 }
 
 function collectDoctorProblems(
-  layout: {
-    readonly crossOriginIsolated: boolean;
-    readonly overflowX: number;
-    readonly visibleAlerts: readonly string[];
-    readonly brokenImages: readonly string[];
-  },
+  response: Response | null,
+  layout: LayoutSnapshot,
   observed: { readonly pageErrors: readonly string[]; readonly consoleErrors: readonly string[] },
 ): string[] {
   const problems: string[] = [];
+  if (!response || !response.ok()) {
+    problems.push(`navigation returned HTTP ${response ? response.status() : "none"}`);
+  }
+  if (layout.appSurface === "unknown") {
+    problems.push("no Sprockt app surface marker found (expected landing-page, workbench, or import-page)");
+  }
   if (!layout.crossOriginIsolated) problems.push("crossOriginIsolated is false (missing COOP/COEP headers)");
   if (layout.overflowX > 0) problems.push(`horizontal overflow detected (${layout.overflowX}px)`);
   if (layout.visibleAlerts.length > 0) problems.push(`visible alert(s): ${layout.visibleAlerts.join("; ")}`);
@@ -59,6 +61,36 @@ function collectDoctorProblems(
   if (observed.pageErrors.length > 0) problems.push(`${observed.pageErrors.length} pageerror(s)`);
   if (observed.consoleErrors.length > 0) problems.push(`${observed.consoleErrors.length} console error(s)`);
   return problems;
+}
+
+function evaluateDoctor(
+  evidence: EvidenceSession,
+  response: Response | null,
+  layout: LayoutSnapshot,
+): "PASS" | "FAIL" {
+  const problems = collectDoctorProblems(response, layout, evidence.observed);
+  if (problems.length === 0) {
+    evidence.notes.push(
+      `Doctor healthy (${layout.appSurface}): HTTP ${response?.status()}, COOP/COEP active, 0 overflow, 0 alerts, 0 page/console errors.`,
+    );
+    return "PASS";
+  }
+  evidence.notes.push(...problems.map((item) => `Doctor failure: ${item}`));
+  return "FAIL";
+}
+
+async function installProductionGuard(context: BrowserContext, scenarioName: string): Promise<void> {
+  await context.route("**/*", async (route) => {
+    const req = route.request();
+    const isMainDoc = req.isNavigationRequest() && req.frame().parentFrame() === null;
+    if (isMainDoc && isProductionUrl(req.url())) {
+      await route.abort("blockedbyclient");
+      throw new Error(
+        `Refusing writing scenario "${scenarioName}" after redirect to production URL ${req.url()}.`,
+      );
+    }
+    await route.continue();
+  });
 }
 
 async function runLook(args: ParsedArgs, browser: Browser, target: PreviewServerHandle): Promise<boolean> {
@@ -71,25 +103,23 @@ async function runLook(args: ParsedArgs, browser: Browser, target: PreviewServer
     colorScheme: args.scheme,
   });
   let status: "PASS" | "FAIL" = "PASS";
+  let layout: LayoutSnapshot | undefined;
   try {
     const page = await context.newPage();
     evidence.attach(page);
-    await page.goto(target.url, { waitUntil: "networkidle", timeout: args.timeoutMs });
-    await page.evaluate(() => document.fonts.ready);
-    const layout = await evidence.snapshotLayout(page);
-    evidence.writeJson("layout.json", layout);
-    await evidence.capture(page, "viewport", { selector: args.selector });
-    if (!args.selector) {
-      await evidence.capture(page, "full-page", { fullPage: true });
-    }
-    if (args.doctor) {
-      const problems = collectDoctorProblems(layout, evidence.observed);
-      if (problems.length > 0) {
-        status = "FAIL";
-        evidence.notes.push(...problems.map((item) => `Doctor failure: ${item}`));
-      } else {
-        evidence.notes.push("Doctor healthy: COOP/COEP active, 0 overflow, 0 alerts, 0 page/console errors.");
-      }
+    try {
+      const response = await page.goto(target.url, { waitUntil: "networkidle", timeout: args.timeoutMs });
+      await page.evaluate(() => document.fonts.ready);
+      layout = await evidence.snapshotLayout(page);
+      evidence.writeJson("layout.json", layout);
+      await evidence.capture(page, "viewport", { selector: args.selector });
+      if (!args.selector) await evidence.capture(page, "full-page", { fullPage: true });
+      if (args.doctor) status = evaluateDoctor(evidence, response, layout);
+    } catch (error) {
+      status = "FAIL";
+      const message = error instanceof Error ? error.message : String(error);
+      evidence.notes.push(`Look failed: ${message}`);
+      await evidence.capture(page, "failure-state").catch(() => {});
     }
     if (target.owned) evidence.writeText("server.log", target.logs());
     const summary = evidence.finalize(status, {
@@ -97,8 +127,9 @@ async function runLook(args: ParsedArgs, browser: Browser, target: PreviewServer
       engine: args.engine,
       viewport: `${args.viewport.width}x${args.viewport.height}`,
       scheme: args.scheme,
-      crossOriginIsolated: layout.crossOriginIsolated,
-      overflowX: layout.overflowX,
+      appSurface: layout?.appSurface ?? "unknown",
+      crossOriginIsolated: layout?.crossOriginIsolated ?? false,
+      overflowX: layout?.overflowX ?? -1,
     });
     console.log(summary);
     return status === "PASS";
@@ -131,6 +162,9 @@ async function runScenario(
     hasTouch: effectiveViewport.hasTouch,
     colorScheme: args.scheme,
   });
+  if (!scenario.readOnly) {
+    await installProductionGuard(context, scenario.name);
+  }
   let status: "PASS" | "FAIL" = "PASS";
   try {
     const page = await context.newPage();
@@ -194,14 +228,27 @@ async function main(): Promise<void> {
 
   const target = await resolveTarget(args);
   let browser: Browser | undefined;
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = () => {
+    cleanupPromise ??= (async () => {
+      await Promise.allSettled([browser ? browser.close() : Promise.resolve(), target.stop()]);
+    })();
+    return cleanupPromise;
+  };
+  const onSignal = (signal: NodeJS.Signals) => {
+    void cleanup().finally(() => process.exit(signal === "SIGINT" ? 130 : 143));
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
   try {
     browser = await pickBrowserType(args.engine).launch({ headless: !args.headed });
     const ok =
       args.verb === "look" ? await runLook(args, browser, target) : await runScenario(args, browser, target);
     if (!ok) process.exitCode = 1;
   } finally {
-    await browser?.close();
-    await target.stop();
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    await cleanup();
   }
 }
 

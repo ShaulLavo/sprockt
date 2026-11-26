@@ -33,6 +33,17 @@ export const VIEWPORT_PRESETS: Readonly<Record<"desktop" | "phone", ViewportSpec
 const VALID_ENGINES = new Set<string>(["chromium", "webkit", "firefox"]);
 const VALID_SCHEMES = new Set<string>(["light", "dark"]);
 
+/** True when `url` targets the public `sprockt.dev` production domain (including trailing dot or subdomains). */
+export function isProductionUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase().replace(/\.+$/, "");
+    return host === "sprockt.dev" || host.endsWith(".sprockt.dev");
+  } catch {
+    return false;
+  }
+}
+
 export function parseViewport(raw: string): ViewportSpec {
   if (raw === "desktop") return VIEWPORT_PRESETS.desktop;
   if (raw === "phone") return VIEWPORT_PRESETS.phone;

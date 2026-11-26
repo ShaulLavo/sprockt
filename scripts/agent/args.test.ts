@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseCliArgs, parseViewport, VIEWPORT_PRESETS } from "./args.ts";
+import { isProductionUrl, parseCliArgs, parseViewport, VIEWPORT_PRESETS } from "./args.ts";
 
 describe("agent:browser args", () => {
   test("parses look defaults and doctor flag", () => {
@@ -58,5 +58,14 @@ describe("agent:browser args", () => {
     expect(() => parseCliArgs(["look", "--bogus"])).toThrow(/Unknown option/);
     expect(() => parseCliArgs(["look", "--engine", "ie6"])).toThrow(/Invalid --engine/);
     expect(() => parseCliArgs(["look", "--scheme", "sepia"])).toThrow(/Invalid --scheme/);
+  });
+
+  test("normalizes trailing dots and subdomains when checking production URLs", () => {
+    expect(isProductionUrl("https://sprockt.dev")).toBe(true);
+    expect(isProductionUrl("https://sprockt.dev./w/abc")).toBe(true);
+    expect(isProductionUrl("https://SUB.SPROCKT.DEV./")).toBe(true);
+    expect(isProductionUrl("https://y78x.shaulavo.dev")).toBe(false);
+    expect(isProductionUrl("http://127.0.0.1:4173")).toBe(false);
+    expect(isProductionUrl("not-a-url")).toBe(false);
   });
 });

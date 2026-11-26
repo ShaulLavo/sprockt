@@ -51,8 +51,12 @@ export const landingDesktopMobileScenario: AgentScenario = {
       await evidence.capture(page, "desktop-light-full", { fullPage: true });
 
       await page.locator(SELECTORS.landing.themeDark).click();
-      await page.waitForTimeout(150);
+      await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark");
       const desktopDark = await evidence.snapshotLayout(page);
+      assertCondition(
+        desktopDark.themeAttr === "dark",
+        `Expected desktop dark themeAttr="dark", got "${desktopDark.themeAttr}"`,
+      );
       assertCondition(desktopDark.overflowX === 0, `Desktop dark overflowX=${desktopDark.overflowX}`);
       await evidence.capture(page, "desktop-dark-fold");
       await evidence.capture(page, "desktop-dark-full", { fullPage: true });
@@ -80,8 +84,12 @@ export const landingDesktopMobileScenario: AgentScenario = {
       await evidence.capture(page, "phone-light-full", { fullPage: true });
 
       await page.locator(SELECTORS.landing.phoneThemeToggle).tap();
-      await page.waitForTimeout(150);
+      await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark");
       const phoneDark = await evidence.snapshotLayout(page);
+      assertCondition(
+        phoneDark.themeAttr === "dark",
+        `Expected phone dark themeAttr="dark", got "${phoneDark.themeAttr}"`,
+      );
       assertCondition(phoneDark.overflowX === 0, `Phone dark overflowX=${phoneDark.overflowX}`);
       await evidence.capture(page, "phone-dark-fold");
       checks.phone = { light: phoneLight, dark: phoneDark };

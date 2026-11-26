@@ -50,6 +50,15 @@ export const mobileWorkbenchScenario: AgentScenario = {
     await page.waitForURL(/\/w\/[a-z0-9]+$/, { timeout: 30_000 });
     await waitForWorkbenchReady(page, args.timeoutMs);
 
+    const initialTheme = await page.evaluate(() => ({
+      attr: document.documentElement.getAttribute("data-theme"),
+      scheme: getComputedStyle(document.documentElement).colorScheme,
+    }));
+    assertCondition(
+      initialTheme.attr !== "dark",
+      `mobile-workbench must start in light mode to test Light->Dark transition (got data-theme="${initialTheme.attr}")`,
+    );
+
     await page.locator(SELECTORS.workbench.paneButton("Files")).tap();
     const appTsx = page
       .locator(SELECTORS.explorer.tree)
@@ -58,15 +67,25 @@ export const mobileWorkbenchScenario: AgentScenario = {
       await page.locator(SELECTORS.explorer.tree).getByRole("button", { name: "src", exact: true }).tap();
     }
     await appTsx.tap();
-    await page.waitForTimeout(300);
+    await page.waitForFunction(
+      (sel) => document.querySelector(sel)?.getAttribute("aria-label") === "src/App.tsx",
+      SELECTORS.editor.activeFile,
+    );
     await page.locator(SELECTORS.workbench.paneButton("Files")).tap();
     await page.locator(SELECTORS.explorer.tree).getByRole("button", { name: "App.css", exact: true }).tap();
-    await page.waitForTimeout(300);
+    await page.waitForFunction(
+      (sel) => document.querySelector(sel)?.getAttribute("aria-label") === "src/App.css",
+      SELECTORS.editor.activeFile,
+    );
 
     const tabs = page.locator(SELECTORS.editor.tab);
     assertCondition((await tabs.count()) >= 2, "Expected at least 2 open tabs on mobile");
     await tabs.filter({ hasText: "App.tsx" }).first().tap();
-    await page.waitForTimeout(250);
+    await page.waitForFunction(
+      (sel) => document.querySelector(sel)?.getAttribute("aria-label") === "src/App.tsx",
+      SELECTORS.editor.activeFile,
+    );
+    await page.waitForTimeout(200);
     const focusedAfterTabTap = await editorHasFocus(page);
     assertCondition(
       !focusedAfterTabTap,
@@ -84,6 +103,7 @@ export const mobileWorkbenchScenario: AgentScenario = {
     await page.locator(SELECTORS.workbench.phoneMenu).tap();
     await page.locator(SELECTORS.workbench.phoneMenuPanel).waitFor({ state: "visible" });
     await page.locator(SELECTORS.workbench.phoneMenuPanel).locator(SELECTORS.workbench.themeDark).tap();
+    await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark");
     await page.keyboard.press("Escape");
     await page.waitForTimeout(200);
 

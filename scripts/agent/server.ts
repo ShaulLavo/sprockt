@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { createServer } from "node:net";
+import { createServer, type Server } from "node:net";
 import { resolve } from "node:path";
 
 export interface PreviewServerHandle {
@@ -11,22 +11,29 @@ export interface PreviewServerHandle {
   readonly stop: () => Promise<void>;
 }
 
+function closeServerAndReturnPort(server: Server): Promise<number> {
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    return new Promise((_, rejectPort) => {
+      server.close(() => rejectPort(new Error("Could not determine free loopback port")));
+    });
+  }
+  const { port } = address;
+  return new Promise((resolvePort, rejectPort) => {
+    server.close((error) => {
+      if (error) rejectPort(error);
+      else resolvePort(port);
+    });
+  });
+}
+
 function allocateLoopbackPort(): Promise<number> {
   return new Promise((resolvePort, rejectPort) => {
     const server = createServer();
     server.unref();
     server.on("error", rejectPort);
     server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close(() => rejectPort(new Error("Could not determine free loopback port")));
-        return;
-      }
-      const { port } = address;
-      server.close((error) => {
-        if (error) rejectPort(error);
-        else resolvePort(port);
-      });
+      void closeServerAndReturnPort(server).then(resolvePort, rejectPort);
     });
   });
 }
@@ -57,27 +64,30 @@ function waitForServerReady(url: string, child: ChildProcess, logs: string[]): P
   return pollServerReady(url, child, logs, Date.now() + 30_000);
 }
 
+function sendSignalSafe(child: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    child.kill(signal);
+  } catch {
+    // Process already exited.
+  }
+}
+
 function stopChildProcess(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.killed) return Promise.resolve();
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   return new Promise((done) => {
-    const timer = setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // Already gone.
-      }
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killTimer);
+      clearTimeout(safetyTimer);
       done();
-    }, 3000);
-    child.once("exit", () => {
-      clearTimeout(timer);
-      done();
-    });
-    try {
-      child.kill("SIGTERM");
-    } catch {
-      clearTimeout(timer);
-      done();
-    }
+    };
+    const killTimer = setTimeout(() => sendSignalSafe(child, "SIGKILL"), 3000);
+    const safetyTimer = setTimeout(finish, 8000);
+    child.once("exit", finish);
+    child.once("close", finish);
+    sendSignalSafe(child, "SIGTERM");
   });
 }
 
@@ -111,11 +121,15 @@ export async function startThrowawayPreviewServer(repoRoot: string): Promise<Pre
     await stopChildProcess(child);
     throw error;
   }
+  let stopping: Promise<void> | undefined;
   return {
     url,
     port,
     owned: true,
     logs: () => chunks.join(""),
-    stop: () => stopChildProcess(child),
+    stop: () => {
+      stopping ??= stopChildProcess(child);
+      return stopping;
+    },
   };
 }

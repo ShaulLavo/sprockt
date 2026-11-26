@@ -22,8 +22,8 @@ bun run agent:browser scenario workbench-tabs-and-explorer
 
 Verify:
 
-- Before `node_modules` is installed, `.sg-diag-error` count is `0` and the status bar shows a quiet `Install deps for TS` indicator instead of a wall of red squiggles.
-- After **Start dev server** (`bun install`) finishes, `Install deps for TS` clears and `tsrs-lsp` activates cleanly.
+- Before `node_modules` is installed, `CSS.highlights` contains zero `lsp-plugin-error` ranges and the status bar shows a quiet `Install deps for TS` indicator instead of a wall of red squiggles.
+- After **Start dev server** (`bun install`) finishes, `Install deps for TS` clears and `tsrs-lsp` activates cleanly with zero error ranges.
 
 ## Gotchas
 

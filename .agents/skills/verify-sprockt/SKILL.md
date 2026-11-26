@@ -31,6 +31,7 @@ bun run agent:browser look --doctor
 
 Doctor passes only when:
 
+- navigation returns HTTP 2xx and mounts a known Sprockt surface (`landing-page`, `workbench`, or `import-page`),
 - the page renders with `crossOriginIsolated === true` (SharedArrayBuffer available for Waffle/WASI),
 - horizontal overflow is `0px`,
 - no visible `[role="alert"]` banners or broken `<img>` elements exist, and

@@ -57,7 +57,6 @@ export const SELECTORS = {
     activeFile: '[data-testid="editor-file"]',
     dirty: '[data-testid="editor-dirty"]',
     empty: '[data-testid="editor-empty"]',
-    lspErrorSquiggle: ".sg-diag-error",
   },
   terminal: {
     panel: '[data-testid="terminal-panel"]',

@@ -2,6 +2,30 @@ import type { Page } from "@playwright/test";
 import { SELECTORS } from "../selectors.ts";
 import { assertCondition, waitForWorkbenchReady, type AgentScenario } from "./types.ts";
 
+const STARTER_EXPECTATIONS: Readonly<
+  Record<string, { readonly heading: string; readonly entryFile?: string }>
+> = {
+  "vite-react": { heading: "Hello from bun.wasm", entryFile: "App.tsx" },
+  vanilla: { heading: "TypeScript + Vite", entryFile: "main.ts" },
+  sveltekit: { heading: "SvelteKit", entryFile: "+page.svelte" },
+  hono: { heading: "Hono", entryFile: "index.ts" },
+  "bun-sqlite": { heading: "SQLite", entryFile: "server.ts" },
+  astro: { heading: "Astro", entryFile: "index.astro" },
+  "next-app": { heading: "Next.js", entryFile: "page.tsx" },
+};
+
+/** Reads real `lsp-plugin-error` highlight ranges painted by Singapore via `CSS.highlights`. */
+async function readLspErrorRanges(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const texts: string[] = [];
+    for (const [name, highlight] of CSS.highlights) {
+      if (!name.includes("lsp-plugin-error")) continue;
+      for (const range of highlight) texts.push(range.toString());
+    }
+    return texts;
+  });
+}
+
 async function pollPreviewContent(page: Page, expectedText: string, deadline: number): Promise<string> {
   const taskError = await page
     .locator(SELECTORS.preview.taskOutput)
@@ -33,54 +57,84 @@ function waitForPreviewContent(page: Page, expectedText: string, timeoutMs: numb
   return pollPreviewContent(page, expectedText, Date.now() + timeoutMs);
 }
 
+async function editAppHeadingInEditor(page: Page): Promise<void> {
+  await page.locator(SELECTORS.editor.root).click();
+  const isMac = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform));
+  await page.keyboard.press(isMac ? "Meta+ArrowUp" : "Control+Home");
+  // Line 9 of vite-react src/App.tsx is `      <h1>Hello from bun.wasm</h1>`.
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.type(" live");
+}
+
 export const starterDevServerScenario: AgentScenario = {
   name: "starter-dev-server",
   description:
-    "Open a starter (default vite-react), check zero initial LSP red squiggles, click Start dev server, verify live preview + counter + HMR.",
+    "Open a starter (default vite-react), check CSS.highlights LSP cleanliness & dep gate, start dev server, verify rendered preview + counter + real editor HMR.",
   readOnly: false,
   defaultViewport: "desktop",
   async run(ctx) {
     const { page, baseUrl, args, evidence } = ctx;
     const starterId = args.starter;
+    const spec = STARTER_EXPECTATIONS[starterId];
+    assertCondition(
+      spec !== undefined,
+      `Unknown starter "${starterId}". Supported: ${Object.keys(STARTER_EXPECTATIONS).join(", ")}`,
+    );
+
     await page.goto(baseUrl, { waitUntil: "networkidle" });
     await page.waitForSelector(SELECTORS.landing.templateCard(starterId));
     await page.locator(SELECTORS.landing.templateCard(starterId)).click();
     await page.waitForURL(/\/w\/[a-z0-9]+$/, { timeout: 30_000 });
     await waitForWorkbenchReady(page, args.timeoutMs);
     await page.waitForSelector(SELECTORS.editor.root, { timeout: 30_000 });
-    if (starterId === "vite-react") {
+
+    if (spec.entryFile) {
       await page
         .locator(SELECTORS.explorer.tree)
-        .getByRole("button", { name: "App.tsx", exact: true })
+        .getByRole("button", { name: spec.entryFile, exact: true })
         .click();
       await page.waitForFunction(
-        (sel) => document.querySelector(sel)?.getAttribute("aria-label") === "src/App.tsx",
-        SELECTORS.editor.activeFile,
+        ({ sel, name }) => document.querySelector(sel)?.getAttribute("aria-label")?.endsWith(name) ?? false,
+        { sel: SELECTORS.editor.activeFile, name: spec.entryFile },
       );
     }
     await page.waitForTimeout(1500);
 
-    const initialSquiggles = await page.locator(SELECTORS.editor.lspErrorSquiggle).count();
+    const initialErrors = await readLspErrorRanges(page);
     const initialStatus = (await page.locator(SELECTORS.workbench.statusBar).innerText()).trim();
     assertCondition(
-      initialSquiggles === 0,
-      `Expected 0 false-alarm initial LSP red squiggles before install, found ${initialSquiggles}`,
+      initialErrors.length === 0,
+      `Expected 0 CSS.highlights lsp-plugin-error ranges before install, found ${initialErrors.length}: ${initialErrors.join(", ")}`,
     );
+    if (starterId === "vite-react") {
+      assertCondition(
+        initialStatus.includes("Install deps for TS"),
+        `Expected "Install deps for TS" dependency gate in status bar before install, got "${initialStatus}"`,
+      );
+    }
     await evidence.capture(page, "starter-opened-clean-lsp");
     evidence.notes.push(
-      `Opened starter "${starterId}": 0 initial LSP red squiggles (status: "${initialStatus}").`,
+      `Opened starter "${starterId}": 0 CSS.highlights LSP errors (status: "${initialStatus.replace(/\s+/g, " ")}").`,
     );
 
     const startBtn = page.locator(SELECTORS.preview.startButton).first();
     await startBtn.waitFor({ state: "visible", timeout: 30_000 });
     await startBtn.click();
 
-    const expectedHeading = starterId === "vite-react" ? "Hello from bun.wasm" : "";
-    if (expectedHeading) {
-      await waitForPreviewContent(page, expectedHeading, args.timeoutMs);
-    } else {
-      await page.waitForSelector(SELECTORS.preview.frame, { timeout: args.timeoutMs });
-    }
+    await waitForPreviewContent(page, spec.heading, args.timeoutMs);
     await evidence.capture(page, "dev-server-rendered");
 
     if (starterId === "vite-react") {
@@ -89,33 +143,26 @@ export const starterDevServerScenario: AgentScenario = {
       await frame.getByRole("button", { name: /count is 1/i }).waitFor({ timeout: 10_000 });
       evidence.notes.push("Preview interactive counter incremented from 0 to 1.");
 
-      await page.locator(SELECTORS.editor.root).click();
-      await page.evaluate(() => {
-        const current = globalThis.sprockt?.editorText() ?? "";
-        if (!current.includes("Hello from bun.wasm")) {
-          throw new Error("Expected src/App.tsx to be active in editor");
-        }
-      });
-      const updated = await page.evaluate(async () => {
-        const files = globalThis.sprockt?.workspace?.files;
-        if (!files) throw new Error("Workspace FileService unavailable");
-        const src = await files.read("src/App.tsx");
-        if (typeof src !== "string") throw new Error("src/App.tsx could not be read");
-        const next = src.replace("Hello from bun.wasm", "Hello from verify-sprockt");
-        await files.write("src/App.tsx", next);
-        return next.includes("Hello from verify-sprockt");
-      });
-      assertCondition(updated, "Could not write HMR update to src/App.tsx");
-      await waitForPreviewContent(page, "Hello from verify-sprockt", 30_000);
+      await editAppHeadingInEditor(page);
+      const updatedBody = await waitForPreviewContent(page, "Hello from bun.wasm live", 30_000);
+      assertCondition(
+        updatedBody.includes("count is 1"),
+        `Expected HMR to preserve React counter "count is 1" without full reload, got: ${updatedBody}`,
+      );
       await page.waitForTimeout(1000);
       const postInstallStatus = (await page.locator(SELECTORS.workbench.statusBar).innerText()).trim();
+      const postInstallErrors = await readLspErrorRanges(page);
       assertCondition(
         !postInstallStatus.includes("Install deps for TS"),
         `Expected "Install deps for TS" to clear after bun install, got "${postInstallStatus}"`,
       );
+      assertCondition(
+        postInstallErrors.length === 0,
+        `Expected 0 LSP errors after install, found: ${postInstallErrors.join(", ")}`,
+      );
       await evidence.capture(page, "hmr-updated");
-      evidence.notes.push("Edited src/App.tsx and confirmed live HMR updated the preview iframe.");
-      evidence.notes.push("Confirmed LSP status cleared after node_modules installed.");
+      evidence.notes.push("Typed edit in editor triggered live HMR while preserving count is 1.");
+      evidence.notes.push("LSP dependency gate cleared with 0 CSS.highlights errors after install.");
     }
 
     const finalLayout = await evidence.snapshotLayout(page);

@@ -18,7 +18,7 @@ export interface AgentScenario {
   readonly run: (ctx: ScenarioContext) => Promise<void>;
 }
 
-export function assertCondition(condition: boolean, message: string): void {
+export function assertCondition(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 

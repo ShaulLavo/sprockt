@@ -20,10 +20,11 @@ bun run agent:browser scenario starter-dev-server
 bun run agent:browser scenario starter-dev-server --engine webkit
 ```
 
-Inspect `02-dev-server-rendered.png` and `03-hmr-updated.png` to confirm the preview iframe renders real content and updates live after editing `src/App.tsx`.
+Inspect `02-dev-server-rendered.png` and `03-hmr-updated.png` to confirm the preview iframe renders real content and updates live after typing in the editor while preserving React state (`count is 1`).
 
 ## Gotchas
 
 - A plain `bun run build` without `VITE_SPROCKT_PREVIEWS=mounted` or `VITE_SPROCKT_PREVIEW_DOMAIN` intentionally builds with previews disabled (`e2e/previews-off.spec.ts`). Always set `VITE_SPROCKT_PREVIEWS=mounted` before local `agent:browser` runs that test dev servers.
+- `starter-dev-server` drives `preview-frame` via `frameLocator` against local/mounted previews on Chromium and WebKit. Playwright Firefox has known cross-origin frame and Vite startup quirks (see `ARCHITECTURE.md` Known gaps), and Playwright WebKit has an occasional Vite startup flake under heavy load (~1 in 15 runs); re-run once if WebKit stalls before listening.
 - Notice there are two buttons labeled "Start dev server" in the DOM when stopped (toolbar task button + empty-state CTA). Use `SELECTORS.preview.startButton` (`[data-testid="preview-start"]`) or `.first()` instead of an ambiguous text locator.
 - Respect the cookie invariant in `AGENTS.md`: isolated previews stay on `*-pv.sprockt.dev` only while `sprockt.dev` sets zero cookies.

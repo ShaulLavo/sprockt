@@ -22,7 +22,11 @@ export const workbenchTabsAndExplorerScenario: AgentScenario = {
     await page.locator(SELECTORS.explorer.tree).getByRole("button", { name: "App.tsx", exact: true }).focus();
     await page.keyboard.press("ControlOrMeta+f");
     await page.locator(SELECTORS.explorer.filterInput).fill("App.css");
-    await page.waitForTimeout(150);
+    await page.waitForFunction(() => {
+      const tree = document.querySelector('[data-testid="file-tree"]');
+      const text = tree?.textContent ?? "";
+      return text.includes("App.css") && !text.includes("package.json");
+    });
     await page.locator(SELECTORS.explorer.tree).getByRole("button", { name: "App.css", exact: true }).click();
     await page.waitForFunction(
       (sel) => document.querySelector(sel)?.getAttribute("aria-label") === "src/App.css",
@@ -39,9 +43,19 @@ export const workbenchTabsAndExplorerScenario: AgentScenario = {
       (sel) => document.querySelector(sel)?.getAttribute("aria-label")?.endsWith("notes.txt") ?? false,
       SELECTORS.editor.activeFile,
     );
+    const createdPath = await page.locator(SELECTORS.editor.activeFile).getAttribute("aria-label");
+    assertCondition(Boolean(createdPath), "Expected newly created file path in editor breadcrumb");
     await page.locator(SELECTORS.editor.root).click();
-    await page.keyboard.type("verified via agent:browser");
-    await page.waitForTimeout(1200);
+    const expectedText = "verified via agent:browser";
+    await page.keyboard.type(expectedText);
+    await page.waitForFunction(
+      async ({ path, text }) => {
+        const content = await globalThis.sprockt?.workspace?.files.read(path);
+        return content === text;
+      },
+      { path: createdPath ?? "notes.txt", text: expectedText },
+      { timeout: 10_000 },
+    );
     await evidence.capture(page, "created-and-typed-file");
 
     const tabCount = await page.locator(SELECTORS.editor.tab).count();

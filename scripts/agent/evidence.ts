@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConsoleMessage, Page, Request, Response } from "@playwright/test";
@@ -14,6 +14,7 @@ export interface ObservedProblems {
 export interface LayoutSnapshot {
   readonly url: string;
   readonly title: string;
+  readonly appSurface: "landing" | "workbench" | "import" | "unknown";
   readonly crossOriginIsolated: boolean;
   readonly colorScheme: string;
   readonly themeAttr: string | null;
@@ -65,6 +66,15 @@ async function snapshotLayout(page: Page): Promise<LayoutSnapshot> {
   return page.evaluate(() => {
     const docEl = document.documentElement;
     const body = document.body;
+    const appSurface: "landing" | "workbench" | "import" | "unknown" = document.querySelector(
+      '[data-testid="landing-page"]',
+    )
+      ? "landing"
+      : document.querySelector('[data-testid="workbench"]')
+        ? "workbench"
+        : document.querySelector('[data-testid="import-page"]')
+          ? "import"
+          : "unknown";
     const alerts = Array.from(document.querySelectorAll('[role="alert"]'))
       .filter((el) => {
         const rect = el.getBoundingClientRect();
@@ -87,6 +97,7 @@ async function snapshotLayout(page: Page): Promise<LayoutSnapshot> {
     return {
       url: location.href,
       title: document.title,
+      appSurface,
       crossOriginIsolated: Boolean(globalThis.crossOriginIsolated),
       colorScheme: getComputedStyle(docEl).colorScheme,
       themeAttr: docEl.getAttribute("data-theme"),
@@ -100,11 +111,22 @@ async function snapshotLayout(page: Page): Promise<LayoutSnapshot> {
   });
 }
 
+function recordResponse(observed: ObservedProblems, res: Response): void {
+  if (res.status() < 400) return;
+  observed.badResponses.push({ url: res.url(), status: res.status() });
+}
+
+function recordConsole(observed: ObservedProblems, msg: ConsoleMessage): void {
+  if (msg.type() === "error") observed.consoleErrors.push(msg.text());
+  else if (msg.type() === "warning") observed.consoleWarnings.push(msg.text());
+}
+
 export function createEvidenceSession(verb: string, label: string, customRoot?: string): EvidenceSession {
   const root = customRoot ?? process.env.SPROCKT_EVIDENCE_ROOT ?? join(tmpdir(), "sprockt-evidence");
+  mkdirSync(root, { recursive: true });
   const stamp = formatStamp(new Date());
-  const dir = join(root, `${stamp}-${sanitizeLabel(verb)}-${sanitizeLabel(label)}`);
-  mkdirSync(dir, { recursive: true });
+  const prefix = join(root, `${stamp}-${sanitizeLabel(verb)}-${sanitizeLabel(label)}-`);
+  const dir = mkdtempSync(prefix);
 
   const observed: ObservedProblems = {
     pageErrors: [],
@@ -117,13 +139,8 @@ export function createEvidenceSession(verb: string, label: string, customRoot?: 
   const notes: string[] = [];
 
   function attach(page: Page): void {
-    page.on("pageerror", (error: Error) => {
-      observed.pageErrors.push(error.message);
-    });
-    page.on("console", (msg: ConsoleMessage) => {
-      if (msg.type() === "error") observed.consoleErrors.push(msg.text());
-      else if (msg.type() === "warning") observed.consoleWarnings.push(msg.text());
-    });
+    page.on("pageerror", (error: Error) => observed.pageErrors.push(error.message));
+    page.on("console", (msg: ConsoleMessage) => recordConsole(observed, msg));
     page.on("requestfailed", (req: Request) => {
       observed.failedRequests.push({
         url: req.url(),
@@ -131,11 +148,7 @@ export function createEvidenceSession(verb: string, label: string, customRoot?: 
         reason: req.failure()?.errorText ?? "failed",
       });
     });
-    page.on("response", (res: Response) => {
-      if (res.status() >= 400) {
-        observed.badResponses.push({ url: res.url(), status: res.status() });
-      }
-    });
+    page.on("response", (res: Response) => recordResponse(observed, res));
   }
 
   async function capture(
