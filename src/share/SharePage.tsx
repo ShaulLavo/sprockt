@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { useEffect, useState } from "react";
 import { navigate } from "../app/router";
 import { browserWorkspaceDeps, openUnlessCancelled } from "../importer/browser-deps";
 import { COPY } from "../importer/copy";
@@ -32,11 +32,16 @@ async function openShare(fragment: string, signal: AbortSignal): Promise<string 
  * the same page (pasted into the address bar) cancels the previous attempt and starts over.
  */
 export function SharePage() {
-  const [error, setError] = createSignal<string>();
-  const [fragment, setFragment] = createSignal(location.hash);
-  const followHash = () => setFragment(location.hash);
-  addEventListener("hashchange", followHash);
-  onCleanup(() => removeEventListener("hashchange", followHash));
+  const [error, setError] = useState<string>();
+  const [fragment, setFragment] = useState(() => location.hash);
+
+  useEffect(() => {
+    const followHash = () => setFragment(location.hash);
+    // The hash may have changed between the first render and this listener.
+    followHash();
+    addEventListener("hashchange", followHash);
+    return () => removeEventListener("hashchange", followHash);
+  }, []);
 
   async function attempt(link: string, signal: AbortSignal): Promise<void> {
     try {
@@ -47,39 +52,35 @@ export function SharePage() {
     }
   }
 
-  createEffect(() => {
+  // One attempt per fragment: a new fragment aborts the previous one, as does leaving the page.
+  useEffect(() => {
     const controller = new AbortController();
     setError(undefined);
-    void attempt(fragment(), controller.signal);
-    onCleanup(() => controller.abort());
-  });
+    void attempt(fragment, controller.signal);
+    return () => controller.abort();
+  }, [fragment]);
 
   return (
-    <main class="importer" data-testid="share-page" data-stage={error() ? "failed" : "opening"}>
-      <section class="importer-card" aria-live="polite">
-        <h1 class="importer-title">{COPY.share.openingShare}</h1>
-        <Show
-          when={error()}
-          fallback={
-            <>
-              <p class="importer-stage">{COPY.importer.opening}</p>
-              <div class="importer-progress" role="progressbar" aria-label={COPY.importer.opening} />
-            </>
-          }
-        >
-          {(message) => (
-            <>
-              <p class="importer-error" role="alert" data-testid="share-error">
-                {message()}
-              </p>
-              <div class="importer-actions">
-                <button type="button" class="importer-button" onClick={() => navigate({ kind: "landing" })}>
-                  {COPY.importer.backHome}
-                </button>
-              </div>
-            </>
-          )}
-        </Show>
+    <main className="importer" data-testid="share-page" data-stage={error ? "failed" : "opening"}>
+      <section className="importer-card" aria-live="polite">
+        <h1 className="importer-title">{COPY.share.openingShare}</h1>
+        {error ? (
+          <>
+            <p className="importer-error" role="alert" data-testid="share-error">
+              {error}
+            </p>
+            <div className="importer-actions">
+              <button type="button" className="importer-button" onClick={() => navigate({ kind: "landing" })}>
+                {COPY.importer.backHome}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="importer-stage">{COPY.importer.opening}</p>
+            <div className="importer-progress" role="progressbar" aria-label={COPY.importer.opening} />
+          </>
+        )}
       </section>
     </main>
   );

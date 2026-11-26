@@ -1,4 +1,4 @@
-import { createSignal, Match, onCleanup, onMount, Switch } from "solid-js";
+import { useEffect, useRef, useState } from "react";
 import { navigate } from "../app/router";
 import type { Route } from "../app/routes";
 import { browserWorkspaceDeps, openUnlessCancelled, retryTarget } from "./browser-deps";
@@ -69,49 +69,56 @@ async function runImport(
 
 /** `/github/<owner>/<repo>[/tree/<ref>[/<subdir>]]`: imports into a new workspace, then opens it. */
 export function ImportPage(props: { route: GitHubRoute }) {
-  const [state, setState] = createSignal<ImportState>({ stage: "resolving" });
-  let controller: AbortController | undefined;
+  const [state, setState] = useState<ImportState>({ stage: "resolving" });
+  /** The attempt under way: Try again aborts it, and so does leaving the page. */
+  const controller = useRef<AbortController>(undefined);
 
   function start(): void {
-    controller?.abort();
+    controller.current?.abort();
     const current = new AbortController();
-    controller = current;
+    controller.current = current;
     setState({ stage: "resolving" });
     runImport(props.route, current.signal, setState).catch((error: unknown) => {
       if (!current.signal.aborted) setState({ stage: "failed", message: importErrorMessage(error) });
     });
   }
 
-  onMount(start);
-  onCleanup(() => controller?.abort());
+  // One import per mount, for the route it mounted with: an attempt that is still under way is
+  // never started a second time.
+  useEffect(() => {
+    if (!controller.current || controller.current.signal.aborted) start();
+    return () => controller.current?.abort();
+  }, []);
 
-  const name = () => `${props.route.owner}/${props.route.repo}`;
+  const name = `${props.route.owner}/${props.route.repo}`;
+  const text = stageText(state);
 
   return (
-    <main class="importer" data-testid="import-page" data-stage={state().stage}>
-      <section class="importer-card" aria-live="polite">
-        <h1 class="importer-title">{fill(COPY.importer.importing, { name: name() })}</h1>
-        <Switch>
-          <Match when={state().stage !== "failed"}>
-            <p class="importer-stage" data-testid="import-stage">
-              {stageText(state())}
+    <main className="importer" data-testid="import-page" data-stage={state.stage}>
+      <section className="importer-card" aria-live="polite">
+        <h1 className="importer-title">{fill(COPY.importer.importing, { name })}</h1>
+        {state.stage === "failed" ? (
+          <>
+            <p className="importer-error" role="alert" data-testid="import-error">
+              {text}
             </p>
-            <div class="importer-progress" role="progressbar" aria-label={stageText(state())} />
-          </Match>
-          <Match when={state().stage === "failed"}>
-            <p class="importer-error" role="alert" data-testid="import-error">
-              {stageText(state())}
-            </p>
-            <div class="importer-actions">
-              <button type="button" class="importer-button primary" onClick={start}>
+            <div className="importer-actions">
+              <button type="button" className="importer-button primary" onClick={start}>
                 {COPY.importer.tryAgain}
               </button>
-              <button type="button" class="importer-button" onClick={() => navigate({ kind: "landing" })}>
+              <button type="button" className="importer-button" onClick={() => navigate({ kind: "landing" })}>
                 {COPY.importer.backHome}
               </button>
             </div>
-          </Match>
-        </Switch>
+          </>
+        ) : (
+          <>
+            <p className="importer-stage" data-testid="import-stage">
+              {text}
+            </p>
+            <div className="importer-progress" role="progressbar" aria-label={text} />
+          </>
+        )}
       </section>
     </main>
   );
