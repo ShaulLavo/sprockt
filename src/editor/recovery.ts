@@ -238,7 +238,10 @@ export function createDraftKeeper(options: DraftKeeperOptions): DraftKeeper {
       const own = draftKey(workspace, path, tab);
       const others = picked.keys.filter((key) => key !== own);
       if (others.length < picked.keys.length && !ownVersions.has(path)) ownVersions.set(path, version);
+      // What an earlier load took here is not what is shown now: forget it, or settling this
+      // draft would delete drafts the person never saw.
       if (others.length > 0) taken.set(path, { keys: others, version });
+      else taken.delete(path);
       return picked.draft;
     },
     async recoverablePaths(match) {

@@ -214,3 +214,26 @@ test("recoverablePaths finds unclaimed matching drafts and skips live tabs", asy
     "\u0000unsaved:2/b.txt",
   ]);
 });
+
+test("showing this tab's own newer copy forgets what an earlier load took at that path", async () => {
+  const storage = memoryStorage();
+  const locks = memoryLocks();
+  let clock = 0;
+  const now = () => (clock += 1);
+  const gone = createDraftKeeper({ storage, workspace: "ws1", tab: "gone", locks, renamedPath, now });
+  gone.leave(drafts({ "a.txt": { text: "gone draft", baseText: "A" } }));
+  gone.release();
+
+  // An earlier load here took the gone tab's draft (and was then abandoned).
+  const mine = createDraftKeeper({ storage, workspace: "ws1", tab: "mine", locks, renamedPath, now });
+  expect((await mine.recover("a.txt", 1))?.text).toBe("gone draft");
+
+  // This tab later leaves its own, newer copy and shows that one.
+  mine.leave(drafts({ "a.txt": { text: "my draft", baseText: "A" } }), new Map([["a.txt", 5]]));
+  expect((await mine.recover("a.txt", 6))?.text).toBe("my draft");
+
+  // Settling the shown draft clears only this tab's copy.
+  mine.settled("a.txt", 6);
+  expect(storage.items.has(draftKey("ws1", "a.txt", "gone"))).toBe(true);
+  expect(storage.items.has(draftKey("ws1", "a.txt", "mine"))).toBe(false);
+});
