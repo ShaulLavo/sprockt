@@ -30,7 +30,7 @@ test("landing renders cleanly without loading workbench or Waffle runtime code a
 
   await page.goto("/");
   await expect(page.getByTestId("landing-page")).toBeVisible();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("An open-source IDE in your browser tab");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("An IDE that runs in a browser tab");
 
   // Wait for workspace discovery to finish so lazy imports (if any) have settled.
   await expect(page.getByTestId("workspace-empty")).toContainText("No saved workspaces yet.");
