@@ -136,6 +136,7 @@ export function Landing() {
   const [marqueePaused, setMarqueePaused] = useState(false);
   const [heroFxPaused, setHeroFxPaused] = useState(false);
   const [heroFxStill, setHeroFxStill] = useState(false);
+  const [heroFxAnimated, setHeroFxAnimated] = useState(false);
 
   const heroBackdropRef = useRef<HTMLDivElement>(null);
   const heroFxRef = useRef<GrainGradientController | null>(null);
@@ -183,11 +184,17 @@ export function Landing() {
   useEffect(() => {
     const host = heroBackdropRef.current;
     if (!host) return;
-    const ctrl = mountGrainGradient(host, { scheme: colorScheme(), seed: 11 });
+    const ctrl = mountGrainGradient(host, {
+      scheme: colorScheme(),
+      seed: 11,
+      onAnimatedChange: setHeroFxAnimated,
+    });
     heroFxRef.current = ctrl;
+    setHeroFxAnimated(ctrl.isAnimated());
     return () => {
       ctrl.destroy();
       heroFxRef.current = null;
+      setHeroFxAnimated(false);
     };
   }, []);
 
@@ -424,7 +431,7 @@ export function Landing() {
                   <HeroShowcase />
                 </div>
               </div>
-              {!heroFxStill ? (
+              {!heroFxStill && heroFxAnimated ? (
                 <button
                   type="button"
                   className={heroFxPaused ? "lp-fx-pause is-paused" : "lp-fx-pause"}

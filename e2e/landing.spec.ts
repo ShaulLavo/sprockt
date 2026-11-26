@@ -208,6 +208,42 @@ test("phone viewport has no horizontal overflow, exposes menu/theme controls, an
   await expect(menu).toBeVisible();
   await expect(menu).toContainText("Starters");
   await expect(menu).toContainText("GitHub");
+  await page.getByTestId("phone-menu-toggle").click();
+
+  // At phone width the Waffle hub pills stay inside the diagram frame and never overlap each other.
+  const hub = page.getByTestId("hub-diagram");
+  await hub.scrollIntoViewIfNeeded();
+  await expect.poll(() => hub.locator(".lp-dg-svg").count()).toBe(1);
+  const hubOverlap = await hub.evaluate((root) => {
+    const frame = root.getBoundingClientRect();
+    const boxes = Array.from(root.querySelectorAll<HTMLElement>(".lp-dg-node"), (el) => ({
+      label: el.textContent?.trim() ?? "",
+      rect: el.getBoundingClientRect(),
+    }));
+    const overlaps: string[] = [];
+    for (let i = 0; i < boxes.length; i++) {
+      const a = boxes[i]!;
+      if (
+        a.rect.left < frame.left - 1 ||
+        a.rect.right > frame.right + 1 ||
+        a.rect.top < frame.top - 1 ||
+        a.rect.bottom > frame.bottom + 1
+      ) {
+        overlaps.push(`out-of-bounds:${a.label}`);
+      }
+      for (let j = i + 1; j < boxes.length; j++) {
+        const b = boxes[j]!;
+        const xOverlap = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left);
+        const yOverlap = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
+        if (xOverlap > 0.5 && yOverlap > 0.5) {
+          overlaps.push(`${a.label}<>${b.label}`);
+        }
+      }
+    }
+    return { count: boxes.length, overlaps };
+  });
+  expect(hubOverlap.count).toBe(7);
+  expect(hubOverlap.overlaps).toEqual([]);
 });
 
 test("theme choice persists in the same tab across landing and workbench in both directions", async ({
@@ -311,18 +347,65 @@ test("desktop nav is dead-centered, showcases are inert, animations have WCAG pa
     ),
   );
 
-  // Hero grain-gradient and Waffle hub expose working WCAG pause controls on desktop.
-  const togglePause = async (testId: "hero-fx-pause" | "hub-pause") => {
-    const btn = page.getByTestId(testId);
-    await expect(btn).toBeVisible();
-    await expect(btn).toHaveAttribute("aria-pressed", "false");
-    await btn.click();
-    await expect(btn).toHaveAttribute("aria-pressed", "true");
-    await btn.click();
-    await expect(btn).toHaveAttribute("aria-pressed", "false");
-  };
-  await togglePause("hero-fx-pause");
-  await togglePause("hub-pause");
+  // Hero grain-gradient exposes a WCAG pause control when WebGL is live, and hides it on fallback.
+  const heroFallback = await page.locator(".lp-hero-backdrop").getAttribute("data-fx-fallback");
+  if (heroFallback === "1") {
+    await expect(page.getByTestId("hero-fx-pause")).toHaveCount(0);
+  } else {
+    const heroBtn = page.getByTestId("hero-fx-pause");
+    await expect(heroBtn).toBeVisible();
+    await expect(heroBtn).toHaveAttribute("aria-pressed", "false");
+    await heroBtn.click();
+    await expect(heroBtn).toHaveAttribute("aria-pressed", "true");
+    await heroBtn.click();
+    await expect(heroBtn).toHaveAttribute("aria-pressed", "false");
+  }
+
+  // Waffle hub diagram places its pause button outside role="img", freezes the current frame
+  // without resetting or advancing while paused, and resumes cleanly.
+  const hub = page.getByTestId("hub-diagram");
+  await hub.scrollIntoViewIfNeeded();
+  await expect(hub.locator('[role="img"]')).toHaveCount(1);
+  const hubBtn = page.getByTestId("hub-pause");
+  await expect(hubBtn).toBeVisible();
+  expect(await hubBtn.evaluate((el) => el.closest('[role="img"]') === null)).toBe(true);
+
+  const hubSnapshot = () =>
+    hub.evaluate((root) =>
+      Array.from(root.querySelectorAll<SVGLineElement>(".lp-dg-comet, .lp-dg-lit"), (el) => [
+        el.getAttribute("stroke-dashoffset") ?? "",
+        el.getAttribute("stroke-dasharray") ?? "",
+        el.style.opacity,
+      ]),
+    );
+  const waitFrames = (count: number) =>
+    page.evaluate(
+      (n) =>
+        new Promise<void>((resolve) => {
+          let remaining = n;
+          const step = () => {
+            if (--remaining <= 0) resolve();
+            else requestAnimationFrame(step);
+          };
+          requestAnimationFrame(step);
+        }),
+      count,
+    );
+
+  // Confirm animation advances while unpaused, then freeze and assert the frame stays fixed.
+  const runningBefore = await hubSnapshot();
+  await expect.poll(hubSnapshot).not.toEqual(runningBefore);
+
+  await hubBtn.click();
+  await expect(hubBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(hub).toHaveClass(/\bis-paused\b/);
+  const pausedImmediate = await hubSnapshot();
+  await waitFrames(10);
+  expect(await hubSnapshot()).toEqual(pausedImmediate);
+
+  await hubBtn.click();
+  await expect(hubBtn).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(hubSnapshot).not.toEqual(pausedImmediate);
 
   // All landing page <img> assets (browser logos, hub logos, template icons) load eagerly.
   const brokenImages = await page.evaluate(() =>

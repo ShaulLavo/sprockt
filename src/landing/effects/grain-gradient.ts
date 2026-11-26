@@ -225,6 +225,7 @@ function fallbackBackground(palette: EffectPalette, params: GrainGradientParams)
 }
 
 export interface GrainGradientController {
+  isAnimated(): boolean;
   pause(): void;
   resume(): void;
   setScheme(scheme: "light" | "dark"): void;
@@ -240,6 +241,7 @@ export function mountGrainGradient(
     readonly scheme: "light" | "dark";
     readonly seed?: number;
     readonly params?: Partial<GrainGradientParams>;
+    readonly onAnimatedChange?: (animated: boolean) => void;
   },
 ): GrainGradientController {
   const params: GrainGradientParams = { ...DEFAULT_PARAMS, ...options.params };
@@ -262,8 +264,10 @@ export function mountGrainGradient(
   let inView = true;
   let userPaused = false;
   let raf = 0;
+  let recoverTimer = 0;
   let lastTs = 0;
   let time = STILL_TIME;
+  let dprMQ: MediaQueryList | null = null;
 
   const reducedMQ = window.matchMedia("(prefers-reduced-motion: reduce)");
   const phoneMQ = window.matchMedia("(max-width: 639px)");
@@ -275,6 +279,7 @@ export function mountGrainGradient(
     teardownGL();
     host.style.background = fallbackBackground(palette, params);
     host.dataset.fxFallback = "1";
+    options.onAnimatedChange?.(false);
   }
 
   function teardownGL(): void {
@@ -340,7 +345,9 @@ export function mountGrainGradient(
       event.preventDefault();
       if (canvas !== nextCanvas) return;
       lost = true;
-      window.setTimeout(() => {
+      window.clearTimeout(recoverTimer);
+      recoverTimer = window.setTimeout(() => {
+        recoverTimer = 0;
         if (destroyed || canvas !== nextCanvas) return;
         teardownGL();
         lost = false;
@@ -353,6 +360,7 @@ export function mountGrainGradient(
     host.insertBefore(nextCanvas, host.firstChild);
     delete host.dataset.fxFallback;
     dirty = true;
+    options.onAnimatedChange?.(true);
     return true;
   }
 
@@ -447,6 +455,19 @@ export function mountGrainGradient(
   reducedMQ.addEventListener("change", onSync);
   phoneMQ.addEventListener("change", onSync);
 
+  const onDprChange = () => {
+    if (destroyed) return;
+    watchDpr();
+    fit();
+    if (!raf) draw(isStill() ? STILL_TIME : time);
+  };
+  function watchDpr(): void {
+    dprMQ?.removeEventListener("change", onDprChange);
+    dprMQ = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    dprMQ.addEventListener("change", onDprChange, { once: true });
+  }
+  watchDpr();
+
   if (initGL()) {
     fit();
     draw(isStill() ? STILL_TIME : time);
@@ -454,6 +475,9 @@ export function mountGrainGradient(
   sync();
 
   return {
+    isAnimated() {
+      return !destroyed && !fallback;
+    },
     pause() {
       userPaused = true;
       sync();
@@ -471,9 +495,12 @@ export function mountGrainGradient(
     },
     destroy() {
       destroyed = true;
+      window.clearTimeout(recoverTimer);
       if (raf) cancelAnimationFrame(raf);
       ro.disconnect();
       io.disconnect();
+      dprMQ?.removeEventListener("change", onDprChange);
+      dprMQ = null;
       document.removeEventListener("visibilitychange", onSync);
       reducedMQ.removeEventListener("change", onSync);
       phoneMQ.removeEventListener("change", onSync);

@@ -1965,6 +1965,11 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
   --dg-halo: 0.14;
 }
 
+.lp-dg-stage {
+  position: absolute;
+  inset: 0;
+}
+
 .lp-dg-svg {
   position: absolute;
   inset: 0;
@@ -2204,6 +2209,10 @@ html.m-enter:not(.m-enter-done) .lp-hero [data-enter-media] {
 .lp-dg.is-still .lp-dg-node-core::after {
   animation: none !important;
   opacity: 0 !important;
+}
+
+.lp-dg.is-paused .lp-dg-node-core::after {
+  animation-play-state: paused;
 }
 
 .lp-dg-ic {

@@ -154,18 +154,23 @@ function computeLayout(
   const center: NodeBox = { id: "waffle", x: cx, y: cy, w: coreSize.w, h: coreSize.h };
   const maxW = Math.max(40, ...spokeSizes.map((s) => s.w));
   const maxH = Math.max(28, ...spokeSizes.map((s) => s.h));
+  // Use the flat-side staggered hex (top/bottom vertices at -90°/+90°) whenever the horizontal
+  // midline would crowd or overlap the core pill with the widest spoke ("Ghostty WebGPU").
+  const stagger = compact || width / 2 - pad - maxW < coreSize.w / 2 + 18;
   const rx = Math.max(54, width / 2 - pad - maxW / 2);
   const ry = Math.max(54, height / 2 - pad - maxH / 2);
   const n = SPOKES.length;
-  const a0 = -Math.PI / 2 + Math.PI / n;
+  const a0 = stagger ? -Math.PI / 2 : -Math.PI / 2 + Math.PI / n;
 
   const spokes: NodeBox[] = SPOKES.map((spoke, i) => {
     const angle = a0 + (2 * Math.PI * i) / n;
     const sz = spokeSizes[i] ?? { w: 100, h: 32 };
+    const x = clamp(cx + rx * Math.cos(angle), pad + sz.w / 2, width - pad - sz.w / 2);
+    const y = clamp(cy + ry * Math.sin(angle), pad + sz.h / 2, height - pad - sz.h / 2);
     return {
       id: spoke.id,
-      x: cx + rx * Math.cos(angle),
-      y: cy + ry * Math.sin(angle),
+      x,
+      y,
       w: sz.w,
       h: sz.h,
     };
@@ -272,6 +277,9 @@ export function HubDiagram(props: { readonly scheme: "light" | "dark" }) {
   const [userPaused, setUserPaused] = useState(false);
   const [isStill, setIsStill] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
+  const clockRef = useRef<number | null>(null);
+  const userPausedRef = useRef(userPaused);
+  const syncRef = useRef<(() => void) | null>(null);
 
   // Track reduced-motion & phone breakpoint.
   useEffect(() => {
@@ -336,11 +344,11 @@ export function HubDiagram(props: { readonly scheme: "light" | "dark" }) {
     const host = rootRef.current;
     if (!host || !layout) return;
     const { edges, events, cycle, stillT } = layout;
+    if (clockRef.current === null) clockRef.current = stillT;
 
     let visible = true;
     let raf = 0;
     let last = 0;
-    let t = stillT;
 
     const renderFrame = (lt: number) => {
       const st = computeState(edges, events, lt);
@@ -403,15 +411,15 @@ export function HubDiagram(props: { readonly scheme: "light" | "dark" }) {
       });
     };
 
-    const canRun = () => !isStill && !userPaused && visible && !document.hidden;
+    const canRun = () => !isStill && !userPausedRef.current && visible && !document.hidden;
 
     const tick = (now: number) => {
       raf = 0;
       if (!canRun()) return;
       const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
       last = now;
-      t += dt;
-      renderFrame(t % cycle);
+      clockRef.current = (clockRef.current ?? stillT) + dt;
+      renderFrame(clockRef.current % cycle);
       raf = requestAnimationFrame(tick);
     };
 
@@ -426,9 +434,10 @@ export function HubDiagram(props: { readonly scheme: "light" | "dark" }) {
           cancelAnimationFrame(raf);
           raf = 0;
         }
-        renderFrame(isStill ? stillT : t % cycle);
+        renderFrame(isStill ? stillT : (clockRef.current ?? stillT) % cycle);
       }
     };
+    syncRef.current = sync;
 
     const io = new IntersectionObserver(
       (entries) => {
@@ -444,225 +453,231 @@ export function HubDiagram(props: { readonly scheme: "light" | "dark" }) {
     const onVis = () => sync();
     document.addEventListener("visibilitychange", onVis);
 
-    renderFrame(isStill ? stillT : t % cycle);
+    renderFrame(isStill ? stillT : (clockRef.current ?? stillT) % cycle);
     sync();
 
     return () => {
+      syncRef.current = null;
       if (raf) cancelAnimationFrame(raf);
       io.disconnect();
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [layout, isStill, userPaused]);
+  }, [layout, isStill]);
+
+  useEffect(() => {
+    userPausedRef.current = userPaused;
+    syncRef.current?.();
+  }, [userPaused]);
 
   const showPause = !isStill;
+  const rootClass = [
+    "lp-dg",
+    isStill ? "is-still" : "",
+    userPaused ? "is-paused" : "",
+    focusId ? "is-focus" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <figure
       ref={rootRef}
-      className={
-        isStill
-          ? focusId
-            ? "lp-dg is-still is-focus"
-            : "lp-dg is-still"
-          : focusId
-            ? "lp-dg is-focus"
-            : "lp-dg"
-      }
+      className={rootClass}
       data-ground={props.scheme}
       data-tier={compact ? "c" : "n"}
-      role="img"
-      aria-label={LANDING_COPY.hoodDiagram}
       data-testid="hub-diagram"
       onPointerLeave={() => setFocusId(null)}
     >
-      {layout ? (
-        <svg
-          className="lp-dg-svg"
-          width={layout.width}
-          height={layout.height}
-          viewBox={`0 0 ${layout.width} ${layout.height}`}
-          aria-hidden="true"
-          focusable="false"
-        >
-          <defs>
-            <radialGradient id={`${uid}-halo`}>
-              <stop offset="0" className="lp-dg-halo-in" />
-              <stop offset="1" className="lp-dg-halo-out" />
-            </radialGradient>
-            {layout.edges.map((edge, i) => (
-              <linearGradient
-                key={edge.id}
-                ref={(el) => {
-                  gradRefs.current[i] = el;
-                }}
-                id={`${uid}-g-${i}`}
-                gradientUnits="userSpaceOnUse"
-                x1={edge.a.x}
-                y1={edge.a.y}
-                x2={edge.b.x}
-                y2={edge.b.y}
-              >
-                <stop offset="0" className="lp-dg-c0" />
-                <stop offset="0.55" className="lp-dg-c1" />
-                <stop offset="1" className="lp-dg-c2" />
-              </linearGradient>
-            ))}
-          </defs>
-
-          <g className="lp-dg-rings">
-            {layout.rings.map((ring) => (
-              <circle
-                key={ring.r}
-                cx={layout.center.x}
-                cy={layout.center.y}
-                r={ring.r}
-                strokeOpacity={ring.opacity}
-              />
-            ))}
-          </g>
-
-          <circle
-            className="lp-dg-halo"
-            cx={layout.center.x}
-            cy={layout.center.y}
-            r={layout.haloRadius}
-            fill={`url(#${uid}-halo)`}
-          />
-
-          <g className="lp-dg-edges">
-            {layout.edges.map((edge, i) => {
-              const edgeFocused = focusId === "waffle" || focusId === edge.to;
-              return (
-                <g
+      <div className="lp-dg-stage" role="img" aria-label={LANDING_COPY.hoodDiagram}>
+        {layout ? (
+          <svg
+            className="lp-dg-svg"
+            width={layout.width}
+            height={layout.height}
+            viewBox={`0 0 ${layout.width} ${layout.height}`}
+            aria-hidden="true"
+            focusable="false"
+          >
+            <defs>
+              <radialGradient id={`${uid}-halo`}>
+                <stop offset="0" className="lp-dg-halo-in" />
+                <stop offset="1" className="lp-dg-halo-out" />
+              </radialGradient>
+              {layout.edges.map((edge, i) => (
+                <linearGradient
                   key={edge.id}
                   ref={(el) => {
-                    edgeGRefs.current[i] = el;
+                    gradRefs.current[i] = el;
                   }}
-                  className={edgeFocused ? "lp-dg-e is-focus" : "lp-dg-e"}
+                  id={`${uid}-g-${i}`}
+                  gradientUnits="userSpaceOnUse"
+                  x1={edge.a.x}
+                  y1={edge.a.y}
+                  x2={edge.b.x}
+                  y2={edge.b.y}
                 >
-                  <line className="lp-dg-line" x1={edge.a.x} y1={edge.a.y} x2={edge.b.x} y2={edge.b.y} />
-                  <line
+                  <stop offset="0" className="lp-dg-c0" />
+                  <stop offset="0.55" className="lp-dg-c1" />
+                  <stop offset="1" className="lp-dg-c2" />
+                </linearGradient>
+              ))}
+            </defs>
+
+            <g className="lp-dg-rings">
+              {layout.rings.map((ring) => (
+                <circle
+                  key={ring.r}
+                  cx={layout.center.x}
+                  cy={layout.center.y}
+                  r={ring.r}
+                  strokeOpacity={ring.opacity}
+                />
+              ))}
+            </g>
+
+            <circle
+              className="lp-dg-halo"
+              cx={layout.center.x}
+              cy={layout.center.y}
+              r={layout.haloRadius}
+              fill={`url(#${uid}-halo)`}
+            />
+
+            <g className="lp-dg-edges">
+              {layout.edges.map((edge, i) => {
+                const edgeFocused = focusId === "waffle" || focusId === edge.to;
+                return (
+                  <g
+                    key={edge.id}
                     ref={(el) => {
-                      litRefs.current[i] = el;
+                      edgeGRefs.current[i] = el;
                     }}
-                    className="lp-dg-lit"
-                    x1={edge.a.x}
-                    y1={edge.a.y}
-                    x2={edge.b.x}
-                    y2={edge.b.y}
-                  />
-                  <line
-                    ref={(el) => {
-                      glowRefs.current[i] = el;
-                    }}
-                    className="lp-dg-glow"
-                    x1={edge.a.x}
-                    y1={edge.a.y}
-                    x2={edge.b.x}
-                    y2={edge.b.y}
-                    stroke={`url(#${uid}-g-${i})`}
-                  />
-                  <line
-                    ref={(el) => {
-                      cometRefs.current[i] = el;
-                    }}
-                    className="lp-dg-comet"
-                    x1={edge.a.x}
-                    y1={edge.a.y}
-                    x2={edge.b.x}
-                    y2={edge.b.y}
-                    stroke={`url(#${uid}-g-${i})`}
-                  />
-                  <circle
-                    ref={(el) => {
-                      haloRefs.current[i] = el;
-                    }}
-                    className="lp-dg-spark-halo"
-                    r={compact ? 5 : 6}
-                    cx={-50}
-                    cy={-50}
-                  />
-                  <circle
-                    ref={(el) => {
-                      sparkRefs.current[i] = el;
-                    }}
-                    className="lp-dg-spark"
-                    r={2.1}
-                    cx={-50}
-                    cy={-50}
-                  />
+                    className={edgeFocused ? "lp-dg-e is-focus" : "lp-dg-e"}
+                  >
+                    <line className="lp-dg-line" x1={edge.a.x} y1={edge.a.y} x2={edge.b.x} y2={edge.b.y} />
+                    <line
+                      ref={(el) => {
+                        litRefs.current[i] = el;
+                      }}
+                      className="lp-dg-lit"
+                      x1={edge.a.x}
+                      y1={edge.a.y}
+                      x2={edge.b.x}
+                      y2={edge.b.y}
+                    />
+                    <line
+                      ref={(el) => {
+                        glowRefs.current[i] = el;
+                      }}
+                      className="lp-dg-glow"
+                      x1={edge.a.x}
+                      y1={edge.a.y}
+                      x2={edge.b.x}
+                      y2={edge.b.y}
+                      stroke={`url(#${uid}-g-${i})`}
+                    />
+                    <line
+                      ref={(el) => {
+                        cometRefs.current[i] = el;
+                      }}
+                      className="lp-dg-comet"
+                      x1={edge.a.x}
+                      y1={edge.a.y}
+                      x2={edge.b.x}
+                      y2={edge.b.y}
+                      stroke={`url(#${uid}-g-${i})`}
+                    />
+                    <circle
+                      ref={(el) => {
+                        haloRefs.current[i] = el;
+                      }}
+                      className="lp-dg-spark-halo"
+                      r={compact ? 5 : 6}
+                      cx={-50}
+                      cy={-50}
+                    />
+                    <circle
+                      ref={(el) => {
+                        sparkRefs.current[i] = el;
+                      }}
+                      className="lp-dg-spark"
+                      r={2.1}
+                      cx={-50}
+                      cy={-50}
+                    />
+                  </g>
+                );
+              })}
+            </g>
+
+            <g className="lp-dg-ports">
+              {layout.edges.map((edge) => (
+                <g key={edge.id}>
+                  <circle className="lp-dg-port" cx={edge.a.x} cy={edge.a.y} r={2} />
+                  <circle className="lp-dg-port" cx={edge.b.x} cy={edge.b.y} r={2} />
                 </g>
-              );
-            })}
-          </g>
+              ))}
+            </g>
+          </svg>
+        ) : null}
 
-          <g className="lp-dg-ports">
-            {layout.edges.map((edge) => (
-              <g key={edge.id}>
-                <circle className="lp-dg-port" cx={edge.a.x} cy={edge.a.y} r={2} />
-                <circle className="lp-dg-port" cx={edge.b.x} cy={edge.b.y} r={2} />
-              </g>
-            ))}
-          </g>
-        </svg>
-      ) : null}
-
-      <div className="lp-dg-nodes" aria-hidden="true">
-        {SPOKES.map((spoke, i) => {
-          const box = layout?.spokes[i];
-          const nodeFocused = focusId === "waffle" || focusId === spoke.id;
-          return (
-            <div
-              key={spoke.id}
-              ref={(el) => {
-                spokeRefs.current[i] = el;
-              }}
-              className={nodeFocused ? "lp-dg-node lp-dg-node-pill is-focus" : "lp-dg-node lp-dg-node-pill"}
-              style={
-                box
-                  ? {
-                      left: `${Math.round(box.x - box.w / 2)}px`,
-                      top: `${Math.round(box.y - box.h / 2)}px`,
-                    }
-                  : { opacity: 0 }
-              }
-              onPointerEnter={(ev) => {
-                if (ev.pointerType !== "touch") setFocusId(spoke.id);
-              }}
-            >
-              <span className="lp-dg-ic">
-                {spoke.logo ? (
-                  <img src={spoke.logo} alt="" width="18" height="18" />
-                ) : (
-                  <Icon name={spoke.icon ?? "box"} />
-                )}
-              </span>
-              <span className="lp-dg-label">{spoke.label}</span>
-            </div>
-          );
-        })}
-
-        <div
-          ref={coreRef}
-          className={
-            focusId ? "lp-dg-node lp-dg-node-core is-ink is-focus" : "lp-dg-node lp-dg-node-core is-ink"
-          }
-          style={
-            layout
-              ? {
-                  left: `${Math.round(layout.center.x - layout.center.w / 2)}px`,
-                  top: `${Math.round(layout.center.y - layout.center.h / 2)}px`,
+        <div className="lp-dg-nodes" aria-hidden="true">
+          {SPOKES.map((spoke, i) => {
+            const box = layout?.spokes[i];
+            const nodeFocused = focusId === "waffle" || focusId === spoke.id;
+            return (
+              <div
+                key={spoke.id}
+                ref={(el) => {
+                  spokeRefs.current[i] = el;
+                }}
+                className={nodeFocused ? "lp-dg-node lp-dg-node-pill is-focus" : "lp-dg-node lp-dg-node-pill"}
+                style={
+                  box
+                    ? {
+                        left: `${Math.round(box.x - box.w / 2)}px`,
+                        top: `${Math.round(box.y - box.h / 2)}px`,
+                      }
+                    : { opacity: 0 }
                 }
-              : { opacity: 0 }
-          }
-          onPointerEnter={(ev) => {
-            if (ev.pointerType !== "touch") setFocusId("waffle");
-          }}
-        >
-          <span className="lp-dg-ic">
-            <Icon name="cpu" />
-          </span>
-          <span className="lp-dg-label">Waffle</span>
+                onPointerEnter={(ev) => {
+                  if (ev.pointerType !== "touch") setFocusId(spoke.id);
+                }}
+              >
+                <span className="lp-dg-ic">
+                  {spoke.logo ? (
+                    <img src={spoke.logo} alt="" width="18" height="18" />
+                  ) : (
+                    <Icon name={spoke.icon ?? "box"} />
+                  )}
+                </span>
+                <span className="lp-dg-label">{spoke.label}</span>
+              </div>
+            );
+          })}
+
+          <div
+            ref={coreRef}
+            className={
+              focusId ? "lp-dg-node lp-dg-node-core is-ink is-focus" : "lp-dg-node lp-dg-node-core is-ink"
+            }
+            style={
+              layout
+                ? {
+                    left: `${Math.round(layout.center.x - layout.center.w / 2)}px`,
+                    top: `${Math.round(layout.center.y - layout.center.h / 2)}px`,
+                  }
+                : { opacity: 0 }
+            }
+            onPointerEnter={(ev) => {
+              if (ev.pointerType !== "touch") setFocusId("waffle");
+            }}
+          >
+            <span className="lp-dg-ic">
+              <Icon name="cpu" />
+            </span>
+            <span className="lp-dg-label">Waffle</span>
+          </div>
         </div>
       </div>
 
