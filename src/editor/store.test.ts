@@ -789,3 +789,48 @@ test("a reopened replacement never takes over an older pending write at its path
   expect(first.disk.get("target/a.txt")).toBe("replacement");
   recovered.dispose();
 });
+
+test("saving the older of two drafts split from one path keeps the newer draft's recovery copy", async () => {
+  const first = setUpStore({ "target/a.txt": "old", "src/a.txt": "replacement" });
+  first.store.setAutosave(false);
+  first.holdFlushes();
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+
+  // A save whose flush is held, then different shell text reopened at the path and edited.
+  type(first.store, "target/a.txt", "unflushed ");
+  await first.store.save("target/a.txt");
+  first.store.close("target/a.txt");
+  first.disk.set("target/a.txt", "shell");
+  first.store.open("target/a.txt");
+  await first.store.buffers.load("target/a.txt");
+  type(first.store, "target/a.txt", "newer ");
+  await first.store.pageHidden();
+
+  // An unopened file moves onto the path: the pending write and the newer edits split apart.
+  first.disk.set("target/a.txt", "replacement");
+  first.disk.delete("src/a.txt");
+  first.emit({ moves: [{ from: "src/a.txt", to: "target/a.txt", operation: 1 }] });
+  await tick();
+  const asides = first.store.tabs().filter((tab) => isDetached(tab.path));
+  expect(asides).toHaveLength(2);
+  const textOf = (path: string) => first.store.buffers.get(path)?.session.materializeFullText();
+  const older = asides.find((tab) => textOf(tab.path) === "unflushed old")?.path;
+  const newer = asides.find((tab) => textOf(tab.path) === "newer shell")?.path;
+  expect(older).toBeDefined();
+  expect(newer).toBeDefined();
+
+  // Save only the older one, durably, then the page ends without another snapshot.
+  first.releaseFlushes();
+  await first.store.save(older as string);
+  await tick();
+  await tick();
+  first.dispose();
+
+  const recovered = setUpStore({}, first.disk);
+  await tick();
+  await tick();
+  const buffer = await recovered.store.buffers.load(newer as string);
+  expect(buffer?.session.materializeFullText()).toBe("newer shell");
+  recovered.dispose();
+});

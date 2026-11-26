@@ -216,14 +216,22 @@ export function createEditorStore(workspace: EditorWorkspace): EditorStore {
     }
     let current = active();
     for (const aside of displaced) {
+      // Drafts recovered from other tabs belong to the buffer that showed them, so they follow it.
+      if (!aside.buffer) {
+        commit(tabs().concat([{ path: aside.to, preview: false }]), current);
+        continue;
+      }
       drafts.renamed(aside.from, aside.to);
-      if (aside.buffer) current = retarget(aside.from, aside.to, current);
-      else commit(tabs().concat([{ path: aside.to, preview: false }]), current);
+      current = retarget(aside.from, aside.to, current);
     }
     drafts.renamed(from, to);
     const moved = displayed();
     commit(renameTabs(tabs(), from, to), current === undefined ? undefined : renamedPath(current, from, to));
     if (moved !== undefined) setDisplayed(renamedPath(moved, from, to));
+    // One path can split into two detached drafts (a pending write and newer edits), and this
+    // tab's single recovery copy at that path belongs to only one of them. A fresh snapshot gives
+    // each its own copy, with its own version, before anything can settle the wrong one.
+    if (displaced.length > 0) leaveUnsaved();
   }
 
   /** The last move operation applied; FileService numbers them in the order they happened. */
