@@ -12,6 +12,7 @@ const K = "sk";
 const S = "ss";
 const F = "sf";
 const N = "sn";
+const T = "st";
 const H = "sf lp-hw-hov";
 
 const HERO_LINES: readonly Line[] = [
@@ -61,6 +62,47 @@ const HERO_LINES: readonly Line[] = [
       ["", "  "],
       [K, "return"],
       ["", " ("],
+    ],
+  ],
+  [
+    7,
+    [
+      ["", "    <"],
+      [T, "main"],
+      ["", " className="],
+      [S, '"app"'],
+      ["", ">"],
+    ],
+  ],
+  [
+    8,
+    [
+      ["", "      <"],
+      [T, "h1"],
+      ["", ">Sprockt</"],
+      [T, "h1"],
+      ["", ">"],
+    ],
+  ],
+  [
+    9,
+    [
+      ["", "      <"],
+      [T, "button"],
+      ["", " onClick={() => "],
+      [F, "setCount"],
+      ["", "(c => c + "],
+      [N, "1"],
+      ["", ")}>"],
+    ],
+  ],
+  [10, [["", "        count is {count}"]]],
+  [
+    11,
+    [
+      ["", "      </"],
+      [T, "button"],
+      ["", ">"],
     ],
   ],
 ];

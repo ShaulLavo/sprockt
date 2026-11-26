@@ -447,7 +447,7 @@ test("desktop nav is dead-centered, showcases are inert, animations have WCAG pa
     }),
   );
 
-  // All 4 feature cards render distinct painterly-landscape backdrops.
+  // All 4 feature cards render unified architectural drafting-plate backdrops.
   await Promise.all(
     (["check", "complete", "terminal", "store"] as const).map((tone) =>
       expect(page.getByTestId(`feature-card-${tone}`)).toBeVisible(),

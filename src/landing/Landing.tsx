@@ -461,7 +461,7 @@ export function Landing() {
                 <Muted lead={LANDING_COPY.featuresTitle} rest={LANDING_COPY.featuresTitleMuted} />
               </h2>
             </div>
-            <FeatureCards scheme={scheme} />
+            <FeatureCards />
           </div>
         </section>
 
@@ -519,7 +519,7 @@ export function Landing() {
                     ShaulLavo/bash-web
                   </a>
                 </p>
-                <div className="lp-start-log lp-ground lp-ground-grain">
+                <div className="lp-start-log">
                   <WorkspaceSwitcher
                     workspaces={workspaces}
                     loading={loadingWorkspaces}
@@ -561,7 +561,7 @@ export function Landing() {
                   ))}
                 </ul>
               </div>
-              <div className="lp-phone-frame lp-ground lp-ground-grain">
+              <div className="lp-phone-frame">
                 <PhoneShowcase />
               </div>
             </div>
@@ -613,7 +613,7 @@ export function Landing() {
                 </ul>
                 <p className="lp-hood-limits">{LANDING_COPY.hoodLimits}</p>
               </div>
-              <div className="lp-hood-frame lp-ground lp-ground-grain">
+              <div className="lp-hood-frame lp-plate">
                 <HubDiagram scheme={scheme} />
               </div>
             </div>
