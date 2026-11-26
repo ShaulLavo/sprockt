@@ -11,7 +11,6 @@ import {
 } from "@playwright/test";
 import {
   CLI_USAGE,
-  isProductionUrl,
   parseCliArgs,
   VIEWPORT_PRESETS,
   type BrowserEngine,
@@ -19,6 +18,7 @@ import {
   type ViewportSpec,
 } from "./args.ts";
 import { createEvidenceSession, type EvidenceSession, type LayoutSnapshot } from "./evidence.ts";
+import { assertPageNotProduction, installProductionGuard, verifyNonProductionUrl } from "./guard.ts";
 import { findScenario, SCENARIOS } from "./scenarios/index.ts";
 import { startThrowawayPreviewServer, type PreviewServerHandle } from "./server.ts";
 
@@ -30,7 +30,7 @@ function pickBrowserType(engine: BrowserEngine): BrowserType {
   return chromium;
 }
 
-async function resolveTarget(args: ParsedArgs): Promise<PreviewServerHandle> {
+async function resolveTarget(args: ParsedArgs, signal: AbortSignal): Promise<PreviewServerHandle> {
   if (args.url) {
     return {
       url: args.url,
@@ -40,20 +40,7 @@ async function resolveTarget(args: ParsedArgs): Promise<PreviewServerHandle> {
       stop: async () => {},
     };
   }
-  return startThrowawayPreviewServer(REPO_ROOT);
-}
-
-async function verifyNonProductionUrl(url: string, scenarioName: string): Promise<void> {
-  if (isProductionUrl(url)) {
-    throw new Error(`Refusing writing scenario "${scenarioName}" against production URL ${url}.`);
-  }
-  const response = await fetch(url, { method: "HEAD", redirect: "follow" }).catch(() => null);
-  const finalUrl = response?.url;
-  if (finalUrl && isProductionUrl(finalUrl)) {
-    throw new Error(
-      `Refusing writing scenario "${scenarioName}": ${url} redirects to production URL ${finalUrl}.`,
-    );
-  }
+  return startThrowawayPreviewServer(REPO_ROOT, signal);
 }
 
 function collectDoctorProblems(
@@ -102,31 +89,17 @@ async function captureFailureQuietly(evidence: EvidenceSession, page: Page | und
   }
 }
 
-function assertPageNotProduction(page: Page, scenarioName: string): void {
-  if (isProductionUrl(page.url())) {
-    throw new Error(
-      `Refusing writing scenario "${scenarioName}": navigated to production URL ${page.url()}.`,
-    );
+async function closeContextQuietly(
+  context: BrowserContext | undefined,
+  evidence: EvidenceSession,
+): Promise<void> {
+  if (!context) return;
+  try {
+    await context.close();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    evidence.notes.push(`Context close error: ${message}`);
   }
-}
-
-async function installProductionGuard(context: BrowserContext): Promise<void> {
-  await context.route("**/*", async (route) => {
-    const req = route.request();
-    const isMainDoc = req.isNavigationRequest() && req.frame().parentFrame() === null;
-    if (isMainDoc && isProductionUrl(req.url())) {
-      await route.abort("blockedbyclient");
-      return;
-    }
-    await route.continue();
-  });
-  context.on("page", (p) => {
-    p.on("framenavigated", (frame) => {
-      if (frame === p.mainFrame() && isProductionUrl(frame.url())) {
-        void p.close().catch(() => {});
-      }
-    });
-  });
 }
 
 async function runLook(args: ParsedArgs, browser: Browser, target: PreviewServerHandle): Promise<boolean> {
@@ -158,7 +131,7 @@ async function runLook(args: ParsedArgs, browser: Browser, target: PreviewServer
     evidence.notes.push(`Look failed: ${message}`);
     await captureFailureQuietly(evidence, page);
   } finally {
-    await context?.close();
+    await closeContextQuietly(context, evidence);
   }
   if (target.owned) evidence.writeText("server.log", target.logs());
   const summary = evidence.finalize(status, {
@@ -219,7 +192,7 @@ async function runScenario(
     evidence.notes.push(`Scenario failed: ${message}`);
     await captureFailureQuietly(evidence, page);
   } finally {
-    await context?.close();
+    await closeContextQuietly(context, evidence);
   }
   if (evidence.observed.pageErrors.length > 0 || evidence.observed.consoleErrors.length > 0) {
     status = "FAIL";
@@ -261,26 +234,42 @@ async function main(): Promise<void> {
     return;
   }
 
-  let target: PreviewServerHandle | undefined;
-  let browser: Browser | undefined;
+  const controller = new AbortController();
+  let targetPromise: Promise<PreviewServerHandle> | undefined;
+  let browserPromise: Promise<Browser> | undefined;
   let cleanupPromise: Promise<void> | undefined;
-  const cleanup = () => {
+
+  const cleanup = (): Promise<void> => {
+    controller.abort();
     cleanupPromise ??= (async () => {
+      const [resolvedBrowser, resolvedTarget] = await Promise.allSettled([
+        browserPromise ?? Promise.resolve(undefined),
+        targetPromise ?? Promise.resolve(undefined),
+      ]);
+      const activeBrowser = resolvedBrowser.status === "fulfilled" ? resolvedBrowser.value : undefined;
+      const activeTarget = resolvedTarget.status === "fulfilled" ? resolvedTarget.value : undefined;
       await Promise.allSettled([
-        browser ? browser.close() : Promise.resolve(),
-        target ? target.stop() : Promise.resolve(),
+        activeBrowser ? activeBrowser.close() : Promise.resolve(),
+        activeTarget ? activeTarget.stop() : Promise.resolve(),
       ]);
     })();
     return cleanupPromise;
   };
+
+  let exiting = false;
   const onSignal = (signal: NodeJS.Signals) => {
-    void cleanup().finally(() => process.exit(signal === "SIGINT" ? 130 : 143));
+    const code = signal === "SIGINT" ? 130 : 143;
+    if (exiting) return;
+    exiting = true;
+    void cleanup().finally(() => process.exit(code));
   };
-  process.once("SIGINT", onSignal);
-  process.once("SIGTERM", onSignal);
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
   try {
-    target = await resolveTarget(args);
-    browser = await pickBrowserType(args.engine).launch({ headless: !args.headed });
+    targetPromise = resolveTarget(args, controller.signal);
+    const target = await targetPromise;
+    browserPromise = pickBrowserType(args.engine).launch({ headless: !args.headed });
+    const browser = await browserPromise;
     const ok =
       args.verb === "look" ? await runLook(args, browser, target) : await runScenario(args, browser, target);
     if (!ok) process.exitCode = 1;

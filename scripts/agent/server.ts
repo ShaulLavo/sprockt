@@ -43,7 +43,11 @@ async function pollServerReady(
   child: ChildProcess,
   logs: string[],
   deadline: number,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) {
+    throw new Error("Preview server startup aborted by signal");
+  }
   if (child.exitCode !== null) {
     throw new Error(`vite preview exited early (${child.exitCode}):\n${logs.join("")}`);
   }
@@ -57,11 +61,16 @@ async function pollServerReady(
     throw new Error(`Timed out waiting for ${url} to answer:\n${logs.join("")}`);
   }
   await new Promise((done) => setTimeout(done, 150));
-  return pollServerReady(url, child, logs, deadline);
+  return pollServerReady(url, child, logs, deadline, signal);
 }
 
-function waitForServerReady(url: string, child: ChildProcess, logs: string[]): Promise<void> {
-  return pollServerReady(url, child, logs, Date.now() + 30_000);
+function waitForServerReady(
+  url: string,
+  child: ChildProcess,
+  logs: string[],
+  signal?: AbortSignal,
+): Promise<void> {
+  return pollServerReady(url, child, logs, Date.now() + 30_000, signal);
 }
 
 function sendSignalSafe(child: ChildProcess, signal: NodeJS.Signals): void {
@@ -93,14 +102,19 @@ function stopChildProcess(child: ChildProcess): Promise<void> {
  * Starts a private throwaway `vite preview` server serving `dist/` on a free loopback port.
  * Never kills unrelated servers or touches user state.
  */
-export async function startThrowawayPreviewServer(repoRoot: string): Promise<PreviewServerHandle> {
+export async function startThrowawayPreviewServer(
+  repoRoot: string,
+  signal?: AbortSignal,
+): Promise<PreviewServerHandle> {
   const distIndex = resolve(repoRoot, "dist", "index.html");
   if (!existsSync(distIndex)) {
     throw new Error(
       `Built app not found at ${distIndex}. Build first with:\n  VITE_SPROCKT_PREVIEWS=mounted bun run build`,
     );
   }
+  if (signal?.aborted) throw new Error("Preview server startup aborted by signal");
   const port = await allocateLoopbackPort();
+  if (signal?.aborted) throw new Error("Preview server startup aborted by signal");
   const url = `http://127.0.0.1:${port}`;
   const chunks: string[] = [];
   const child = spawn(
@@ -114,7 +128,7 @@ export async function startThrowawayPreviewServer(repoRoot: string): Promise<Pre
   child.stdout?.on("data", (buf: Buffer) => chunks.push(buf.toString("utf8")));
   child.stderr?.on("data", (buf: Buffer) => chunks.push(buf.toString("utf8")));
   try {
-    await waitForServerReady(url, child, chunks);
+    await waitForServerReady(url, child, chunks, signal);
   } catch (error) {
     await stopChildProcess(child);
     throw error;

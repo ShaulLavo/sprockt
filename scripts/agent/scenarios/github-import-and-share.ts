@@ -1,4 +1,4 @@
-import { isProductionUrl } from "../args.ts";
+import { assertPageNotProduction, installProductionGuard, verifyNonProductionUrl } from "../guard.ts";
 import { SELECTORS } from "../selectors.ts";
 import { assertCondition, waitForWorkbenchReady, type AgentScenario } from "./types.ts";
 
@@ -40,10 +40,7 @@ export const githubImportAndShareScenario: AgentScenario = {
       copiedUrl.includes("/s#share="),
       `Expected Share button to produce a /s#share= URL, got "${copiedUrl.slice(0, 80)}"`,
     );
-    assertCondition(
-      !isProductionUrl(copiedUrl),
-      `Refusing to open share URL pointing at production host: ${copiedUrl}`,
-    );
+    await verifyNonProductionUrl(copiedUrl, "github-import-and-share");
     await evidence.capture(page, "share-link-copied");
 
     const restoredCtx = await browser.newContext({
@@ -51,13 +48,11 @@ export const githubImportAndShareScenario: AgentScenario = {
       colorScheme: args.scheme,
     });
     try {
+      await installProductionGuard(restoredCtx);
       const restoredPage = await restoredCtx.newPage();
       evidence.attach(restoredPage);
       await restoredPage.goto(copiedUrl, { waitUntil: "networkidle" });
-      assertCondition(
-        !isProductionUrl(restoredPage.url()),
-        `Share restore redirected to production host: ${restoredPage.url()}`,
-      );
+      assertPageNotProduction(restoredPage, "github-import-and-share");
       await restoredPage.waitForURL(/\/w\/[a-z0-9]+$/, { timeout: 30_000 });
       await waitForWorkbenchReady(restoredPage, args.timeoutMs);
       const restoredContent = await restoredPage.evaluate(() =>
