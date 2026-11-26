@@ -1,6 +1,5 @@
 // Circuit's stroke icons (the mock's icon paths), inlined so the explorer needs no sprite or font.
 // Stroke width and colour come from CSS (`.ico`).
-import { For, Show } from "solid-js";
 import type { FileIcon } from "./file-types";
 
 const FILE = "M13.5 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5z";
@@ -91,25 +90,25 @@ const GLYPHS = {
 export type IconName = keyof typeof GLYPHS;
 
 export function Icon(props: { name: IconName; class?: string }) {
-  const glyph = (): Glyph => GLYPHS[props.name];
+  const glyph: Glyph = GLYPHS[props.name];
   return (
-    <svg class={`ico ${props.class ?? ""}`} viewBox="0 0 24 24" aria-hidden="true">
-      <For each={glyph().paths}>{(d) => <path d={d} />}</For>
-      <Show when={glyph().label}>
-        {(label) => (
-          <text
-            x="12"
-            y="15.6"
-            text-anchor="middle"
-            font-size="8.6"
-            font-weight="700"
-            fill="currentColor"
-            stroke="none"
-          >
-            {label()}
-          </text>
-        )}
-      </Show>
+    <svg className={`ico ${props.class ?? ""}`} viewBox="0 0 24 24" aria-hidden="true">
+      {glyph.paths.map((d) => (
+        <path key={d} d={d} />
+      ))}
+      {glyph.label ? (
+        <text
+          x="12"
+          y="15.6"
+          textAnchor="middle"
+          fontSize="8.6"
+          fontWeight="700"
+          fill="currentColor"
+          stroke="none"
+        >
+          {glyph.label}
+        </text>
+      ) : null}
     </svg>
   );
 }

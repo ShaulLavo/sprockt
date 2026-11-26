@@ -1,4 +1,5 @@
-import { For, onCleanup, onMount } from "solid-js";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef } from "react";
+import type React from "react";
 
 export interface MenuItem {
   readonly label: string;
@@ -21,37 +22,40 @@ export function ContextMenu(props: {
   /** `escaped`: closed with the keyboard, so focus should go back where it was. */
   onClose(escaped?: boolean): void;
 }) {
-  let element: HTMLDivElement | undefined;
+  const ref = useRef<HTMLDivElement>(null);
 
-  const buttons = () => Array.from(element?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+  const buttons = () => Array.from(ref.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
 
-  onMount(() => {
+  useLayoutEffect(() => {
     // Keep the menu inside the window: flip it back from the right and bottom edges.
+    const element = ref.current;
     if (!element) return;
     const box = element.getBoundingClientRect();
     element.style.left = `${Math.max(4, Math.min(props.x, window.innerWidth - box.width - 4))}px`;
     element.style.top = `${Math.max(4, Math.min(props.y, window.innerHeight - box.height - 4))}px`;
     buttons()[0]?.focus();
-  });
+    // Placed once, where it opened; a menu at another point is a new menu.
+  }, []);
 
   // Not `props.onClose` itself as a listener: it would be passed the event as `escaped`.
-  const dismiss = () => props.onClose();
-  const dismissOutside = (event: Event) => {
-    if (!element?.contains(event.target as Node)) dismiss();
-  };
+  const dismiss = useEffectEvent(() => props.onClose());
 
-  onMount(() => {
+  useEffect(() => {
+    const dismissOutside = (event: Event) => {
+      if (!ref.current?.contains(event.target as Node)) dismiss();
+    };
+    const dismissAll = () => dismiss();
     document.addEventListener("pointerdown", dismissOutside, true);
-    window.addEventListener("blur", dismiss);
-    window.addEventListener("resize", dismiss);
-  });
-  onCleanup(() => {
-    document.removeEventListener("pointerdown", dismissOutside, true);
-    window.removeEventListener("blur", dismiss);
-    window.removeEventListener("resize", dismiss);
-  });
+    window.addEventListener("blur", dismissAll);
+    window.addEventListener("resize", dismissAll);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside, true);
+      window.removeEventListener("blur", dismissAll);
+      window.removeEventListener("resize", dismissAll);
+    };
+  }, []);
 
-  function onKeyDown(event: KeyboardEvent): void {
+  function onKeyDown(event: React.KeyboardEvent): void {
     const all = buttons();
     const index = all.indexOf(document.activeElement as HTMLButtonElement);
     if (event.key === "Escape" || event.key === "Tab") {
@@ -67,8 +71,8 @@ export function ContextMenu(props: {
 
   return (
     <div
-      ref={(node) => (element = node)}
-      class="tree-menu"
+      ref={ref}
+      className="tree-menu"
       role="menu"
       aria-label={props.label}
       data-testid="tree-menu"
@@ -76,24 +80,22 @@ export function ContextMenu(props: {
       onKeyDown={onKeyDown}
       onContextMenu={(event) => event.preventDefault()}
     >
-      <For each={props.items}>
-        {(item) => (
-          <button
-            type="button"
-            role="menuitem"
-            class="tree-menu-item"
-            classList={{ danger: item.danger }}
-            data-testid={item.testId}
-            onClick={() => {
-              props.onClose();
-              item.run();
-            }}
-          >
-            <span>{item.label}</span>
-            {item.hint ? <kbd>{item.hint}</kbd> : null}
-          </button>
-        )}
-      </For>
+      {props.items.map((item) => (
+        <button
+          key={item.testId}
+          type="button"
+          role="menuitem"
+          className={item.danger ? "tree-menu-item danger" : "tree-menu-item"}
+          data-testid={item.testId}
+          onClick={() => {
+            props.onClose();
+            item.run();
+          }}
+        >
+          <span>{item.label}</span>
+          {item.hint ? <kbd>{item.hint}</kbd> : null}
+        </button>
+      ))}
     </div>
   );
 }

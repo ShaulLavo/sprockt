@@ -1,7 +1,9 @@
 // One terminal tab's screen: starts its shell on mount, stops it on unmount, and follows the
 // workbench theme. Hidden tabs keep running; Ghostty refits a tab when it is shown again.
-import { createEffect, createSignal, on, onCleanup, onMount, Show, type Accessor } from "solid-js";
-import { useWorkspace } from "../workspace/session";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useValue } from "../lib/react";
+import type { Accessor } from "../lib/reactive";
+import { useWorkspace, type WorkspaceSession } from "../workspace/session";
 import { ui } from "./copy";
 import { startTerminal, type TerminalHandle } from "./session";
 import { terminalAppearance } from "./theme";
@@ -19,80 +21,117 @@ export interface TerminalViewProps {
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-export function TerminalView(props: TerminalViewProps) {
-  const { terminals, runtime, shell } = useWorkspace();
-  const [failure, setFailure] = createSignal<string>();
+interface MountOptions {
+  readonly id: string;
+  readonly label: string;
+  readonly scheme: "light" | "dark";
+  readonly session: Pick<WorkspaceSession, "terminals" | "runtime" | "shell">;
+  /** Holds the started shell for the theme effect. */
+  readonly handle: { current: TerminalHandle | undefined };
+  setFailure(text: string): void;
+  onAttached(id: string): void;
+}
+
+/**
+ * Starts one shell on `host` and returns what stops it. Stopping is idempotent: the first call
+ * aborts a start still in flight, detaches the shell from the store and frees its screen.
+ */
+function mountTerminal(host: HTMLDivElement, options: MountOptions): () => void {
+  const { id, session } = options;
+  const { terminals } = session;
   const closing = new AbortController();
-  let host: HTMLDivElement | undefined;
-  let handle: TerminalHandle | undefined;
 
   /** Failures after the tab closed are the closing itself, not something to show. */
   function report(error: unknown): void {
     if (closing.signal.aborted) return;
-    setFailure(message(error));
+    options.setFailure(message(error));
   }
 
   function runStartupCommand(): void {
-    if (!handle || terminals.stateOf(props.id) !== "ready") return;
-    const command = terminals.takeCommand(props.id);
+    const handle = options.handle.current;
+    if (!handle || terminals.stateOf(id) !== "ready") return;
+    const command = terminals.takeCommand(id);
     if (command) handle.submit(command).catch(report);
   }
 
-  async function open(element: HTMLDivElement): Promise<void> {
+  async function open(): Promise<void> {
     const started = await startTerminal({
-      host: element,
-      runtime,
-      shell,
-      label: props.label,
-      appearance: terminalAppearance(element, props.scheme()),
+      host,
+      runtime: session.runtime,
+      shell: session.shell,
+      label: options.label,
+      appearance: terminalAppearance(host, options.scheme),
       signal: closing.signal,
       onState(state, detail) {
         if (closing.signal.aborted) return;
-        terminals.setState(props.id, state);
-        if (state === "failed") setFailure(detail ?? ui.shellStopped);
+        terminals.setState(id, state);
+        if (state === "failed") options.setFailure(detail ?? ui.shellStopped);
         runStartupCommand();
       },
-      onTitle: (title) => terminals.setShellTitle(props.id, title),
+      onTitle: (title) => terminals.setShellTitle(id, title),
     });
     if (closing.signal.aborted) return started.dispose();
-    handle = started;
-    terminals.attach(props.id, started);
+    options.handle.current = started;
+    terminals.attach(id, started);
     runStartupCommand();
-    props.onAttached(props.id);
+    options.onAttached(id);
   }
 
-  onMount(() => {
-    if (!host) return;
-    open(host).catch((error: unknown) => {
-      if (closing.signal.aborted) return;
-      terminals.setState(props.id, "failed");
-      report(error);
-    });
+  open().catch((error: unknown) => {
+    if (closing.signal.aborted) return;
+    terminals.setState(id, "failed");
+    report(error);
   });
 
-  createEffect(
-    on(props.scheme, (scheme) => host && handle?.setAppearance(terminalAppearance(host, scheme)), {
-      defer: true,
-    }),
-  );
-
-  onCleanup(() => {
+  return () => {
+    if (closing.signal.aborted) return;
     closing.abort(new Error("The terminal tab was closed."));
-    terminals.attach(props.id, undefined);
+    terminals.attach(id, undefined);
+    const handle = options.handle.current;
+    options.handle.current = undefined;
     // The view is freed even when the shell fails to stop, and a closed tab has nowhere to
     // show that failure.
     handle?.dispose().catch(() => {});
-  });
+  };
+}
+
+export function TerminalView(props: TerminalViewProps) {
+  const session = useWorkspace();
+  const { terminals } = session;
+  const [failure, setFailure] = useState<string>();
+  const host = useRef<HTMLDivElement>(null);
+  const handle = useRef<TerminalHandle | undefined>(undefined);
+  const scheme = useValue(props.scheme);
+  const attached = useEffectEvent((id: string) => props.onAttached(id));
+
+  // One shell per mount. The id is the view's key, and the label and scheme are only the starting
+  // values: renames and theme changes reach a running shell another way.
+  useEffect(() => {
+    if (!host.current) return;
+    return mountTerminal(host.current, {
+      id: props.id,
+      label: props.label,
+      scheme: props.scheme(),
+      session,
+      handle,
+      setFailure,
+      onAttached: attached,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (host.current) handle.current?.setAppearance(terminalAppearance(host.current, scheme));
+  }, [scheme]);
 
   return (
     <div
-      class="term-view"
+      className="term-view"
       data-position={props.position}
       data-terminal={props.id}
       onPointerDown={() => terminals.select(props.id)}
     >
-      <div class="term-canvas" ref={(element) => (host = element)} />
-      <Show when={failure()}>{(text) => <p class="pane-error term-failure">{text()}</p>}</Show>
+      <div className="term-canvas" ref={host} />
+      {failure ? <p className="pane-error term-failure">{failure}</p> : null}
     </div>
   );
 }
