@@ -232,6 +232,9 @@ export function createRoot<T>(fn: (dispose: () => void) => T): T {
   batchDepth++;
   try {
     return fn(() => scope.dispose());
+  } catch (error) {
+    scope.dispose();
+    throw error;
   } finally {
     owner = outerOwner;
     listener = outerListener;

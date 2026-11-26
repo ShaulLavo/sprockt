@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode, type SyntheticEvent } from "react";
 import { onCleanup } from "../lib/reactive";
-import { useScope, useValue } from "../lib/react";
+import { Scope, useValue } from "../lib/react";
 import { createDevServer, type DevServer } from "../tasks/dev-server";
 import { plainOutput } from "../tasks/output";
 import { RESTART_LIMIT } from "../tasks/restarting";
@@ -61,14 +61,10 @@ function TaskOutput(props: { devServer: DevServer }) {
   );
 }
 
-export function PreviewPane() {
+function PreviewPaneBody(props: { devServer: DevServer }) {
+  const { devServer } = props;
   const workspace = useWorkspace();
   const { preview } = workspace;
-  const devServer = useScope(() => {
-    const server = createDevServer(workspace);
-    onCleanup(() => void server.dispose());
-    return server;
-  });
   const { status, owned, ended, restartHeld, startable, remotePorts } = useValue(() => ({
     status: devServer.status(),
     owned: devServer.owned(),
@@ -401,5 +397,20 @@ export function PreviewPane() {
         ) : null}
       </div>
     </section>
+  );
+}
+
+export function PreviewPane() {
+  const workspace = useWorkspace();
+  return (
+    <Scope
+      create={() => {
+        const server = createDevServer(workspace);
+        onCleanup(() => void server.dispose());
+        return server;
+      }}
+    >
+      {(devServer) => <PreviewPaneBody devServer={devServer} />}
+    </Scope>
   );
 }

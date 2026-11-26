@@ -12,6 +12,7 @@ import { debugHandle } from "../app/debug";
 import { useScope, useValue } from "../lib/react";
 import { untrack } from "../lib/reactive";
 import { STATUS_SLOT, type StatusItems } from "../workbench/slots";
+import { colorScheme } from "../workbench/theme";
 import { PROJECT_ROOT, projectRelative } from "../workspace/paths";
 import { useWorkspace } from "../workspace/session";
 import { isDetached, type Buffer } from "./buffers";
@@ -183,7 +184,8 @@ class SessionBinding {
 export function EditorView(props: { store: EditorStore; onEditor?: (editor: Editor) => void }) {
   const { store, onEditor } = props;
   const workspace = useWorkspace();
-  const scheme = useValue(useScope(createColorScheme));
+  const schemeAccessor = useScope(createColorScheme);
+  const scheme = useValue(() => schemeAccessor?.() ?? colorScheme());
   const narrow = useNarrow();
   const writable = useValue(workspace.files.writable);
   const active = useValue(store.active);

@@ -160,6 +160,9 @@ function createSaveCommands(store: EditorStore, registry: Commands): Accessor<re
   return commands;
 }
 
+const EMPTY_COMMANDS: Accessor<readonly PaletteCommand[]> = () => [];
+const EMPTY_RECENT: Accessor<readonly string[]> = () => [];
+
 export function EditorPane(props: { store: EditorStore }) {
   const { store } = props;
   const workspace = useWorkspace();
@@ -167,11 +170,13 @@ export function EditorPane(props: { store: EditorStore }) {
   const editor = useRef<Editor>(undefined);
   useEditorShortcuts(store, pane, editor);
   useAutosaveTriggers(store);
-  const { commands, recent } = useScope(() => ({
+  const scope = useScope(() => ({
     commands: createSaveCommands(store, workspace.commands),
     // Open tabs, as one list that changes only when the tabs do.
     recent: createMemo(() => store.tabs().map((tab) => tab.path)),
   }));
+  const commands = scope?.commands ?? EMPTY_COMMANDS;
+  const recent = scope?.recent ?? EMPTY_RECENT;
   // A detached draft shows the path it came from.
   const displayedName = useValue(() => {
     const path = store.displayed();

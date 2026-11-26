@@ -1,9 +1,9 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, type RefObject } from "react";
 import type React from "react";
 import type { EditorStore } from "../editor/store";
 import { baseName, parentOf, type NameProblem } from "../files/paths";
 import { isHeavyName } from "../files/tree";
-import { useScope, useValue } from "../lib/react";
+import { Scope, useValue } from "../lib/react";
 import { createEffect, on, onCleanup } from "../lib/reactive";
 import { workspaceName } from "../workspace/hint";
 import { useWorkspace, type WorkspaceSession } from "../workspace/session";
@@ -504,12 +504,14 @@ function createTree(store: EditorStore, workspace: WorkspaceSession, pickers: Pi
   return { state, actions, pick, uploaded, openMenu, closeMenu, confirmation };
 }
 
-export function Explorer(props: { store: EditorStore }) {
+function ExplorerBody(props: {
+  tree: ReturnType<typeof createTree>;
+  filePicker: RefObject<HTMLInputElement | null>;
+  folderPicker: RefObject<HTMLInputElement | null>;
+}) {
+  const { tree, filePicker, folderPicker } = props;
   const workspace = useWorkspace();
   const list = useRef<HTMLUListElement>(null);
-  const filePicker = useRef<HTMLInputElement>(null);
-  const folderPicker = useRef<HTMLInputElement>(null);
-  const tree = useScope(() => createTree(props.store, workspace, { file: filePicker, folder: folderPicker }));
   const { state, actions } = tree;
   const view = useValue(() => ({
     rows: state.rows(),
@@ -676,5 +678,16 @@ export function Explorer(props: { store: EditorStore }) {
         />
       ) : null}
     </section>
+  );
+}
+
+export function Explorer(props: { store: EditorStore }) {
+  const workspace = useWorkspace();
+  const filePicker = useRef<HTMLInputElement>(null);
+  const folderPicker = useRef<HTMLInputElement>(null);
+  return (
+    <Scope create={() => createTree(props.store, workspace, { file: filePicker, folder: folderPicker })}>
+      {(tree) => <ExplorerBody tree={tree} filePicker={filePicker} folderPicker={folderPicker} />}
+    </Scope>
   );
 }

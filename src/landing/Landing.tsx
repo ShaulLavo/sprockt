@@ -6,7 +6,7 @@ import jetbrainsMonoLatinUrl from "@fontsource-variable/jetbrains-mono/files/jet
 import schibstedLatinUrl from "@fontsource-variable/schibsted-grotesk/files/schibsted-grotesk-latin-wght-normal.woff2?url";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { navigate } from "../app/router";
-import { useScope, useValue } from "../lib/react";
+import { useValue } from "../lib/react";
 import { routePath, type Route } from "../app/routes";
 import {
   BLANK_TEMPLATE_SUMMARY,
@@ -17,7 +17,7 @@ import {
 import { SprocktLogo } from "../ui/SprocktLogo";
 import { applyStoredTheme, colorScheme, setColorScheme } from "../workbench/theme";
 import { LANDING_COPY } from "./copy";
-import { createDemo, type Demo } from "./demo";
+import { createDemoController } from "./demo";
 import { FeatureCards } from "./FeatureCards";
 import { parseGithubInput } from "./github-input";
 import { HubDiagram } from "./HubDiagram";
@@ -124,14 +124,8 @@ function Muted(props: { readonly lead: string; readonly rest: string }) {
   );
 }
 
-/** Applies the stored theme before the first paint, then runs the shared workbench demo. */
-function createLandingDemo(): Demo {
-  applyStoredTheme();
-  return createDemo();
-}
-
 export function Landing() {
-  const demo = useScope(createLandingDemo);
+  const [demo] = useState(() => createDemoController());
   const scheme = useValue(colorScheme);
   const [repoInput, setRepoInput] = useState("");
   const [repoError, setRepoError] = useState<string | undefined>();
@@ -162,6 +156,12 @@ export function Landing() {
   const hasRecent = workspaces.length > 0 || (loadingWorkspaces && expectsWorkspaces);
   const nextTheme = scheme === "dark" ? "light" : "dark";
   const nextThemeLabel = nextTheme === "light" ? LANDING_COPY.navThemeLight : LANDING_COPY.navThemeDark;
+
+  useEffect(() => {
+    applyStoredTheme();
+    demo.start();
+    return () => demo.dispose();
+  }, [demo]);
 
   useEffect(() => {
     function refreshOnVisible(): void {

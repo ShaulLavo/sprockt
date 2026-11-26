@@ -14,7 +14,7 @@ import { EditorPane } from "../editor/EditorPane";
 import { createEditorStore, type EditorStore } from "../editor/store";
 import { Explorer } from "../explorer/Explorer";
 import { attachAfterImport } from "../importer/after-import";
-import { useScope, useValue } from "../lib/react";
+import { Scope, useValue } from "../lib/react";
 import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from "../lib/reactive";
 import { PreviewPane } from "../preview/PreviewPane";
 import { workspaceIsOpenElsewhere, type BootStage } from "../runtime/boot";
@@ -250,9 +250,8 @@ function PhoneTabs(props: { frame: FrameState; editor: EditorStore }) {
   return <PaneSwitcher pane={pane} onPick={props.frame.setPane} dirty={dirty} />;
 }
 
-function Panes(props: { session: WorkspaceSession; frame: FrameState }) {
-  const { session, frame } = props;
-  const panes = useScope(() => createPanes(session, frame));
+function PanesBody(props: { session: WorkspaceSession; frame: FrameState; panes: PaneScope }) {
+  const { session, frame, panes } = props;
   const phone = useValue(frame.phone);
   const pane = useValue(frame.pane);
   const terminalOpen = useValue(frame.terminalOpen);
@@ -343,7 +342,14 @@ const Opened = memo(function Opened(props: {
 
   if (failure !== undefined) return <BootProgress workspaceId={id} stage={stage} error={failure} />;
   if (!session) return <BootProgress workspaceId={id} stage={stage} />;
-  return <Panes session={session} frame={frame} />;
+  return (
+    <Scope
+      create={() => createPanes(session, frame)}
+      fallback={<BootProgress workspaceId={id} stage={stage} />}
+    >
+      {(panes) => <PanesBody session={session} frame={frame} panes={panes} />}
+    </Scope>
+  );
 });
 
 /** Whether the workspace is open in another tab, asked once this page's last one is gone. */
@@ -411,9 +417,8 @@ function Frame(props: { frame: FrameState; children: ReactNode }) {
 
 const goHome = () => navigate({ kind: "landing" });
 
-export function Workbench(props: { id: string }) {
-  const { id } = props;
-  const frame = useScope(() => createFrame(id));
+function WorkbenchBody(props: { id: string; frame: FrameState }) {
+  const { id, frame } = props;
   const stage = useValue(frame.stage);
   const [session, setSession] = useState<WorkspaceSession>();
   // The quick answer, before anything is started. It can be out of date a moment later, so it
@@ -479,5 +484,13 @@ export function Workbench(props: { id: string }) {
         />
       ) : null}
     </Frame>
+  );
+}
+
+export function Workbench(props: { id: string }) {
+  return (
+    <Scope create={() => createFrame(props.id)}>
+      {(frame) => <WorkbenchBody id={props.id} frame={frame} />}
+    </Scope>
   );
 }
