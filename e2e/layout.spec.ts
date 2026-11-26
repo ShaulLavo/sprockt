@@ -97,7 +97,9 @@ test("the theme toggle sticks across a reload", async ({ page }) => {
       (event) => {
         // Only the first: the app adds its own stylesheets once it runs.
         const first = snapshots.every((snap) => snap.when !== "stylesheet");
-        if (first && event.target instanceof HTMLLinkElement) take("stylesheet");
+        if (first && event.target instanceof HTMLLinkElement && event.target.rel === "stylesheet") {
+          take("stylesheet");
+        }
       },
       true,
     );
