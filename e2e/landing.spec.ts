@@ -161,6 +161,38 @@ test("workspace switcher lists without runtime JS, preserves other tab on busy r
   await expect(page.getByTestId("workspace-empty")).toBeVisible();
 });
 
+interface Box {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+function findHubOverlaps(
+  frame: Box,
+  boxes: readonly { readonly label: string; readonly rect: Box }[],
+): string[] {
+  const issues: string[] = [];
+  for (const a of boxes) {
+    const out =
+      a.rect.left < frame.left - 1 ||
+      a.rect.right > frame.right + 1 ||
+      a.rect.top < frame.top - 1 ||
+      a.rect.bottom > frame.bottom + 1;
+    if (out) issues.push(`out-of-bounds:${a.label}`);
+  }
+  for (let i = 0; i < boxes.length; i++) {
+    const a = boxes[i]!;
+    for (let j = i + 1; j < boxes.length; j++) {
+      const b = boxes[j]!;
+      const xOverlap = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left);
+      const yOverlap = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
+      if (xOverlap > 0.5 && yOverlap > 0.5) issues.push(`${a.label}<>${b.label}`);
+    }
+  }
+  return issues;
+}
+
 async function assertPhoneLayout(page: Page, expectedAttr: "dark" | "light" | null): Promise<void> {
   if (expectedAttr === null) {
     await expect(page.locator("html")).not.toHaveAttribute("data-theme", /./);
@@ -214,36 +246,21 @@ test("phone viewport has no horizontal overflow, exposes menu/theme controls, an
   const hub = page.getByTestId("hub-diagram");
   await hub.scrollIntoViewIfNeeded();
   await expect.poll(() => hub.locator(".lp-dg-svg").count()).toBe(1);
-  const hubOverlap = await hub.evaluate((root) => {
-    const frame = root.getBoundingClientRect();
-    const boxes = Array.from(root.querySelectorAll<HTMLElement>(".lp-dg-node"), (el) => ({
-      label: el.textContent?.trim() ?? "",
-      rect: el.getBoundingClientRect(),
-    }));
-    const overlaps: string[] = [];
-    for (let i = 0; i < boxes.length; i++) {
-      const a = boxes[i]!;
-      if (
-        a.rect.left < frame.left - 1 ||
-        a.rect.right > frame.right + 1 ||
-        a.rect.top < frame.top - 1 ||
-        a.rect.bottom > frame.bottom + 1
-      ) {
-        overlaps.push(`out-of-bounds:${a.label}`);
-      }
-      for (let j = i + 1; j < boxes.length; j++) {
-        const b = boxes[j]!;
-        const xOverlap = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left);
-        const yOverlap = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
-        if (xOverlap > 0.5 && yOverlap > 0.5) {
-          overlaps.push(`${a.label}<>${b.label}`);
-        }
-      }
-    }
-    return { count: boxes.length, overlaps };
+  const hubGeometry = await hub.evaluate((root) => {
+    const f = root.getBoundingClientRect();
+    return {
+      frame: { left: f.left, right: f.right, top: f.top, bottom: f.bottom },
+      boxes: Array.from(root.querySelectorAll<HTMLElement>(".lp-dg-node"), (el) => {
+        const r = el.getBoundingClientRect();
+        return {
+          label: el.textContent?.trim() ?? "",
+          rect: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
+        };
+      }),
+    };
   });
-  expect(hubOverlap.count).toBe(7);
-  expect(hubOverlap.overlaps).toEqual([]);
+  expect(hubGeometry.boxes.length).toBe(7);
+  expect(findHubOverlaps(hubGeometry.frame, hubGeometry.boxes)).toEqual([]);
 });
 
 test("theme choice persists in the same tab across landing and workbench in both directions", async ({
@@ -362,7 +379,7 @@ test("desktop nav is dead-centered, showcases are inert, animations have WCAG pa
   }
 
   // Waffle hub diagram places its pause button outside role="img", freezes the current frame
-  // without resetting or advancing while paused, and resumes cleanly.
+  // without resetting or advancing while paused, and resumes cleanly from that exact frame.
   const hub = page.getByTestId("hub-diagram");
   await hub.scrollIntoViewIfNeeded();
   await expect(hub.locator('[role="img"]')).toHaveCount(1);
@@ -378,34 +395,100 @@ test("desktop nav is dead-centered, showcases are inert, animations have WCAG pa
         el.style.opacity,
       ]),
     );
-  const waitFrames = (count: number) =>
-    page.evaluate(
-      (n) =>
-        new Promise<void>((resolve) => {
-          let remaining = n;
-          const step = () => {
-            if (--remaining <= 0) resolve();
-            else requestAnimationFrame(step);
-          };
-          requestAnimationFrame(step);
-        }),
-      count,
-    );
 
-  // Confirm animation advances while unpaused, then freeze and assert the frame stays fixed.
-  const runningBefore = await hubSnapshot();
-  await expect.poll(hubSnapshot).not.toEqual(runningBefore);
+  // Let the hub advance off its initial still frame before testing pause/resume continuity.
+  const initialFrame = await hubSnapshot();
+  await expect.poll(hubSnapshot).not.toEqual(initialFrame);
 
-  await hubBtn.click();
-  await expect(hubBtn).toHaveAttribute("aria-pressed", "true");
-  await expect(hub).toHaveClass(/\bis-paused\b/);
-  const pausedImmediate = await hubSnapshot();
-  await waitFrames(10);
-  expect(await hubSnapshot()).toEqual(pausedImmediate);
+  // Gate requestAnimationFrame around both clicks so we observe the exact frame across pause
+  // and on the first resumed tick (proving neither pause nor resume resets the clock).
+  const pauseResumeCheck = await hub.evaluate(async (root) => {
+    const readFrame = () =>
+      Array.from(root.querySelectorAll<SVGLineElement>(".lp-dg-comet, .lp-dg-lit"), (el) => [
+        el.getAttribute("stroke-dashoffset") ?? "",
+        el.getAttribute("stroke-dasharray") ?? "",
+        el.style.opacity,
+      ]);
+    const btn = root.querySelector<HTMLButtonElement>('[data-testid="hub-pause"]');
+    if (!btn) throw new Error("Missing hub-pause button");
 
-  await hubBtn.click();
-  await expect(hubBtn).toHaveAttribute("aria-pressed", "false");
-  await expect.poll(hubSnapshot).not.toEqual(pausedImmediate);
+    const origRaf = window.requestAnimationFrame.bind(window);
+    const origCancel = window.cancelAnimationFrame.bind(window);
+    const waitRealFrames = (count: number) =>
+      new Promise<void>((resolve) => {
+        let remaining = count;
+        const step = () => {
+          if (--remaining <= 0) resolve();
+          else origRaf(step);
+        };
+        origRaf(step);
+      });
+    let nextId = 1;
+    const held = new Map<number, FrameRequestCallback>();
+    const holdRaf = () => {
+      window.requestAnimationFrame = (cb) => {
+        const id = nextId++;
+        held.set(id, cb);
+        return id;
+      };
+      window.cancelAnimationFrame = (id) => {
+        if (!held.delete(id)) origCancel(id);
+      };
+    };
+    const releaseRaf = () => {
+      window.requestAnimationFrame = origRaf;
+      window.cancelAnimationFrame = origCancel;
+      const queued = Array.from(held.values());
+      held.clear();
+      for (const cb of queued) origRaf(cb);
+    };
+
+    try {
+      holdRaf();
+      const beforePause = readFrame();
+      btn.click();
+      await new Promise<void>((resolve) => setTimeout(resolve, 40));
+      const afterPause = readFrame();
+      const pausedPressed = btn.getAttribute("aria-pressed");
+      const hasPausedClass = root.classList.contains("is-paused");
+
+      releaseRaf();
+      await waitRealFrames(10);
+      const laterWhilePaused = readFrame();
+
+      holdRaf();
+      btn.click();
+      await new Promise<void>((resolve) => setTimeout(resolve, 40));
+      const resumedPressed = btn.getAttribute("aria-pressed");
+      const firstTickCbs = Array.from(held.values());
+      held.clear();
+      const now = performance.now();
+      for (const cb of firstTickCbs) cb(now);
+      const firstResumed = readFrame();
+
+      releaseRaf();
+      return {
+        beforePause,
+        afterPause,
+        laterWhilePaused,
+        firstResumed,
+        pausedPressed,
+        hasPausedClass,
+        resumedPressed,
+      };
+    } finally {
+      releaseRaf();
+    }
+  });
+
+  expect(pauseResumeCheck.pausedPressed).toBe("true");
+  expect(pauseResumeCheck.hasPausedClass).toBe(true);
+  expect(pauseResumeCheck.beforePause).not.toEqual(initialFrame);
+  expect(pauseResumeCheck.afterPause).toEqual(pauseResumeCheck.beforePause);
+  expect(pauseResumeCheck.laterWhilePaused).toEqual(pauseResumeCheck.beforePause);
+  expect(pauseResumeCheck.resumedPressed).toBe("false");
+  expect(pauseResumeCheck.firstResumed).toEqual(pauseResumeCheck.beforePause);
+  await expect.poll(hubSnapshot).not.toEqual(pauseResumeCheck.beforePause);
 
   // All landing page <img> assets (browser logos, hub logos, template icons) load eagerly.
   const brokenImages = await page.evaluate(() =>
@@ -419,4 +502,25 @@ test("desktop nav is dead-centered, showcases are inert, animations have WCAG pa
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(page.getByTestId("hero-fx-pause")).toHaveCount(0);
   await expect(page.getByTestId("hub-pause")).toHaveCount(0);
+});
+
+test("hero hides its pause control when WebGL is unavailable and static fallback is active", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (
+      this: HTMLCanvasElement,
+      type: string,
+      ...args: unknown[]
+    ) {
+      if (type === "webgl2" || type === "webgl" || type === "experimental-webgl") return null;
+      return origGetContext.apply(this, [type, ...args] as Parameters<typeof origGetContext>);
+    } as typeof HTMLCanvasElement.prototype.getContext;
+  });
+  await page.goto("/");
+  await expect(page.getByTestId("landing-page")).toBeVisible();
+  await expect(page.locator(".lp-hero-backdrop")).toHaveAttribute("data-fx-fallback", "1");
+  await expect(page.getByTestId("hero-fx-pause")).toHaveCount(0);
 });
