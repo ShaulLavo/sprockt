@@ -123,6 +123,17 @@ async function deployChangesUnderAnOpenTab(
 }
 
 test.describe("with a tab of the earlier build still open", () => {
+  test.beforeEach(({ browserName }) => {
+    // The earlier build here is the one with mounted previews, which only development builds
+    // have. Like e2e/preview.spec.ts, these are left to Chromium and Firefox: they pass in
+    // Playwright's WebKit, which is the slowest of the three in CI and runs the previews a
+    // public build has (e2e/isolated-preview.spec.ts).
+    test.skip(
+      browserName === "webkit",
+      "mounted previews run in Chromium and Firefox; WebKit runs the isolated ones",
+    );
+  });
+
   test("a page of a build without previews removes the earlier build's worker", async ({ page, context }) => {
     // The worker file is still the old one here, so the browser finds nothing to update to: only
     // the new build's page can take the worker down.
