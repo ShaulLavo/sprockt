@@ -1,10 +1,10 @@
 // Stroke icons on a 24x24 grid. Width, stroke and color come from the `.ico` class and the
-// surrounding text color. The logo is the filled sprocket mark from ./sprocket.
+// surrounding text color. The logo is the 8-tooth sprocket with `< >` brackets from ./SprocktLogo.
 import type { JSX } from "solid-js";
-import { MARK_SVG } from "./sprocket";
+import { SPROCKT_LOGO_INNER } from "./SprocktLogo";
 
 const PATHS = {
-  logo: MARK_SVG,
+  logo: SPROCKT_LOGO_INNER,
   files:
     '<path d="M15 3H9a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M15 3v5h5"/><path d="M4 8v11a2 2 0 0 0 2 2h9"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',

@@ -233,7 +233,7 @@
   width: 24px;
   height: 24px;
   color: var(--fg);
-  transition: transform var(--dur-slow) var(--ease-detent);
+  transition: transform var(--dur-base) var(--ease-out);
 }
 
 .wb-brand-mark .ico {
@@ -241,9 +241,8 @@
   height: 22px;
 }
 
-/* Pressing the mark indexes it one tooth. */
 .wb-brand:active .wb-brand-mark {
-  transform: rotate(40deg);
+  transform: scale(0.94);
 }
 
 .wb-crumbs {
@@ -512,7 +511,7 @@
   transform: translate(-4px, -50%);
   transition:
     opacity var(--dur-fast) var(--ease-out),
-    transform var(--dur-base) var(--ease-detent);
+    transform var(--dur-base) var(--ease-out);
 }
 
 .wb-act::after {
@@ -647,7 +646,11 @@
   display: grid;
   place-items: center;
   padding: var(--space-4);
-  background: var(--bg-chrome);
+  background-color: var(--bg-chrome);
+  background-image: var(--tex-paper-wash), radial-gradient(var(--tex-dot) 1px, transparent 1px);
+  background-size:
+    auto,
+    18px 18px;
 }
 
 .wb-boot-card {
@@ -657,8 +660,8 @@
   width: min(340px, 100%);
   padding: var(--space-6);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
   box-shadow: var(--shadow-md);
   transition:
     opacity var(--dur-slow) var(--ease-out),
@@ -670,19 +673,19 @@
   }
 }
 
-/* The mark turns while the workspace boots: one tooth at a time, never a smooth spin. */
+/* The 8-tooth gear mark turns gently while the workspace boots. */
 .wb-boot-mark {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   color: var(--fg);
-  animation: wb-index 2s steps(9, end) infinite;
+  animation: wb-spin 3.2s linear infinite;
 }
 
 .wb-boot-mark .ico {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
 }
 
 .wb-boot-card:has([data-state="failed"]) .wb-boot-mark {
@@ -746,14 +749,14 @@
   background: var(--line-strong);
 }
 
-/* A small sprocket, indexing tooth by tooth. */
+/* Crisp ring spinner for the active boot step. */
 .wb-spinner {
-  width: 15px;
-  height: 15px;
-  background: var(--accent);
-  -webkit-mask: var(--sprocket-mask) center / contain no-repeat;
-  mask: var(--sprocket-mask) center / contain no-repeat;
-  animation: wb-index 1s steps(9, end) infinite;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: wb-spin 700ms linear infinite;
 }
 
 .wb-boot-error {
@@ -784,7 +787,7 @@
   color: var(--fg);
 }
 
-@keyframes wb-index {
+@keyframes wb-spin {
   to {
     transform: rotate(360deg);
   }
@@ -969,19 +972,16 @@
     display: flex;
   }
 
-  /* The pane switcher is a rack of four teeth. The shown pane's tooth rises through the bar's
-     top edge and meets the pane above it in the pane's own color. */
+  /* Clean Sheet & Biro bottom pane bar with crisp top accent bar on active pane. */
   .wb-switcher {
-    --tooth-flank: 5px;
     display: grid;
     grid-area: switch;
     grid-template-columns: repeat(4, 1fr);
-    /* Clear of the screen's edges and of the home indicator. */
-    padding: 0 max(var(--space-4), env(safe-area-inset-right, 0px))
+    padding: 0 max(var(--space-2), env(safe-area-inset-right, 0px))
       max(var(--space-1), env(safe-area-inset-bottom, 0px))
-      max(var(--space-4), env(safe-area-inset-left, 0px));
-    border-top: 1px solid var(--line-strong);
-    background: var(--bg-tabstrip);
+      max(var(--space-2), env(safe-area-inset-left, 0px));
+    border-top: 1px solid var(--line);
+    background: var(--bg-chrome);
   }
 
   .wb-switch {
@@ -999,28 +999,25 @@
     transition: color var(--dur-fast) var(--ease-out);
   }
 
-  .wb-switch::before,
-  .wb-switch::after {
+  .wb-switch::before {
     content: "";
     position: absolute;
-    z-index: -1;
-    inset: -1px 2px 7px;
-    clip-path: polygon(0 0, 100% 0, calc(100% - var(--tooth-flank)) 100%, var(--tooth-flank) 100%);
+    top: 0;
+    right: 16%;
+    left: 16%;
+    height: 2px;
+    border-radius: 0 0 2px 2px;
+    background: var(--accent);
     opacity: 0;
+    transform: scaleX(0.4);
+    transition:
+      opacity var(--dur-base) var(--ease-out),
+      transform var(--dur-base) var(--ease-out);
   }
 
-  .wb-switch::before {
-    background: var(--line-strong);
-  }
-
-  .wb-switch::after {
-    inset: -1px 3px 8px;
-    background: var(--shown-bg, var(--bg-panel));
-  }
-
-  .wb-switch[aria-pressed="true"]::before,
-  .wb-switch[aria-pressed="true"]::after {
+  .wb-switch[aria-pressed="true"]::before {
     opacity: 1;
+    transform: scaleX(1);
   }
 
   .wb-switch .ico {

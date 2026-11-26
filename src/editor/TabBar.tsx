@@ -3,6 +3,7 @@
 // when tabs are actually hidden past it.
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { CloseIcon, FileIcon } from "../search/icons";
+import { fileTabTone } from "../ui/tab-colors";
 import { originalPath } from "./buffers";
 import { EDITOR_COPY, fill } from "./copy";
 import type { EditorStore } from "./store";
@@ -152,6 +153,7 @@ function Tab(props: {
       title={missing() ? `${originalPath(props.tab.path)} · ${EDITOR_COPY.deletedFile}` : props.tab.path}
       data-testid="editor-tab"
       data-path={props.tab.path}
+      data-tab-tone={fileTabTone(props.tab.path)}
       onPointerDown={(event) => props.onPointerDown(event)}
       onClick={() => props.onActivate()}
       onDblClick={() => props.store.pin(props.tab.path)}

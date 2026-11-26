@@ -2,30 +2,30 @@
    fallbacks are used only while the workbench has not loaded them. */
 .editor-pane,
 .quick-open-backdrop {
-  --ed-bg: var(--bg-editor, light-dark(#ffffff, #151c26));
-  --ed-panel: var(--bg-panel, light-dark(#f6f8fb, #121821));
-  --ed-input: var(--bg-input, light-dark(#ffffff, #1a2230));
-  --ed-elevated: var(--bg-elevated, light-dark(#ffffff, #1c2533));
-  --ed-hover: var(--bg-hover, light-dark(#e6ebf2, #1b2431));
-  --ed-active: var(--bg-active, light-dark(#fde6ee, #2a1d29));
-  --ed-line: var(--line, light-dark(#dde3ea, #222c39));
-  --ed-line-strong: var(--line-strong, light-dark(#c8d0db, #303c4c));
-  --ed-fg: var(--fg, light-dark(#0f1520, #e6ebf2));
-  --ed-muted: var(--fg-muted, light-dark(#434d5e, #a0acbc));
-  --ed-subtle: var(--fg-subtle, light-dark(#5f6a7b, #7f8b9c));
-  --ed-accent: var(--accent, light-dark(#d1245a, #ff5c8a));
-  --ed-accent-text: var(--accent-text, light-dark(#b81d4e, #ff7ea2));
-  --ed-accent-soft: var(--accent-soft, light-dark(#fde6ee, #2c1724));
-  --ed-accent-fg: var(--accent-fg, light-dark(#ffffff, #1a0610));
-  --ed-warn: var(--warn, light-dark(#946200, #f0bd4f));
-  --ed-danger: var(--danger, light-dark(#c6283f, #ff6b6b));
-  --ed-dirty: var(--dirty, light-dark(#0f1520, #e6ebf2));
-  --ed-focus: var(--focus, light-dark(#d1245a, #ff7ea2));
+  --ed-bg: var(--bg-editor, light-dark(#ffffff, #0a0d14));
+  --ed-panel: var(--bg-panel, light-dark(#fafafa, #10141d));
+  --ed-input: var(--bg-input, light-dark(#ffffff, #0d111a));
+  --ed-elevated: var(--bg-elevated, light-dark(#ffffff, #161b26));
+  --ed-hover: var(--bg-hover, light-dark(#f1f3f7, #1c2333));
+  --ed-active: var(--bg-active, light-dark(#e8eeff, #16263b));
+  --ed-line: var(--line, light-dark(#e5e7eb, #1f2636));
+  --ed-line-strong: var(--line-strong, light-dark(#c9ced6, #313b50));
+  --ed-fg: var(--fg, light-dark(#111111, #e9edf3));
+  --ed-muted: var(--fg-muted, light-dark(#4a4e57, #b2bac8));
+  --ed-subtle: var(--fg-subtle, light-dark(#5c616b, #8893a6));
+  --ed-accent: var(--accent, light-dark(#1a4be0, #5ab9fc));
+  --ed-accent-text: var(--accent-text, light-dark(#1a4be0, #6cc2ff));
+  --ed-accent-soft: var(--accent-soft, light-dark(#eaf0ff, #13263c));
+  --ed-accent-fg: var(--accent-fg, light-dark(#ffffff, #0a0d14));
+  --ed-warn: var(--warn, light-dark(#9a5b00, #f2c779));
+  --ed-danger: var(--danger, light-dark(#c81e2b, #f87171));
+  --ed-dirty: var(--dirty, light-dark(#111111, #e9edf3));
+  --ed-focus: var(--focus, light-dark(#1a4be0, #5ab9fc));
   --ed-mono: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
   --ed-tab-h: var(--tab-h, 36px);
   --ed-indicator: var(--tab-indicator, 2px);
-  --ed-radius: var(--radius-sm, 6px);
-  --ed-dur: var(--dur-fast, 110ms);
+  --ed-radius: var(--radius-sm, 5px);
+  --ed-dur: var(--dur-fast, 120ms);
   --ed-ease: var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
@@ -155,7 +155,7 @@
 .editor-tabs-strip {
   display: flex;
   height: 100%;
-  padding-left: var(--space-2, 8px);
+  padding-left: 0;
   overflow-x: auto;
   overscroll-behavior-x: contain;
   /* A tab scrolled into view clears the edge fade, so its name and unsaved dot stay readable. */
@@ -178,27 +178,43 @@
   );
 }
 
+/* Multicolor Sheet & Biro file tabs: each file type carries its own harmonized accent color. */
 .editor-tab {
   position: relative;
   z-index: 0;
   display: inline-flex;
   flex: none;
-  gap: 6px;
+  gap: 7px;
   align-items: center;
-  align-self: flex-end;
   max-width: 240px;
-  height: calc(var(--ed-tab-h) - var(--tooth-top, 0px));
-  padding: 0 calc(var(--tooth-flank, 0px) + 2px) 0 calc(var(--tooth-flank, 0px) + 8px);
+  height: 100%;
+  padding: 0 6px 0 12px;
+  border-right: 1px solid var(--ed-line);
   color: var(--ed-muted);
   font-size: var(--text-xs, 12px);
   white-space: nowrap;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   touch-action: pan-x;
   transition:
     background-color var(--ed-dur) var(--ed-ease),
     color var(--ed-dur) var(--ed-ease);
+}
+
+.editor-tab::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: var(--ed-indicator);
+  background: var(--tab-accent, var(--ed-accent));
+  opacity: 0.22;
+  transform: scaleX(0.45);
+  transition:
+    opacity var(--dur-base, 160ms) var(--ed-ease),
+    transform var(--dur-base, 160ms) var(--ed-ease);
 }
 
 .editor-tab .ft {
@@ -227,50 +243,36 @@
   text-decoration: line-through;
 }
 
-/* The open tab is a tooth of the editor's own surface, the lamp color along its flat top. */
 .editor-tab.is-active {
-  color: var(--ed-muted);
+  background: var(--ed-bg);
+  color: var(--ed-fg);
+  font-weight: var(--weight-medium, 500);
 }
 
-/* The open tab of the pane that has the keyboard is the one set in full ink and weight; an
-   open tab elsewhere stays quiet, so two tab strips never both look current. */
+.editor-tab.is-active::after {
+  opacity: 0.55;
+  transform: scaleX(1);
+}
+
 .editor-pane:focus-within .editor-tab.is-active {
+  background: color-mix(in oklab, var(--tab-accent, var(--ed-accent)) 6%, var(--ed-bg));
   color: var(--ed-fg);
   font-weight: var(--weight-semibold, 600);
 }
 
-.editor-tab.is-active::before,
-.editor-tab.is-active::after {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  clip-path: var(--tooth-shape, none);
-  content: "";
+.editor-pane:focus-within .editor-tab.is-active::after {
+  opacity: 1;
+  transform: scaleX(1);
 }
 
-.editor-tab.is-active::before {
-  background: var(--ed-line-strong);
-}
-
-.editor-tab.is-active::after {
-  inset: 1px 1px 0;
-  background: var(--ed-bg);
-}
-
-/* The bar along the tooth's flat top: quiet while the editor is not taking input, the lamp color
-   once it has the keyboard. */
-.editor-tab.is-active .editor-tab-name::before {
-  position: absolute;
-  top: 0;
-  right: var(--tooth-flank, 0px);
-  left: var(--tooth-flank, 0px);
-  height: var(--ed-indicator);
-  background: var(--ed-subtle);
-  content: "";
-}
-
-.editor-pane:focus-within .editor-tab.is-active .editor-tab-name::before {
-  background: var(--ed-accent);
+@media (hover: hover) and (pointer: fine) {
+  .editor-tab:not(.is-active):hover {
+    background: color-mix(in oklab, var(--tab-accent, var(--ed-accent)) 5%, var(--ed-hover));
+  }
+  .editor-tab:not(.is-active):hover::after {
+    opacity: 0.35;
+    transform: scaleX(0.75);
+  }
 }
 
 .editor-tab.is-dragging {
@@ -438,13 +440,13 @@
   .editor-pane .editor-virtualized-fold-toggle {
     display: none;
   }
-  /* The one pane on screen is the one in use, so its open tab is lit and set in full ink. */
+  /* The one pane on screen is the one in use, so its open tab carries its full accent bar. */
   .editor-tab.is-active {
     color: var(--ed-fg);
     font-weight: var(--weight-semibold, 600);
   }
-  .editor-tab.is-active .editor-tab-name::before {
-    background: var(--ed-accent);
+  .editor-tab.is-active::after {
+    opacity: 1;
   }
   .editor-conflict-action {
     height: 32px;

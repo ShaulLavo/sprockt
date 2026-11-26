@@ -76,6 +76,9 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
         return;
       }
       props.onRefresh();
+    } catch {
+      setConfirmDeleteId(undefined);
+      setNotice(LANDING_COPY.recentDeleteFailed);
     } finally {
       setBusyId(undefined);
     }

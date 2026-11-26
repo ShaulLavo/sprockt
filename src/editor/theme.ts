@@ -1,6 +1,5 @@
-// The editor's colours come from the IDE's design tokens (Circuit `--syn-*`, `--bg-editor`, …), so
-// one stylesheet themes the whole workbench. Each value is a CSS `var()` the editor element
-// resolves; the fallbacks are Circuit's own values for when the tokens are not loaded.
+// The editor's colours come from the IDE's design tokens (Sheet & Biro / dark sibling `--syn-*`,
+// `--bg-editor`, …), so one stylesheet themes the whole workbench.
 import type { EditorTheme } from "@singapore-editor/core/rendering";
 import { createSignal, onCleanup, type Accessor } from "solid-js";
 
@@ -9,38 +8,38 @@ export type ColorScheme = "light" | "dark";
 const token = (name: string, light: string, dark: string) => `var(--${name}, light-dark(${light}, ${dark}))`;
 
 const SYNTAX = {
-  text: token("syn-text", "#0f1520", "#dde4ee"),
-  keyword: token("syn-keyword", "#1f5fc4", "#82b8ff"),
-  string: token("syn-string", "#2f7a2f", "#a6dd8b"),
-  function: token("syn-function", "#8a5a00", "#ffd479"),
-  type: token("syn-type", "#0a7a6a", "#7fdcc8"),
-  attribute: token("syn-attr", "#b4541a", "#ffb27a"),
-  number: token("syn-number", "#c2410c", "#ff9e7a"),
-  property: token("syn-property", "#2f4a72", "#bcd0ec"),
-  punctuation: token("syn-punct", "#5b6678", "#8b97a8"),
-  comment: token("syn-comment", "#717c8d", "#687587"),
+  text: token("syn-text", "#181b20", "#d8dfe9"),
+  keyword: token("syn-keyword", "#1a4be0", "#6cc2ff"),
+  string: token("syn-string", "#0b7a4b", "#9de09a"),
+  function: token("syn-function", "#8a3c00", "#f2c779"),
+  type: token("syn-type", "#0f6680", "#68d8d6"),
+  attribute: token("syn-attr", "#8a3c00", "#ffab78"),
+  number: token("syn-number", "#a3123f", "#f48fb1"),
+  property: token("syn-property", "#24344d", "#c6d4e8"),
+  punctuation: token("syn-punct", "#5c616b", "#8893a6"),
+  comment: token("syn-comment", "#616772", "#7d899d"),
 };
 
 /** The editor theme for a scheme. Colours are the same `var()`s; the type picks plugin defaults. */
 export function editorTheme(scheme: ColorScheme): EditorTheme {
   return {
     type: scheme,
-    backgroundColor: token("bg-editor", "#ffffff", "#151c26"),
+    backgroundColor: token("bg-editor", "#ffffff", "#0a0d14"),
     foregroundColor: SYNTAX.text,
-    gutterBackgroundColor: token("bg-editor", "#ffffff", "#151c26"),
-    gutterForegroundColor: token("fg-subtle", "#5f6a7b", "#7f8b9c"),
-    selectionColor: token("bg-selection", "#fbcadb", "#4a2338"),
-    inactiveSelectionColor: token("bg-hover", "#e6ebf2", "#1b2431"),
-    popupBackgroundColor: token("bg-elevated", "#ffffff", "#1c2533"),
-    caretColor: token("caret", "#d1245a", "#ff7ea2"),
+    gutterBackgroundColor: token("bg-editor", "#ffffff", "#0a0d14"),
+    gutterForegroundColor: token("fg-subtle", "#5c616b", "#8893a6"),
+    selectionColor: token("bg-selection", "#cfe0ff", "#1f3b5c"),
+    inactiveSelectionColor: token("bg-hover", "#f1f3f7", "#1c2333"),
+    popupBackgroundColor: token("bg-elevated", "#ffffff", "#161b26"),
+    caretColor: token("caret", "#1a4be0", "#5ab9fc"),
     // A problem is underlined in its status color. The code under it keeps its place in the page:
     // no red wash across whole lines, so a file with many problems is still readable.
     colors: {
       "lsp.diagnostic.error": SYNTAX.text,
       "lsp.diagnostic.errorBackground": "transparent",
-      "lsp.diagnostic.errorUnderline": token("danger", "#c6283f", "#ff6b6b"),
-      "lsp.diagnostic.warningBackground": `color-mix(in oklab, ${token("warn", "#946200", "#f0bd4f")} 20%, transparent)`,
-      "lsp.diagnostic.informationBackground": `color-mix(in oklab, ${token("info", "#1f63c6", "#7fb6ff")} 16%, transparent)`,
+      "lsp.diagnostic.errorUnderline": token("danger", "#c81e2b", "#f87171"),
+      "lsp.diagnostic.warningBackground": `color-mix(in oklab, ${token("warn", "#9a5b00", "#f2c779")} 20%, transparent)`,
+      "lsp.diagnostic.informationBackground": `color-mix(in oklab, ${token("info", "#1a4be0", "#5ab9fc")} 16%, transparent)`,
     },
     syntax: {
       keyword: SYNTAX.keyword,

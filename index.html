@@ -1,11 +1,13 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-type="software">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#eef1ee" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0c1411" />
+    <meta name="site-kind" content="software" />
+    <meta name="page-type" content="software" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0d14" />
     <!-- The saved theme, applied before the first paint. src/workbench/theme.ts owns the same
          key and colors and takes over once the app loads. -->
     <script>
@@ -14,7 +16,7 @@
         if (theme === "light" || theme === "dark") {
           document.documentElement.dataset.theme = theme;
           document.querySelectorAll('meta[name="theme-color"]').forEach(function (meta) {
-            meta.content = theme === "light" ? "#eef1ee" : "#0c1411";
+            meta.content = theme === "light" ? "#ffffff" : "#0a0d14";
           });
         }
       } catch (error) {}
@@ -26,10 +28,17 @@
     </script>
     <meta
       name="description"
-      content="Open a public GitHub repo or starter template and run Bun 1.4.4, Vite, Next.js, Hono, Astro, SvelteKit or SQLite right in Chrome, Firefox or Safari."
+      content="Open a public GitHub repo or starter template in Chrome, Firefox, desktop Safari or iPhone Safari. Free, MIT licensed, running Bun 1.4.5, Vite, Next.js, Hono, Astro, SvelteKit or SQLite locally."
     />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Sprockt | Open-source IDE in your browser tab" />
+    <meta
+      property="og:description"
+      content="Editor, terminal and live preview in one tab, running in Chrome, Firefox, desktop Safari and iPhone Safari with no servers and no accounts."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>Sprockt | Real Bun in any browser tab</title>
+    <title>Sprockt | Open-source IDE in your browser tab</title>
   </head>
   <body>
     <div id="app"></div>
