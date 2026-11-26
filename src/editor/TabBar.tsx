@@ -16,6 +16,7 @@ import { CloseIcon, FileIcon } from "../search/icons";
 import { fileTabTone } from "../ui/tab-colors";
 import { originalPath } from "./buffers";
 import { EDITOR_COPY, fill } from "./copy";
+import { shouldAutoFocusEditor } from "./focus-policy";
 import { revealTabInStrip } from "./scroll-position";
 import type { EditorStore } from "./store";
 import { tabsToClose, type EditorTab, type TabCloseScope } from "./tabs";
@@ -31,6 +32,12 @@ const dirname = (path: string) => {
 /** Joins a base class with the flags that are on. */
 function classes(base: string, flags: Readonly<Record<string, boolean>>): string {
   return [base].concat(Object.keys(flags).filter((name) => flags[name])).join(" ");
+}
+
+/** Blurs an active editor input so touch tab switches do not keep the soft keyboard open. */
+function blurEditorIfFocused(): void {
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && active.closest(".editor-host")) active.blur();
 }
 
 /** Asks before closing a tab with unsaved edits using the Sheet & Biro dialog. */
@@ -85,7 +92,7 @@ function createTabDrag(
 
   function end(event: PointerEvent): void {
     if (!state || event.pointerId !== state.pointerId) return;
-    suppressClick = state.moved;
+    suppressClick = event.type !== "pointercancel" && state.moved;
     state = undefined;
     setDragging(undefined);
     stopListening();
@@ -93,6 +100,7 @@ function createTabDrag(
 
   return {
     start(event: DragStart, index: number): void {
+      suppressClick = false;
       if (event.button !== 0 || event.pointerType === "touch") return;
       state = { index, startX: event.clientX, pointerId: event.pointerId, moved: false };
       window.addEventListener("pointermove", move);
@@ -139,7 +147,8 @@ function Tab(props: {
   hint: string | undefined;
   dragging: boolean;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
-  onActivate: () => void;
+  onPointerCancel: () => void;
+  onActivate: (pointerType: string | undefined) => void;
   onContextMenu: (event: ReactMouseEvent<HTMLDivElement>) => void;
 }) {
   const { tab, store, strip } = props;
@@ -156,7 +165,7 @@ function Tab(props: {
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      props.onActivate();
+      props.onActivate("keyboard");
     } else if (event.key === "Delete") {
       requestClose(store, tab.path);
     }
@@ -182,7 +191,11 @@ function Tab(props: {
       data-path={tab.path}
       data-tab-tone={fileTabTone(tab.path)}
       onPointerDown={(event) => props.onPointerDown(event)}
-      onClick={() => props.onActivate()}
+      onPointerCancel={() => props.onPointerCancel()}
+      onClick={(event) => {
+        const native = event.nativeEvent as { pointerType?: string };
+        props.onActivate(native.pointerType || undefined);
+      }}
       onDoubleClick={() => store.pin(tab.path)}
       onContextMenu={props.onContextMenu}
       onMouseDown={(event) => event.button === 1 && event.preventDefault()}
@@ -226,6 +239,7 @@ function Tab(props: {
 export function TabBar(props: { store: EditorStore }) {
   const { store } = props;
   const strip = useRef<HTMLDivElement>(null);
+  const lastPointerType = useRef<string | undefined>(undefined);
   const tabs = useValue(store.tabs);
   const [dragging, setDragging] = useState<number>();
   const [menu, setMenu] = useState<{ x: number; y: number; path: string }>();
@@ -237,9 +251,13 @@ export function TabBar(props: { store: EditorStore }) {
   const shared = new Map<string, number>();
   for (const tab of tabs) shared.set(basename(tab.path), (shared.get(basename(tab.path)) ?? 0) + 1);
 
-  function activate(tab: EditorTab): void {
-    if (drag.takeSuppressedClick()) return;
-    store.open(tab.path, { preview: tab.preview, focus: true });
+  function activate(tab: EditorTab, eventPointerType: string | undefined): void {
+    const pointerType = eventPointerType ?? lastPointerType.current;
+    lastPointerType.current = undefined;
+    if (eventPointerType !== "keyboard" && drag.takeSuppressedClick()) return;
+    const focus = shouldAutoFocusEditor(pointerType);
+    if (!focus) blurEditorIfFocused();
+    store.open(tab.path, { preview: tab.preview, focus });
   }
 
   function closeScope(scope: TabCloseScope, path: string): void {
@@ -306,7 +324,10 @@ export function TabBar(props: { store: EditorStore }) {
         className="editor-tabs-strip"
         role="tablist"
         aria-label={EDITOR_COPY.openFiles}
-        onScroll={overflow.measure}
+        onScroll={() => {
+          lastPointerType.current = undefined;
+          overflow.measure();
+        }}
       >
         {tabs.map((tab, index) => (
           <Tab
@@ -318,8 +339,14 @@ export function TabBar(props: { store: EditorStore }) {
             label={basename(tab.path)}
             hint={(shared.get(basename(tab.path)) ?? 0) > 1 ? dirname(tab.path) || "/" : undefined}
             dragging={dragging === index}
-            onPointerDown={(event) => drag.start(event, index)}
-            onActivate={() => activate(tab)}
+            onPointerDown={(event) => {
+              lastPointerType.current = event.pointerType;
+              drag.start(event, index);
+            }}
+            onPointerCancel={() => {
+              lastPointerType.current = undefined;
+            }}
+            onActivate={(pointerType) => activate(tab, pointerType)}
             onContextMenu={(event) => {
               event.preventDefault();
               event.stopPropagation();

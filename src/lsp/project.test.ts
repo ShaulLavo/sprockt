@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
 import {
   checkForScripts,
+  declaredPackages,
   FileChange,
   fileChangeType,
   hasOwnScriptFile,
   isScriptFile,
   isWatchedPath,
   projectRelativeName,
+  touchesDependencyState,
 } from "./project";
 
 test("TypeScript and JavaScript sources of every flavour are script files", () => {
@@ -74,4 +76,26 @@ test("dependencies are watched, version control is not", () => {
   expect(isWatchedPath("src/a.ts")).toBe(true);
   expect(isWatchedPath(".git/index")).toBe(false);
   expect(isWatchedPath("sub/.git/HEAD")).toBe(false);
+});
+
+test("declaredPackages returns unique direct dependencies and devDependencies safely", () => {
+  expect(declaredPackages(undefined)).toEqual([]);
+  expect(declaredPackages("{not json")).toEqual([]);
+  expect(declaredPackages('{"name":"empty","scripts":{"dev":"bun server.ts"}}')).toEqual([]);
+  expect(declaredPackages('{"dependencies":{},"devDependencies":{}}')).toEqual([]);
+  expect(
+    declaredPackages(
+      '{"dependencies":{"react":"19.3.1"},"devDependencies":{"@types/react":"19.3.3","react":"19.3.1"}}',
+    ),
+  ).toEqual(["react", "@types/react"]);
+});
+
+test("touchesDependencyState notices package.json and node_modules changes only", () => {
+  expect(touchesDependencyState("/workspace", [change("workspace/src/App.tsx")])).toBe(false);
+  expect(touchesDependencyState("/workspace", [change("workspace/package.json")])).toBe(true);
+  expect(touchesDependencyState("/workspace", [rename("workspace/node_modules")])).toBe(true);
+  expect(
+    touchesDependencyState("/workspace", [rename("workspace/node_modules/@types/react/index.d.ts")]),
+  ).toBe(true);
+  expect(touchesDependencyState("/workspace", [change("other/package.json")])).toBe(false);
 });

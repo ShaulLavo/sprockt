@@ -150,3 +150,144 @@ test("terminal capture-phase context menu opens with Clear and Split actions", a
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("tree-menu")).toHaveCount(0);
 });
+
+const terminalCanvasBackground = (page: Page) =>
+  page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>(".term-canvas canvas");
+    return canvas?.parentElement ? getComputedStyle(canvas.parentElement).backgroundColor : "";
+  });
+
+const terminalRootInlineBackground = (page: Page) =>
+  page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>(".term-canvas canvas");
+    return canvas?.parentElement?.style.backgroundColor ?? "";
+  });
+
+const editorHasFocus = (page: Page) =>
+  page.evaluate(() => {
+    const active = document.activeElement;
+    return active instanceof HTMLElement && active.closest('[data-testid="editor"]') !== null;
+  });
+
+test("terminal updates its theme live across light and dark toggles, even when hidden or mid-boot", async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  // Hold shell-engine.wasm so startTerminal pauses AFTER capturing the initial light theme and
+  // mounting the Ghostty canvas, but BEFORE handle.current is attached (mid-boot resync window).
+  let releaseShell!: () => void;
+  const shellPaused = new Promise<void>((resolve) => {
+    releaseShell = resolve;
+  });
+  await page.route("**/shell-engine.wasm", async (route) => {
+    await shellPaused;
+    await route.continue();
+  });
+
+  await page.goto("/");
+  await page.getByTestId("template-blank").click();
+  await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
+  await expect(page.getByTestId("phone-menu")).toBeVisible();
+
+  // Wait until Ghostty mounted with its initial light background while the shell is still held.
+  await expect
+    .poll(() => terminalRootInlineBackground(page))
+    .toMatch(/rgb\(255,\s*255,\s*255\)|rgb\(255 255 255/);
+  await expect(page.getByTestId("terminal-state")).not.toHaveText("ready");
+
+  // Mid-boot toggle: switch to dark while startTerminal is paused (handle.current is undefined).
+  await page.getByTestId("phone-menu").click();
+  await page.getByRole("button", { name: "Use dark theme" }).click();
+  await page.locator(".wb-scrim").click();
+
+  // Release startup and verify the post-boot resync turns the hidden terminal dark before reveal.
+  releaseShell();
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+  await expect.poll(() => terminalRootInlineBackground(page)).toMatch(/rgb\(10,\s*13,\s*20\)|rgb\(10 13 20/);
+
+  // Toggle dark -> light -> dark while still hidden, checking the hidden terminal before reveal.
+  await page.getByTestId("phone-menu").click();
+  await page.getByRole("button", { name: "Use light theme" }).click();
+  await expect
+    .poll(() => terminalRootInlineBackground(page))
+    .toMatch(/rgb\(255,\s*255,\s*255\)|rgb\(255 255 255/);
+  await page.getByRole("button", { name: "Use dark theme" }).click();
+  await expect.poll(() => terminalRootInlineBackground(page)).toMatch(/rgb\(10,\s*13,\s*20\)|rgb\(10 13 20/);
+  await page.locator(".wb-scrim").click();
+
+  await page.getByTestId("pane-switcher").getByRole("button", { name: "Terminal" }).click();
+  await expect.poll(() => terminalCanvasBackground(page)).toBe("rgb(10, 13, 20)");
+
+  // Toggle live while the terminal is on screen: dark -> light -> dark.
+  await page.getByTestId("phone-menu").click();
+  await page.getByRole("button", { name: "Use light theme" }).click();
+  await expect.poll(() => terminalCanvasBackground(page)).toBe("rgb(255, 255, 255)");
+  await page.getByRole("button", { name: "Use dark theme" }).click();
+  await expect.poll(() => terminalCanvasBackground(page)).toBe("rgb(10, 13, 20)");
+});
+
+function dispatchCancelledMouseDrag(): void {
+  window.dispatchEvent(new PointerEvent("pointermove", { pointerType: "mouse", pointerId: 1, clientX: 40 }));
+  window.dispatchEvent(
+    new PointerEvent("pointercancel", { pointerType: "mouse", pointerId: 1, clientX: 40 }),
+  );
+}
+
+test.describe("mobile and hybrid touch tab activation", () => {
+  test.use({ hasTouch: true });
+
+  test("switching file tabs on mobile never focuses the editor, while desktop keyboard activation still does", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await newWorkspace(page);
+    await writeFile(page, "alpha.ts", "export const alpha = 1;\n");
+    await writeFile(page, "beta.ts", "export const beta = 2;\n");
+
+    await page.getByTestId("file-tree").getByRole("button", { name: "alpha.ts", exact: true }).tap();
+    await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
+    await expect.poll(() => editorHasFocus(page)).toBe(false);
+
+    await page.getByTestId("pane-switcher").getByRole("button", { name: "Files" }).tap();
+    await page.getByTestId("file-tree").getByRole("button", { name: "beta.ts", exact: true }).tap();
+    await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
+    await expect.poll(() => editorHasFocus(page)).toBe(false);
+
+    // Switching tabs on mobile must not focus the editor or trigger the soft keyboard.
+    await page.locator('[data-testid="editor-tab"][data-path="alpha.ts"]').tap();
+    await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
+    expect(await editorHasFocus(page)).toBe(false);
+
+    // An explicit tap directly on the editor text surface focuses the editor for real editing.
+    await page.getByTestId("editor").tap();
+    await expect.poll(() => editorHasFocus(page)).toBe(true);
+
+    // Tapping another file tab afterwards leaves the editor unfocused again.
+    await page.locator('[data-testid="editor-tab"][data-path="beta.ts"]').tap();
+    await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
+    await expect.poll(() => editorHasFocus(page)).toBe(false);
+
+    // Hybrid desktop check: a cancelled mouse drag + Enter must still focus on Enter AND must not
+    // swallow the next real touch tap on another tab (which opens it with the editor unfocused).
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const alphaTab = page.locator('[data-testid="editor-tab"][data-path="alpha.ts"]');
+    const betaTab = page.locator('[data-testid="editor-tab"][data-path="beta.ts"]');
+    await betaTab.dispatchEvent("pointerdown", {
+      pointerType: "mouse",
+      pointerId: 1,
+      button: 0,
+      clientX: 20,
+    });
+    await page.evaluate(dispatchCancelledMouseDrag);
+    await alphaTab.focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
+    await expect.poll(() => editorHasFocus(page)).toBe(true);
+
+    await betaTab.tap();
+    await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
+    await expect.poll(() => editorHasFocus(page)).toBe(false);
+  });
+});

@@ -1,6 +1,29 @@
 import { describe, expect, test } from "bun:test";
 import { ALL_TEMPLATES, BLANK_TEMPLATE, findTemplate, STARTER_TEMPLATES, templateLabel } from "./catalog";
 
+function assertSafeStarterDeps(id: string, pkgText: string | undefined): void {
+  const pkg = JSON.parse(pkgText ?? "{}") as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+  expect(allDeps.rolldown, `${id} must not depend on rolldown`).toBeUndefined();
+  if (allDeps.vite) {
+    const [major, minor, patch] = allDeps.vite
+      .replace(/^[^\d]*/, "")
+      .split(".")
+      .map(Number);
+    expect(major, `${id} vite major must stay < 8`).toBeLessThan(8);
+    // GHSA-p4f5-76q4-ffq7 patched in Vite 7.3.2+.
+    const safeVite7 = major !== 7 || (minor ?? 0) > 3 || (minor === 3 && (patch ?? 0) >= 2);
+    expect(safeVite7, `${id} vite 7 pin must be >= 7.3.2`).toBe(true);
+  }
+  if (allDeps["@vitejs/plugin-react"]) {
+    const major = Number(allDeps["@vitejs/plugin-react"].replace(/^[^\d]*/, "").split(".")[0]);
+    expect(major, `${id} @vitejs/plugin-react major must stay < 6`).toBeLessThan(6);
+  }
+}
+
 function isSafeRelativePath(path: string): boolean {
   if (!path || path.startsWith("/") || path.includes("\\") || path.includes("\0")) return false;
   return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
@@ -76,6 +99,19 @@ describe("template catalog", () => {
     expect(minor).toBe(5);
     expect(patch).toBeGreaterThanOrEqual(7);
     expect(swcVersion).toBe(nextVersion);
+  });
+
+  test("no starter template pins Vite 8+, Rolldown, unpatched Vite 7, or @vitejs/plugin-react 6+", () => {
+    for (const template of STARTER_TEMPLATES) {
+      assertSafeStarterDeps(template.id, template.files["package.json"]);
+    }
+  });
+
+  test("astro template disables telemetry in dev and build scripts", () => {
+    const astro = findTemplate("astro");
+    const pkg = JSON.parse(astro?.files["package.json"] ?? "{}") as { scripts?: Record<string, string> };
+    expect(pkg.scripts?.dev).toContain("ASTRO_TELEMETRY_DISABLED=1");
+    expect(pkg.scripts?.build).toContain("ASTRO_TELEMETRY_DISABLED=1");
   });
 
   test("blank template starts with no files", () => {

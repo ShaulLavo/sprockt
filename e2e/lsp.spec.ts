@@ -207,9 +207,20 @@ test("the server starts when the first TypeScript file arrives inside a moved di
   await expect.poll(() => errorRanges(page)).toEqual(["broken"]);
 });
 
-// What `bun install` puts in node_modules for the Vite + React starter, cut down to the types
-// src/App.tsx uses: React's hooks and JSX runtime, and Vite's client types for the CSS import.
-const REACT_STARTER_TYPES: Record<string, string> = {
+// What `bun install` puts in node_modules for the Vite + React starter, split into a partial
+// first package and the remaining declared packages so we verify the LSP gate waits for all of them.
+const REACT_STARTER_PARTIAL: Record<string, string> = {
+  "node_modules/vite/package.json": '{ "name": "vite", "version": "0.0.0" }\n',
+  "node_modules/vite/client.d.ts":
+    'declare module "*.css" {\n  const css: string;\n  export default css;\n}\n',
+};
+
+const REACT_STARTER_REMAINING: Record<string, string> = {
+  "node_modules/react/package.json": '{ "name": "react", "version": "0.0.0" }\n',
+  "node_modules/react-dom/package.json": '{ "name": "react-dom", "version": "0.0.0" }\n',
+  "node_modules/@vitejs/plugin-react/package.json":
+    '{ "name": "@vitejs/plugin-react", "version": "0.0.0" }\n',
+  "node_modules/@types/react-dom/package.json": '{ "name": "@types/react-dom", "version": "0.0.0" }\n',
   "node_modules/@types/react/package.json":
     '{ "name": "@types/react", "version": "0.0.0", "types": "index.d.ts" }\n',
   "node_modules/@types/react/index.d.ts":
@@ -223,12 +234,9 @@ const REACT_STARTER_TYPES: Record<string, string> = {
 export function jsx(type: unknown, props: unknown): JSX.Element;
 export function jsxs(type: unknown, props: unknown): JSX.Element;
 `,
-  "node_modules/vite/package.json": '{ "name": "vite", "version": "0.0.0" }\n',
-  "node_modules/vite/client.d.ts":
-    'declare module "*.css" {\n  const css: string;\n  export default css;\n}\n',
 };
 
-test("the Vite + React starter checks clean once installed, and keeps its syntax colours", async ({
+test("the Vite + React starter stays clean before install, waits through partial installs, then activates LSP", async ({
   page,
 }) => {
   await page.goto("/");
@@ -236,11 +244,24 @@ test("the Vite + React starter checks clean once installed, and keeps its syntax
   await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
   await page.getByTestId("file-tree").getByRole("button", { name: "App.tsx", exact: true }).click();
   await expect.poll(() => editorText(page)).toContain("Hello from bun.wasm");
-  // Before the install React has no types, so its import is an error, as in any editor.
-  await expect.poll(() => errorRanges(page)).toContain('"react"');
+  // Before dependencies are installed, the status bar reports all 6 missing packages and
+  // the editor stays free of false-alarm missing-module/JSX red squiggles.
+  const tsStatus = page.locator('[data-status="typescript"]');
+  await expect(tsStatus).toContainText("Install deps for TS");
+  await expect(tsStatus).toHaveAttribute("title", /6 uninstalled packages/);
+  await expect.poll(() => syntaxRanges(page)).toEqual(expect.arrayContaining(["main", "className"]));
+  expect(await errorRanges(page)).toEqual([]);
 
-  // The install's files arrive while the server runs, as they would from `bun install`.
-  await writeProject(page, REACT_STARTER_TYPES);
+  // A partial install (only vite written so far) completes a recheck (6 -> 5 missing),
+  // keeps the gate closed, and keeps the editor error-free.
+  await writeProject(page, REACT_STARTER_PARTIAL);
+  await expect(tsStatus).toHaveAttribute("title", /5 uninstalled packages/);
+  await expect(tsStatus).toContainText("Install deps for TS");
+  expect(await errorRanges(page)).toEqual([]);
+
+  // Once every declared package lands, the waiting indicator clears and the language server starts.
+  await writeProject(page, REACT_STARTER_REMAINING);
+  await expect(tsStatus).toHaveCount(0);
   await expect.poll(() => errorRanges(page)).toEqual([]);
   // The language server adds nothing over the JSX: the highlighter still paints it.
   await expect.poll(() => syntaxRanges(page)).toEqual(expect.arrayContaining(["main", "className"]));

@@ -68,3 +68,39 @@ export function fileChangeType(event: "change" | "rename", exists: boolean): Fil
 export function isWatchedPath(relativePath: string): boolean {
   return !relativePath.split("/").includes(".git");
 }
+
+function dependencyNames(value: unknown): string[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+  return Object.keys(value);
+}
+
+/**
+ * Direct npm packages declared in `package.json` (`dependencies` and `devDependencies`) that must
+ * exist under `node_modules/<name>/package.json` before TypeScript checking starts.
+ */
+export function declaredPackages(packageJsonText: string | undefined): readonly string[] {
+  if (!packageJsonText) return [];
+  try {
+    const parsed = JSON.parse(packageJsonText) as { dependencies?: unknown; devDependencies?: unknown };
+    return Array.from(
+      new Set(dependencyNames(parsed.dependencies).concat(dependencyNames(parsed.devDependencies))),
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Whether a batch of watch events changed `package.json` or anything under `node_modules`. */
+export function touchesDependencyState(
+  projectRoot: string,
+  events: readonly { readonly name: string | null }[],
+): boolean {
+  for (const event of events) {
+    if (event.name === null) continue;
+    const relative = projectRelativeName(projectRoot, event.name);
+    if (relative === "package.json" || relative === "node_modules" || relative?.startsWith("node_modules/")) {
+      return true;
+    }
+  }
+  return false;
+}

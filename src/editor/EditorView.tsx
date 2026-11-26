@@ -34,6 +34,7 @@ import { PROJECT_ROOT, projectRelative } from "../workspace/paths";
 import { useWorkspace } from "../workspace/session";
 import { isDetached, type Buffer } from "./buffers";
 import { EDITOR_COPY, fill } from "./copy";
+import { shouldAutoFocusEditor } from "./focus-policy";
 import { languageName, languageOf } from "./languages";
 import { mountEditorPlugins } from "./plugins";
 import { clampRestoredScroll } from "./scroll-position";
@@ -225,7 +226,7 @@ class SessionBinding {
       const offset = revealOffset(current.buffer, { ...request, line: request.line });
       instance.jumpTo(offset, undefined, "go-to-line");
     }
-    instance.focus();
+    if (request.focus ?? shouldAutoFocusEditor()) instance.focus();
   }
 }
 
@@ -293,6 +294,7 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
         runtime: workspace.runtime,
         projectRoot: PROJECT_ROOT,
         rootUri: `file://${PROJECT_ROOT}`,
+        status: workspace.status,
         openFile: (path, position) => openProjectFile(store, path, position),
       },
       editor,
@@ -302,7 +304,7 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
       unmountPlugins.current = undefined;
       unmount();
     };
-  }, [editor, store, workspace.runtime]);
+  }, [editor, store, workspace.runtime, workspace.status]);
 
   // Once another tab owns the workspace this tab's files are not live: language servers stop.
   useEffect(() => {

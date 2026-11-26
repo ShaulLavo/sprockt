@@ -21,6 +21,7 @@
 //   removes them from every editor again.
 import type { EditorDisposable, EditorPlugin } from "@singapore-editor/core/extensions";
 import type { Runtime } from "waffle";
+import type { StatusItems } from "../workbench/slots";
 
 export interface EditorHostContext {
   readonly runtime: Runtime;
@@ -28,6 +29,8 @@ export interface EditorHostContext {
   readonly projectRoot: string;
   /** `file://` URI of the project root, for a language server's `rootUri`. */
   readonly rootUri: string;
+  /** Optional workbench status bar, so providers can report readiness quietly. */
+  readonly status?: StatusItems;
   /**
    * Aborted when the editor closes, or when another tab takes the workspace over and this tab's
    * files stop being live: stop starting things, and stop what was started.
@@ -106,7 +109,7 @@ export function mountEditorPlugins(
       entry.set = set;
       entry.disposables = set.plugins.map((plugin) => editor.addPlugin(plugin));
     } catch (error) {
-      console.error("An editor plugin provider failed", error);
+      if (!entry.lifetime.signal.aborted) console.error("An editor plugin provider failed", error);
     }
   }
 

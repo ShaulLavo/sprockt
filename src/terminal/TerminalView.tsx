@@ -14,6 +14,8 @@ export type ViewPosition = "single" | "left" | "right" | "hidden";
 export interface TerminalViewProps {
   readonly id: string;
   readonly position: ViewPosition;
+  /** True when this terminal is currently visible on screen (not hidden behind another mobile pane/tab). */
+  readonly visible: boolean;
   readonly scheme: Accessor<"light" | "dark">;
   readonly label: string;
   /** Called once the shell has started, so the panel can focus it if the user asked to. */
@@ -29,8 +31,8 @@ const NOTICE_MS = 4000;
 interface MountOptions {
   readonly id: string;
   readonly label: string;
-  readonly scheme: "light" | "dark";
-  readonly phone: boolean;
+  getScheme(): "light" | "dark";
+  getPhone(): boolean;
   readonly session: Pick<WorkspaceSession, "terminals" | "runtime" | "shell" | "files">;
   /** Holds the started shell for the theme effect. */
   readonly handle: { current: TerminalHandle | undefined };
@@ -67,7 +69,7 @@ function mountTerminal(host: HTMLDivElement, options: MountOptions): () => void 
       runtime: session.runtime,
       shell: session.shell,
       label: options.label,
-      appearance: terminalAppearance(host, options.scheme, options.phone),
+      appearance: terminalAppearance(host, options.getScheme(), options.getPhone()),
       signal: closing.signal,
       onState(state, detail) {
         if (closing.signal.aborted) return;
@@ -81,6 +83,8 @@ function mountTerminal(host: HTMLDivElement, options: MountOptions): () => void 
     });
     if (closing.signal.aborted) return started.dispose();
     options.handle.current = started;
+    // Re-sync appearance after async startup in case the theme or viewport changed mid-boot.
+    started.setAppearance(terminalAppearance(host, options.getScheme(), options.getPhone()));
     terminals.attach(id, started);
     runStartupCommand();
     options.onAttached(id);
@@ -117,6 +121,8 @@ export function TerminalView(props: TerminalViewProps) {
   const [notice, setNotice] = useState<string>();
   const [menu, setMenu] = useState<ContextState>();
   const [phone, setPhone] = useState(isPhoneViewport);
+  const phoneRef = useRef(phone);
+  phoneRef.current = phone;
   const host = useRef<HTMLDivElement>(null);
   const handle = useRef<TerminalHandle | undefined>(undefined);
   const noticeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -136,15 +142,15 @@ export function TerminalView(props: TerminalViewProps) {
 
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
 
-  // One shell per mount. The id is the view's key, and the label and scheme are only the starting
-  // values: renames and theme changes reach a running shell another way.
+  // One shell per mount. The id is the view's key, and the label is the starting value:
+  // renames and theme changes reach a running shell through their own effects.
   useEffect(() => {
     if (!host.current) return;
     return mountTerminal(host.current, {
       id: props.id,
       label: props.label,
-      scheme: props.scheme(),
-      phone: isPhoneViewport(),
+      getScheme: () => props.scheme(),
+      getPhone: () => phoneRef.current,
       session,
       handle,
       setFailure,
@@ -155,7 +161,7 @@ export function TerminalView(props: TerminalViewProps) {
 
   useEffect(() => {
     if (host.current) handle.current?.setAppearance(terminalAppearance(host.current, scheme, phone));
-  }, [scheme, phone]);
+  }, [scheme, phone, props.visible]);
 
   function showNotice(text: string): void {
     setNotice(text);
