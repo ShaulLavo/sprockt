@@ -257,7 +257,10 @@ How the mounted transport works:
   `/path` inside the mount (`preview/inject/mounting.ts`).
 - **The pane** (`preview/PreviewPane.tsx`) keeps its own back and forward list
   (`preview/history.ts`). A frame's browser history is shared with the IDE page, so stepping
-  through it could walk the IDE itself back.
+  through it could walk the IDE itself back. Its toolbar is the panes' header band with the
+  shared icon buttons; the port picker and the viewport switch appear once a server listens.
+  With no server, the pane says so and, when the project has something to start (the task keeps
+  that current as files change), offers the one primary button that starts it.
 - **The two scripts** (`/preview-sw.js`, `/preview-client.js`) are built as classic scripts by
   `preview/vite-plugin.ts`: a service worker has to sit at a fixed path above its scope, and
   module service workers are not available in every browser we support.

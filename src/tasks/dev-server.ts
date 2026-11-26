@@ -14,7 +14,8 @@ import { createDevServerCoordinator } from "../workspace/coordinator";
 import { PROJECT_ROOT } from "../workspace/paths";
 import { createDevServerLine, type DevServerStatus, type ServerProcess } from "./dev-server-line";
 import { detectWorkspace, devStart, type DevStart } from "./detect";
-import { isSourceChange, restartingProcess, type Run } from "./restarting";
+import { latestOnly } from "./latest";
+import { affectsProject, isSourceChange, restartingProcess, type Run } from "./restarting";
 
 export type { DevServerStatus } from "./dev-server-line";
 
@@ -32,6 +33,8 @@ export interface DevServer {
    * finished. The pane then keeps `output` on screen, which says why.
    */
   readonly ended: Accessor<boolean>;
+  /** Whether the project has something to start: a dev script or a server entry file. */
+  readonly startable: Accessor<boolean>;
   /**
    * Asks for the dev server. Calls made while one is under way share it. Resolves false when
    * the project has nothing to start.
@@ -161,14 +164,26 @@ export function createDevServer(host: DevServerHost): DevServer {
   const [state, setState] = createSignal(line.state());
   line.subscribe(setState);
 
+  // Whether the project has something to start, kept current as its files change.
+  const [startable, setStartable] = createSignal(false);
+  const looker = latestOnly(async () => setStartable((await command()) !== undefined));
+  const unwatch = host.files.subscribe((change) => {
+    if (affectsProject(change)) looker.run();
+  });
+  looker.run();
+
   return {
     status: () => state().status,
     owned: () => state().owned,
     remotePorts: () => state().remotePorts,
     output,
     ended,
+    startable,
     start: () => line.start(),
     stop: () => line.stop(),
-    dispose: () => line.dispose(),
+    dispose() {
+      unwatch();
+      return line.dispose();
+    },
   };
 }

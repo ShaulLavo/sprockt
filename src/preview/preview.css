@@ -1,45 +1,33 @@
-/* Preview pane. Colors and sizes come from the design tokens (Circuit names); each falls back
-   to the foundation's token of the same role until the token sheet lands. */
+/* Preview pane, on the workbench's tokens (src/styles.css). The toolbar is the same header band
+   as the other panes' headers and tab strips; its buttons are the shared `.icon-button`. */
+
 .preview-pane {
-  --p-line: var(--line, var(--border));
-  --p-fg: var(--fg, var(--text));
-  --p-fg-muted: var(--fg-muted, var(--text-muted));
-  --p-fg-subtle: var(--fg-subtle, var(--text-muted));
-  --p-input: var(--bg-input, var(--surface));
-  --p-hover: var(--bg-hover, var(--border));
-  --p-active: var(--bg-active, var(--border));
-  --p-stage: var(--bg-stage, var(--surface));
-  --p-focus: var(--focus, var(--accent));
-  --p-danger: var(--danger, #ff6b6b);
-  --p-radius: var(--radius-sm, 6px);
-  --p-control: calc(var(--control-h, 28px) - 2px);
-  --p-mono: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
-  display: flex;
-  flex-direction: column;
+  background: var(--bg-panel);
 }
+
+/* ───────────── Toolbar ───────────── */
 
 .preview-bar {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--space-1, 4px);
-  min-height: var(--tab-h, 36px);
-  padding: 0 var(--space-1_5, 6px);
-  border-bottom: 1px solid var(--p-line);
+  gap: var(--space-1);
+  height: var(--tab-h);
+  padding: 0 var(--space-1_5);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-tabstrip);
+  color: var(--fg-muted);
 }
 
 /* The part of the toolbar that scrolls when the pane is too narrow for it (src/ui/fade.ts fades
-   an edge only while there is more past it). */
+   an edge only while there is more past it). The two buttons after it stay put. */
 .preview-bar-scroll {
   flex: 1;
   min-width: 0;
   align-self: stretch;
   display: flex;
   align-items: center;
-  gap: var(--space-1, 4px);
-  /* Room for a focus ring at either end, which the scroller would otherwise clip. */
-  margin: 0 -3px;
-  padding: 0 3px;
+  gap: var(--space-1);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -48,61 +36,38 @@
   display: none;
 }
 
-.preview-icon {
-  width: 15px;
-  height: 15px;
-  flex: none;
-}
-
-.preview-bar button {
-  display: inline-grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-xs, 4px);
-  color: var(--p-fg-muted);
-}
-
-.preview-bar button:hover:not(:disabled) {
-  background: var(--p-hover);
-  color: var(--p-fg);
-}
-
-.preview-bar button:disabled {
+.preview-bar .icon-button:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
-.preview-bar :focus-visible {
-  outline: 2px solid var(--p-focus);
-  outline-offset: 1px;
-}
-
 .preview-nav {
   display: inline-flex;
-  gap: 1px;
+  flex: none;
 }
 
+/* The address field: the one input of the band, so it sits on the input ground. */
 .preview-url {
   flex: 1;
   /* Room for a short path; below this the toolbar scrolls instead of crushing the field. */
   min-width: 88px;
   display: flex;
   align-items: center;
-  gap: var(--space-1_5, 6px);
-  height: var(--p-control);
-  padding: 0 var(--space-2, 8px);
-  background: var(--p-input);
-  border: 1px solid var(--p-line);
-  border-radius: var(--p-radius);
-  color: var(--p-fg-subtle);
+  gap: var(--space-1_5);
+  height: calc(var(--control-h) - 2px);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--fg-subtle);
+  transition: border-color var(--dur-fast) var(--ease-out);
 }
 
 .preview-url:focus-within {
-  border-color: var(--p-focus);
+  border-color: var(--focus);
 }
 
-.preview-url .preview-icon {
+.preview-url .ico {
   width: 13px;
   height: 13px;
 }
@@ -113,61 +78,111 @@
   border: 0;
   outline: none;
   background: none;
-  color: var(--p-fg);
-  font: var(--text-xs, 12px) / 1 var(--p-mono);
+  color: var(--fg);
+  font: var(--text-xs) / 1 var(--font-mono);
 }
 
+.preview-url input:disabled {
+  color: var(--fg-subtle);
+}
+
+/* The port: mono, like the same port in the title bar's pill. */
 .preview-port {
-  height: var(--p-control);
-  padding: 0 var(--space-1_5, 6px);
-  background: none;
-  border: 1px solid var(--p-line);
-  border-radius: var(--p-radius);
-  color: var(--p-fg);
-  font: 500 var(--text-xs, 12px) / 1 var(--p-mono);
+  flex: none;
+  height: calc(var(--control-h) - 2px);
+  padding: 0 var(--space-1_5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono);
 }
 
+.preview-port:disabled {
+  color: var(--fg-subtle);
+}
+
+/* The viewport switch: the same raised-key control as the theme toggle. */
 .preview-viewports {
   display: inline-flex;
+  flex: none;
   gap: 1px;
   padding: 2px;
-  border: 1px solid var(--p-line);
-  border-radius: var(--p-radius);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tabstrip);
 }
 
-.preview-bar .preview-viewports button {
+.preview-viewport {
+  display: inline-grid;
+  place-items: center;
   width: 24px;
-  height: calc(var(--p-control) - 6px);
+  height: 20px;
+  border-radius: var(--radius-xs);
+  color: var(--fg-muted);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
 }
 
-.preview-bar .preview-viewports button.is-on {
-  background: var(--p-active);
-  color: var(--p-fg);
+.preview-viewport .ico {
+  width: 14px;
+  height: 14px;
 }
 
-.preview-bar .preview-errors-toggle {
+.preview-viewport[aria-pressed="true"] {
+  background: var(--bg-elevated);
+  box-shadow: 0 0 0 1px var(--line-strong);
+  color: var(--fg);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .preview-viewport:hover {
+    color: var(--fg);
+  }
+}
+
+.preview-errors-toggle {
   display: inline-flex;
-  gap: 3px;
-  width: auto;
-  padding: 0 6px;
-  color: var(--p-danger);
-  font: 500 var(--text-xs, 12px) / 1 var(--p-mono);
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  height: calc(var(--control-h) - 2px);
+  padding: 0 var(--space-1_5);
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono);
 }
 
-.preview-bar .preview-task[data-status="running"] {
-  color: var(--ok, #4cd08c);
+.preview-errors-toggle .ico {
+  width: 14px;
+  height: 14px;
 }
+
+@media (hover: hover) and (pointer: fine) {
+  .preview-errors-toggle:hover {
+    background: var(--bg-hover);
+  }
+}
+
+/* Running or starting: the lamp color, as in the pill. */
+.preview-task:not([data-status="stopped"]) {
+  color: var(--accent-text);
+}
+
+/* ───────────── Below the toolbar ───────────── */
 
 .preview-error-list {
   flex: none;
   max-height: 96px;
   margin: 0;
-  padding: var(--space-1_5, 6px) var(--space-2_5, 10px);
+  padding: var(--space-1_5) var(--space-3);
   overflow: auto;
   list-style: none;
-  border-bottom: 1px solid var(--p-line);
-  color: var(--p-danger);
-  font: var(--text-xs, 12px) / 1.5 var(--p-mono);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-panel);
+  color: var(--danger);
+  font: var(--text-xs) / 1.5 var(--font-mono);
   white-space: pre-wrap;
 }
 
@@ -177,7 +192,12 @@
   display: flex;
   justify-content: center;
   overflow: auto;
-  background: var(--p-stage);
+  background: var(--bg-panel);
+}
+
+/* A sized viewport stands on the stage ground, so its edges show. */
+.preview-stage:not([data-viewport="desktop"]) {
+  background: var(--bg-stage);
 }
 
 .preview-frame {
@@ -199,40 +219,86 @@
 }
 
 .preview-stage:not([data-viewport="desktop"]) .preview-frame {
-  margin: var(--space-3, 12px);
-  border: 1px solid var(--p-line);
-  border-radius: var(--radius-md, 8px);
+  margin: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
 }
 
+/* Nothing to show yet: what is going on, the server's last words if it has any, and the one
+   primary action when the project has something to start. */
 .preview-empty {
-  align-self: center;
-  max-width: 44ch;
-  padding: var(--space-4, 16px);
-  color: var(--p-fg-muted);
-  text-align: center;
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-4);
+  color: var(--fg-muted);
+  line-height: var(--leading-prose);
+}
+
+.preview-empty p {
+  max-width: 52ch;
+  margin: 0;
+}
+
+.preview-start .ico {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
 }
 
 .preview-task-output {
-  max-height: 160px;
+  align-self: stretch;
+  max-height: 220px;
   margin: 0;
+  padding: var(--space-2) var(--space-3);
   overflow: auto;
-  color: var(--p-fg-subtle);
-  font: var(--text-2xs, 11px) / 1.5 var(--p-mono);
-  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-editor);
+  color: var(--fg-muted);
+  font: var(--text-2xs) / 1.6 var(--font-mono);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-@media (max-width: 720px) {
+/* The phone layout (the same query as Workbench.tsx): touch-sized controls, no viewport switch. */
+@media (max-width: 768px) {
   .preview-bar {
-    min-height: 48px;
+    height: 48px;
   }
 
-  .preview-bar button {
+  .preview-bar .icon-button {
     width: 36px;
     height: 36px;
   }
 
+  .preview-url,
+  .preview-port {
+    height: 32px;
+  }
+
+  /* Less room for the address, so the error count stays in view beside it. */
+  .preview-url {
+    min-width: 64px;
+  }
+
   .preview-bar .preview-viewports {
     display: none;
+  }
+
+  /* The pane is the phone: a size picked on a wider window does not apply here. */
+  .preview-stage[data-viewport] {
+    background: var(--bg-panel);
+  }
+
+  .preview-stage[data-viewport] .preview-frame {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
   }
 }

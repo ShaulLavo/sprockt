@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isSourceChange, restartingProcess, type Run } from "./restarting";
+import { affectsProject, isSourceChange, restartingProcess, type Run } from "./restarting";
 
 interface FakeRun extends Run {
   readonly script: string;
@@ -154,4 +154,12 @@ test("code, pages and styles are source; what a server writes and what is instal
   expect(isSourceChange(change([]))).toBe(false);
   // Events were lost: anything may have changed.
   expect(isSourceChange(change([], true))).toBe(true);
+});
+
+test("any file of the project itself may change what there is to start; installed files do not", () => {
+  expect(affectsProject(change(["package.json"]))).toBe(true);
+  expect(affectsProject(change(["notes.sqlite"]))).toBe(true);
+  expect(affectsProject(change(["node_modules/vite/package.json", ".git/index"]))).toBe(false);
+  expect(affectsProject(change([]))).toBe(false);
+  expect(affectsProject(change([], true))).toBe(true);
 });

@@ -6,7 +6,6 @@ export const ui = {
   reload: "Reload preview",
   url: "Preview URL",
   switchPort: "Switch preview port",
-  noPorts: "No open ports",
   /** A port, as the picker and the title bar's dev server pill both print it. */
   port: ":{port}",
   serverRunning: "Dev server running on port {port}",
@@ -25,6 +24,8 @@ export const ui = {
   unavailable: "Previews are not available in this browser.",
   starting: "Starting the dev server. The preview will load once a port opens.",
   empty: "No dev server is running yet. Start one in the terminal to preview it here.",
+  /** The same moment for a project the pane can start itself; the Start button follows it. */
+  emptyStartable: "No dev server is running yet. Start it to preview this project here.",
   nothingToStart: "Nothing to start in this project.",
   serverEnded: "The dev server stopped. Its last output:",
 } as const;

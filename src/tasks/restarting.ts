@@ -30,6 +30,11 @@ const SOURCE = /\.(?:[cm]?[jt]sx?|html?|css)$/i;
 const installed = (path: string) =>
   path.split("/").some((part) => part === "node_modules" || part === ".git");
 
+/** Whether a change touched the project itself, not only what is installed into it. */
+export function affectsProject(change: Pick<FileChange, "paths" | "reset">): boolean {
+  return change.reset || change.paths.some((path) => !installed(path));
+}
+
 /**
  * Whether a change is one the server has to be run again for. Data the server writes itself (a
  * database, a JSON file, a log) is not: restarting for it would never end.

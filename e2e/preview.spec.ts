@@ -59,7 +59,7 @@ test.beforeEach(({ browserName }) => {
 test("a server started in the terminal shows in the preview, and the toolbar drives it", async ({ page }) => {
   await newWorkspace(page);
   await expect(page.getByTestId("preview-empty")).toBeVisible();
-  await expect(page.getByTestId("preview-port")).toBeDisabled();
+  await expect(page.getByTestId("preview-port")).toHaveCount(0);
   await writeFile(page, "server.ts", SERVER);
   await runInTerminal(page, "bun server.ts");
 
@@ -172,12 +172,19 @@ test("the pane's button starts a server entry file, and the pill stops it", asyn
   await newWorkspace(page);
   // A script with no import or export and with WebSocket handlers: the kind of file `bun --hot`
   // refuses in bun-wasm. The task runs it with plain `bun`.
+  // An empty project has nothing to start, so the empty pane offers nothing.
+  const start = page.getByTestId("preview-start");
+  await expect(page.getByTestId("preview-empty")).toBeVisible();
+  await expect(start).toHaveCount(0);
   await writeFile(page, "server.ts", SERVER);
   const task = page.getByTestId("preview-task");
   await expect(task).toHaveAttribute("data-status", "stopped");
-  await task.click();
+  // Now there is something to start, and the empty pane has the button for it.
+  await expect(start).toHaveText("Start dev server");
+  await start.click();
   await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
   await expect(task).toHaveAttribute("data-status", "running");
+  await expect(start).toHaveCount(0);
   await expect(page.getByTestId("dev-server")).toHaveText(":3000");
   await navigate(page, "/echo");
   await expect(frame(page).getByRole("heading")).toHaveText("echo: PING");
@@ -195,7 +202,7 @@ test("the pane's button starts a server entry file, and the pill stops it", asyn
 
   await page.getByTestId("dev-server").getByRole("button", { name: "Stop dev server" }).click();
   await expect(task).toHaveAttribute("data-status", "stopped");
-  await expect(page.getByTestId("preview-port")).toBeDisabled();
+  await expect(page.getByTestId("preview-port")).toHaveCount(0);
   await expect(page.getByTestId("dev-server")).toHaveCount(0);
 
   // It starts again, from the pane's button, and that button stops it too.
@@ -207,7 +214,7 @@ test("the pane's button starts a server entry file, and the pill stops it", asyn
   await writeFile(page, "server.ts", SERVER);
   await expect(page.getByTestId("save-state")).toHaveText("saved");
   await expect(task).toHaveAttribute("data-status", "stopped");
-  await expect(page.getByTestId("preview-port")).toBeDisabled();
+  await expect(page.getByTestId("preview-port")).toHaveCount(0);
 });
 
 test("the Bun.serve + bun:sqlite starter starts from the pane's button and renders", async ({ page }) => {
@@ -256,7 +263,7 @@ test("a tab that takes the workspace over is not left following the old tab's de
   const task = second.getByTestId("preview-task");
   await expect(task).toHaveAttribute("data-status", "stopped");
   await expect(task).toBeEnabled();
-  await expect(second.getByTestId("preview-port")).toBeDisabled();
+  await expect(second.getByTestId("preview-port")).toHaveCount(0);
   await task.click();
   await expect(frame(second).getByRole("heading")).toHaveText("Hello from Bun.serve");
   await expect(task).toHaveAttribute("data-status", "running");
@@ -392,6 +399,12 @@ test("a dev command that fails leaves its output on screen", async ({ page }) =>
   // As text: the terminal's colour codes are not printed.
   expect(await page.getByTestId("preview-task-output").textContent()).not.toContain("\u001B");
   await expect(page.getByTestId("dev-server")).toHaveCount(0);
+  // The Start button is back under it, for another try.
+  await expect(page.getByTestId("preview-start")).toBeVisible();
+
+  // Take the dev script away, and there is nothing to offer.
+  await writeFile(page, "package.json", JSON.stringify({ scripts: { test: "bun test" } }));
+  await expect(page.getByTestId("preview-start")).toHaveCount(0);
 });
 
 test("two workspaces on the same port do not see each other's server", async ({ page, context }) => {

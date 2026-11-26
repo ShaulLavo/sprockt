@@ -3,24 +3,13 @@ import { createDevServer } from "../tasks/dev-server";
 import { plainOutput } from "../tasks/output";
 import { trackOverflowFade } from "../ui/fade";
 import { fill } from "../ui/format";
+import { Icon } from "../ui/icons";
 import { STATUS_SLOT } from "../workbench/slots";
 import { useWorkspace } from "../workspace/session";
 import { frameCommand, isFrameMessage, type FrameMessage } from "./bridge";
 import { ui } from "./copy";
 import { canGoBack, canGoForward, currentPath, emptyHistory, stepped, visited } from "./history";
-import {
-  AlertIcon,
-  BackIcon,
-  DesktopIcon,
-  ExternalIcon,
-  ForwardIcon,
-  GlobeIcon,
-  PhoneIcon,
-  PlayIcon,
-  ReloadIcon,
-  StopIcon,
-  TabletIcon,
-} from "./icons";
+import { BackIcon, DesktopIcon, ExternalIcon, ForwardIcon, PhoneIcon, PlayIcon, TabletIcon } from "./icons";
 import { normalizePreviewPath } from "./paths";
 import "./preview.css";
 import { listedPorts, portLabel, samePorts, serverStatus } from "./server-status";
@@ -194,8 +183,12 @@ export function PreviewPane() {
 
   function emptyText(): string {
     if (devServer.status() === "starting") return ui.starting;
-    return devServer.ended() ? ui.serverEnded : ui.empty;
+    if (devServer.ended()) return ui.serverEnded;
+    return devServer.startable() ? ui.emptyStartable : ui.empty;
   }
+
+  /** The project has something to start, and nothing of it runs or is starting. */
+  const canStart = () => devServer.status() === "stopped" && devServer.startable();
 
   function taskLabel(): string {
     if (devServer.status() === "stopped") return ui.startServer;
@@ -211,6 +204,7 @@ export function PreviewPane() {
           <span class="preview-nav">
             <button
               type="button"
+              class="icon-button"
               aria-label={ui.back}
               disabled={!canGoBack(history())}
               onClick={() => step(-1)}
@@ -219,18 +213,25 @@ export function PreviewPane() {
             </button>
             <button
               type="button"
+              class="icon-button"
               aria-label={ui.forward}
               disabled={!canGoForward(history())}
               onClick={() => step(1)}
             >
               <ForwardIcon />
             </button>
-            <button type="button" aria-label={ui.reload} disabled={port() === undefined} onClick={reload}>
-              <ReloadIcon />
+            <button
+              type="button"
+              class="icon-button"
+              aria-label={ui.reload}
+              disabled={port() === undefined}
+              onClick={reload}
+            >
+              <Icon name="reload" />
             </button>
           </span>
           <label class="preview-url">
-            <GlobeIcon />
+            <Icon name="globe" />
             <input
               type="text"
               aria-label={ui.url}
@@ -242,33 +243,38 @@ export function PreviewPane() {
               onInput={(event) => setDraft(event.currentTarget.value)}
             />
           </label>
-          <select
-            class="preview-port"
-            aria-label={ui.switchPort}
-            data-testid="preview-port"
-            disabled={ports().length === 0}
-            value={port() ?? ""}
-            onChange={(event) => setSelected(Number(event.currentTarget.value))}
-          >
-            <For each={ports()} fallback={<option value="">{ui.noPorts}</option>}>
-              {(listed) => <option value={listed}>{portLabel(listed)}</option>}
-            </For>
-          </select>
-          <span class="preview-viewports" role="group" aria-label={ui.viewport}>
-            <For each={VIEWPORTS}>
-              {(option) => (
-                <button
-                  type="button"
-                  aria-label={option.label}
-                  aria-pressed={viewport() === option.id}
-                  classList={{ "is-on": viewport() === option.id }}
-                  onClick={() => setViewport(option.id)}
-                >
-                  {option.icon()}
-                </button>
-              )}
-            </For>
-          </span>
+          {/* The port picker and the viewport switch are there once there is a page to pick or size. */}
+          <Show when={ports().length > 0}>
+            <select
+              class="preview-port"
+              aria-label={ui.switchPort}
+              data-testid="preview-port"
+              onChange={(event) => setSelected(Number(event.currentTarget.value))}
+            >
+              <For each={ports()}>
+                {(listed) => (
+                  <option value={listed} selected={listed === port()}>
+                    {portLabel(listed)}
+                  </option>
+                )}
+              </For>
+            </select>
+            <span class="preview-viewports" role="group" aria-label={ui.viewport}>
+              <For each={VIEWPORTS}>
+                {(option) => (
+                  <button
+                    type="button"
+                    class="preview-viewport"
+                    aria-label={option.label}
+                    aria-pressed={viewport() === option.id}
+                    onClick={() => setViewport(option.id)}
+                  >
+                    {option.icon()}
+                  </button>
+                )}
+              </For>
+            </span>
+          </Show>
           <Show when={errors().length > 0}>
             <button
               type="button"
@@ -278,26 +284,27 @@ export function PreviewPane() {
               aria-label={fill(ui.errors, { count: errors().length })}
               onClick={() => setShowErrors((shown) => !shown)}
             >
-              <AlertIcon />
+              <Icon name="alert" />
               <span>{errors().length}</span>
             </button>
           </Show>
         </div>
         <button
           type="button"
-          class="preview-task"
+          class="icon-button preview-task"
           data-testid="preview-task"
           data-status={devServer.status()}
           aria-label={taskLabel()}
           disabled={elsewhere()}
           onClick={() => void toggleDevServer()}
         >
-          <Show when={devServer.status() === "stopped"} fallback={<StopIcon />}>
+          <Show when={devServer.status() === "stopped"} fallback={<Icon name="stop" />}>
             <PlayIcon />
           </Show>
         </button>
         <button
           type="button"
+          class="icon-button"
           aria-label={ui.openInTab}
           data-testid="preview-open"
           disabled={port() === undefined}
@@ -326,6 +333,18 @@ export function PreviewPane() {
               <pre class="preview-task-output" data-testid="preview-task-output">
                 {plainOutput(devServer.output()).slice(-2000)}
               </pre>
+            </Show>
+            {/* The pane's one primary action, offered only when the project has something to start. */}
+            <Show when={canStart()}>
+              <button
+                type="button"
+                class="primary preview-start"
+                data-testid="preview-start"
+                onClick={() => void toggleDevServer()}
+              >
+                <PlayIcon />
+                {ui.startServer}
+              </button>
             </Show>
           </div>
         </Show>

@@ -58,6 +58,6 @@ test("Vite hot reload: an edit shows in the preview and the page keeps its state
   // The pill's stop button stops the server the pane started, and the pill goes away.
   await page.getByTestId("dev-server").getByRole("button", { name: "Stop dev server" }).click();
   await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "stopped");
-  await expect(page.getByTestId("preview-port")).toBeDisabled();
+  await expect(page.getByTestId("preview-port")).toHaveCount(0);
   await expect(page.getByTestId("dev-server")).toHaveCount(0);
 });
