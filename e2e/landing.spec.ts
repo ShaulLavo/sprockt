@@ -271,94 +271,69 @@ test("theme choice persists in the same tab across landing and workbench in both
   }
 });
 
-test("landing demo explorer and tablists are keyboard accessible and pause stops cursor blink", async ({
+test("desktop nav is dead-centered, showcases are inert, animations have WCAG pause controls, and all logos load eagerly", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  const demo = page.locator(".lp-hero-tab");
-  const workbench = demo.locator(".lp-wb");
+  await expect(page.getByTestId("landing-page")).toBeVisible();
 
-  // Explorer files open via native buttons with keyboard activation.
-  const cssButton = demo.locator(".lp-wb-explorer").getByRole("button", { name: "App.css" });
-  await cssButton.focus();
-  await page.keyboard.press("Enter");
-  const fileTabs = demo.getByRole("tablist", { name: "Open files" });
-  await expect(fileTabs.getByRole("tab", { name: "App.css" })).toHaveAttribute("aria-selected", "true");
-  await expect(fileTabs.getByRole("tab", { name: "App.css" })).toHaveAttribute("tabindex", "0");
-  await expect(fileTabs.getByRole("tab", { name: "App.tsx" })).toHaveAttribute("tabindex", "-1");
+  // Desktop nav links sit dead-centered over the H1.
+  const navBox = await page.getByTestId("desktop-nav").boundingBox();
+  const h1Box = await page.getByRole("heading", { level: 1 }).boundingBox();
+  expect(navBox).not.toBeNull();
+  expect(h1Box).not.toBeNull();
+  const navCenter = navBox!.x + navBox!.width / 2;
+  const h1Center = h1Box!.x + h1Box!.width / 2;
+  expect(Math.abs(navCenter - h1Center)).toBeLessThan(2);
 
-  // ArrowRight moves focus and selection across Open files and links tabpanel via aria-controls/aria-labelledby.
-  await fileTabs.getByRole("tab", { name: "App.css" }).focus();
-  await page.keyboard.press("ArrowRight");
-  const pkgTab = fileTabs.getByRole("tab", { name: "package.json" });
-  await expect(pkgTab).toBeFocused();
-  await expect(pkgTab).toHaveAttribute("aria-selected", "true");
-  const pkgTabId = await pkgTab.getAttribute("id");
-  const pkgPanelId = await pkgTab.getAttribute("aria-controls");
-  expect(pkgTabId).toBeTruthy();
-  expect(pkgPanelId).toBeTruthy();
-  await expect(demo.locator(`#${pkgPanelId}`)).toHaveAttribute("aria-labelledby", pkgTabId!);
-
-  // ArrowRight works on Terminal tabs with matching aria-controls/aria-labelledby, and the
-  // focused terminal tab stays inside the visible hero frame and passes pointer hit-testing.
-  const heroFrame = page.locator(".lp-hero-frame");
-  const termTabs = demo.getByRole("tablist", { name: "Terminal tabs" });
-  const bashTab = termTabs.getByRole("tab", { name: "bash" });
-  const devTab = termTabs.getByRole("tab", { name: "dev :5173" });
-  await bashTab.focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(devTab).toBeFocused();
-  await expect(devTab).toHaveAttribute("aria-selected", "true");
-  const frameBox = await heroFrame.boundingBox();
-  const devTabBox = await devTab.boundingBox();
-  expect(frameBox).not.toBeNull();
-  expect(devTabBox).not.toBeNull();
-  expect(devTabBox!.y + devTabBox!.height).toBeLessThanOrEqual(frameBox!.y + frameBox!.height + 1);
-  await bashTab.click();
-  await expect(bashTab).toHaveAttribute("aria-selected", "true");
-  await devTab.click();
-  await expect(devTab).toHaveAttribute("aria-selected", "true");
-
-  // Pause stops both playback and blinking cursors; reduced motion hides Replay.
-  const pauseBtn = demo.getByRole("button", { name: "Pause demo" });
-  if (await pauseBtn.isVisible()) await pauseBtn.click();
-  await expect(workbench).toHaveAttribute("data-playing", "false");
-  await fileTabs.getByRole("tab", { name: "App.tsx" }).click();
-  await expect
-    .poll(() => demo.locator(".lp-wb-caret").evaluate((el) => getComputedStyle(el).animationName))
-    .toBe("none");
-
-  // At tablet width (768x900), the compact pane switcher stays inside the hero frame and can be clicked.
-  await page.setViewportSize({ width: 768, height: 900 });
-  const paneTabs = demo.getByRole("tablist", { name: "Panes" });
-  const codePaneTab = paneTabs.getByRole("tab", { name: "Code" });
-  const tabletFrameBox = await heroFrame.boundingBox();
-  const codeTabBox = await codePaneTab.boundingBox();
-  expect(tabletFrameBox).not.toBeNull();
-  expect(codeTabBox).not.toBeNull();
-  expect(codeTabBox!.y + codeTabBox!.height).toBeLessThanOrEqual(
-    tabletFrameBox!.y + tabletFrameBox!.height + 1,
+  // Hero and iPhone showcases are decorative inert visuals with zero focusable descendants.
+  await Promise.all(
+    (["hero-showcase", "phone-showcase"] as const).map(async (testId) => {
+      const showcase = page.getByTestId(testId);
+      await expect(showcase).toHaveAttribute("role", "img");
+      const focusables = await showcase.evaluate((el) => {
+        const inner = el.querySelector("[inert]");
+        return {
+          hasInert: Boolean(inner),
+          buttons: el.querySelectorAll("button, a, input, [tabindex]").length,
+        };
+      });
+      expect(focusables.hasInert).toBe(true);
+      expect(focusables.buttons).toBe(0);
+    }),
   );
-  await codePaneTab.click();
-  await expect(codePaneTab).toHaveAttribute("aria-selected", "true");
-  await expect(demo.getByRole("tabpanel", { name: "Code" })).toBeVisible();
 
+  // All 4 feature cards render distinct painterly-landscape backdrops.
+  await Promise.all(
+    (["check", "complete", "terminal", "store"] as const).map((tone) =>
+      expect(page.getByTestId(`feature-card-${tone}`)).toBeVisible(),
+    ),
+  );
+
+  // Hero grain-gradient and Waffle hub expose working WCAG pause controls on desktop.
+  const togglePause = async (testId: "hero-fx-pause" | "hub-pause") => {
+    const btn = page.getByTestId(testId);
+    await expect(btn).toBeVisible();
+    await expect(btn).toHaveAttribute("aria-pressed", "false");
+    await btn.click();
+    await expect(btn).toHaveAttribute("aria-pressed", "true");
+    await btn.click();
+    await expect(btn).toHaveAttribute("aria-pressed", "false");
+  };
+  await togglePause("hero-fx-pause");
+  await togglePause("hub-pause");
+
+  // All landing page <img> assets (browser logos, hub logos, template icons) load eagerly.
+  const brokenImages = await page.evaluate(() =>
+    Array.from(document.querySelectorAll<HTMLImageElement>("img"))
+      .filter((img) => !img.complete || img.naturalWidth === 0)
+      .map((img) => img.src),
+  );
+  expect(brokenImages).toEqual([]);
+
+  // Under prefers-reduced-motion: reduce, looping pause controls hide cleanly.
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(demo.getByRole("button", { name: /Replay demo|Pause demo/ })).toHaveCount(0);
-});
-
-test("the phone demo's files, source and terminal output reach a screen reader", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
-  const demo = page.locator(".lp-hero-tab");
-
-  // Role queries only match what the accessibility tree exposes.
-  await expect(demo.getByRole("tabpanel", { name: "Terminal" })).toContainText("bun run dev");
-  await demo.getByRole("tab", { name: "Files" }).click();
-  await expect(demo.getByRole("tabpanel", { name: "Files" })).toContainText("App.tsx");
-  await demo.getByRole("tab", { name: "Code" }).click();
-  await expect(demo.getByRole("tabpanel", { name: "Code" })).toContainText("useState");
-  await demo.getByRole("tab", { name: "Preview" }).click();
-  await expect(demo.getByRole("tabpanel", { name: "Preview" })).toContainText("Hello from bun.wasm");
+  await expect(page.getByTestId("hero-fx-pause")).toHaveCount(0);
+  await expect(page.getByTestId("hub-pause")).toHaveCount(0);
 });
