@@ -228,4 +228,44 @@ describe("GitHub proxy Connect middleware", () => {
     expect(response.chunks).toHaveLength(2);
     expect(cancelled).toBe(true);
   });
+
+  test("forwards client disconnect abort signal to every upstream redirect hop", async () => {
+    const signals: AbortSignal[] = [];
+    const cdnStarted = Promise.withResolvers<void>();
+    const proxy = createGitHubProxy({
+      fetch: async (url, init) => {
+        if (init?.signal) signals.push(init.signal);
+        if (url.startsWith("https://github.com/")) {
+          return new Response(null, {
+            status: 302,
+            headers: {
+              location:
+                "https://release-assets.githubusercontent.com/github-production-release-asset/1/stall",
+            },
+          });
+        }
+        cdnStarted.resolve();
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("upstream aborted")), {
+            once: true,
+          });
+        });
+      },
+    });
+    const middleware = createGitHubProxyMiddleware(proxy);
+    const response = new MockServerResponse();
+    middleware(
+      mockRequest("GET", "/api/github/release/acme/demo/v1/pkg.tgz"),
+      response as unknown as ServerResponse,
+      () => {},
+    );
+
+    await cdnStarted.promise;
+    expect(signals).toHaveLength(2);
+    expect(signals[1]?.aborted).toBe(false);
+
+    response.emit("close");
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(true);
+  });
 });

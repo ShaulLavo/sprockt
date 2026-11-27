@@ -302,6 +302,39 @@ function hintFromPartial(
   };
 }
 
+async function commitDerivedHydration(
+  id: string,
+  derived: string,
+  latestHint: WorkspaceMeta | undefined,
+  deps: HydrateWorkspaceNameDeps,
+  now: Date,
+  nowIso: string,
+): Promise<string> {
+  // Re-read metadata before merging so a concurrent writer (e.g. an import writing `source` and
+  // `pendingImport`) is never clobbered by a stale snapshot.
+  const freshRead = await readMetaStrict(deps);
+  if (!freshRead.ok || deps.signal?.aborted) return readWorkspaceHint(id)?.name ?? id;
+  const freshRaw = freshRead.raw;
+  const freshFile = freshRaw ? parseWorkspaceMeta(freshRaw) : undefined;
+  const freshPartial = parsePartialWorkspaceMeta(freshRaw);
+  if (freshFile && !isPlaceholderWorkspaceName(freshFile)) {
+    const lastOpened =
+      newerTimestamp(newerTimestamp(freshFile.lastOpened, latestHint?.lastOpened), nowIso) ?? nowIso;
+    clearPendingWorkspaceName(id);
+    saveWorkspaceHint(id, { ...freshFile, lastOpened });
+    return freshFile.name;
+  }
+  if (freshPartial?.name && !freshPartial.defaultName) {
+    clearPendingWorkspaceName(id);
+    saveWorkspaceHint(id, hintFromPartial(freshPartial, freshPartial.name, latestHint, nowIso));
+    return freshPartial.name;
+  }
+  const { json, meta } = mergeDerivedWorkspaceName(freshRaw, derived, now);
+  saveWorkspaceHint(id, meta);
+  if (canMergeMetaRaw(freshRaw)) await persistDerivedMeta(id, deps, freshPartial?.state, json);
+  return derived;
+}
+
 /**
  * Hydrates a workspace's display name from `/.sprockt/workspace.json` -> root `package.json`,
  * updating the reactive hint without ever overwriting an explicit user rename, legacy name,
@@ -355,31 +388,7 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
       if (latestHint && !isPlaceholderWorkspaceName(latestHint) && latestHint.name !== id) {
         return latestHint.name;
       }
-      if (derived) {
-        // Re-read metadata before merging so a concurrent writer (e.g. an import writing
-        // `source` and `pendingImport`) is never clobbered by a stale snapshot.
-        const freshRead = await readMetaStrict(deps);
-        if (!freshRead.ok || deps.signal?.aborted) return readWorkspaceHint(id)?.name ?? id;
-        const freshRaw = freshRead.raw;
-        const freshFile = freshRaw ? parseWorkspaceMeta(freshRaw) : undefined;
-        const freshPartial = parsePartialWorkspaceMeta(freshRaw);
-        if (freshFile && !isPlaceholderWorkspaceName(freshFile)) {
-          const lastOpened =
-            newerTimestamp(newerTimestamp(freshFile.lastOpened, latestHint?.lastOpened), nowIso) ?? nowIso;
-          clearPendingWorkspaceName(id);
-          saveWorkspaceHint(id, { ...freshFile, lastOpened });
-          return freshFile.name;
-        }
-        if (freshPartial?.name && !freshPartial.defaultName) {
-          clearPendingWorkspaceName(id);
-          saveWorkspaceHint(id, hintFromPartial(freshPartial, freshPartial.name, latestHint, nowIso));
-          return freshPartial.name;
-        }
-        const { json, meta } = mergeDerivedWorkspaceName(freshRaw, derived, now);
-        saveWorkspaceHint(id, meta);
-        if (canMergeMetaRaw(freshRaw)) await persistDerivedMeta(id, deps, freshPartial?.state, json);
-        return derived;
-      }
+      if (derived) return commitDerivedHydration(id, derived, latestHint, deps, now, nowIso);
 
       if (fileMeta) {
         const lastOpened =

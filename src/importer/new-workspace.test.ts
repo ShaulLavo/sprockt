@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createProjectFiles, type ProjectFilesystem, type ResolvedEntry } from "../files/project-files";
+import { withWorkspaceMetaLock } from "../workspace/hint";
 import { PROJECT_ROOT } from "../workspace/paths";
 import { readIncomplete, retryPath, type OpenIdle } from "./incomplete";
 import { INCOMPLETE, parseMeta, serializeMeta, WORKSPACE_META_PATH, type WorkspaceMeta } from "./metadata";
@@ -524,5 +525,51 @@ describe("bulk imports over 1,024 files", () => {
     expect(metered.files.has(`${PROJECT_ROOT}/index.ts`)).toBe(true);
     const metaBytes = metered.files.get(WORKSPACE_META_PATH);
     expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))).toEqual(META);
+  });
+
+  test("cancellation while waiting for the final metadata lock leaves the incomplete marker intact", async () => {
+    const id = "cancelmeta";
+    const metered = meteredProjectFilesystem({
+      [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
+    });
+    const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
+    const lockGate = Promise.withResolvers<void>();
+    const lockStarted = Promise.withResolvers<void>();
+    let holder: Promise<void> | undefined;
+    const deps: NewWorkspaceDeps = {
+      exists: async () => true,
+      remove: async () => "deleted",
+      open: async () => ({
+        files: {
+          writeMany: async (entries) => {
+            await projectFiles.writeMany(entries);
+            // Hold the metadata lock right before fill() clears the INCOMPLETE marker.
+            holder = withWorkspaceMetaLock(id, async () => {
+              lockStarted.resolve();
+              await lockGate.promise;
+            });
+            await lockStarted.promise;
+          },
+        },
+        runtime: { filesystem: metered.filesystem },
+        dispose: async () => projectFiles.dispose(),
+      }),
+    };
+
+    const controller = new AbortController();
+    const attempt = createWorkspaceWithFiles({ "index.ts": "export const ok = 1;\n" }, META, deps, {
+      into: id,
+      signal: controller.signal,
+    }).catch((error: unknown) => error);
+
+    await lockStarted.promise;
+    controller.abort(new Error("cancelled by user"));
+    lockGate.resolve();
+    await holder;
+
+    const outcome = await attempt;
+    expect(outcome).toBeInstanceOf(Error);
+    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
+    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
   });
 });

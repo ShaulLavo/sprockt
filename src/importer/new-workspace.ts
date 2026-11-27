@@ -154,12 +154,12 @@ async function fill(
 ): Promise<string> {
   const { state: _ignored, ...complete } = meta;
   try {
-    await writeMeta(id, session, { ...complete, state: INCOMPLETE });
+    await writeMeta(id, session, { ...complete, state: INCOMPLETE }, context.signal);
     context.signal?.throwIfAborted();
     await session.files.writeMany(files);
     await session.runtime.filesystem.flush();
     context.signal?.throwIfAborted();
-    await writeMeta(id, session, complete);
+    await writeMeta(id, session, complete, context.signal);
   } catch (error) {
     await close(session);
     // A busy or failed delete leaves the marker, and the landing page offers Retry and Delete.
@@ -179,8 +179,20 @@ async function isUntouched(session: WorkspaceWriter): Promise<boolean> {
   return paths.length === 0 && meta === undefined;
 }
 
-function writeMeta(id: string, session: WorkspaceWriter, meta: WorkspaceMeta): Promise<void> {
-  return withWorkspaceMetaLock(id, () => writeMetaFile(session.runtime.filesystem, meta));
+function writeMeta(
+  id: string,
+  session: WorkspaceWriter,
+  meta: WorkspaceMeta,
+  signal?: AbortSignal,
+): Promise<void> {
+  return withWorkspaceMetaLock(
+    id,
+    async () => {
+      signal?.throwIfAborted();
+      await writeMetaFile(session.runtime.filesystem, meta);
+    },
+    signal,
+  );
 }
 
 async function close(session: WorkspaceWriter): Promise<void> {

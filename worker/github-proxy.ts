@@ -110,7 +110,12 @@ export function createGitHubProxy(options: GitHubProxyOptions = {}) {
     const [route, owner = "", repo = "", ...rest] = segments;
     const invalid = validateNames(owner, repo);
     if (invalid) return invalid;
-    const context: UpstreamContext = { fetch: upstream, env, method: request.method };
+    const context: UpstreamContext = {
+      fetch: upstream,
+      env,
+      method: request.method,
+      signal: request.signal,
+    };
     if (route === "archive" && rest.length > 0) return archive(context, owner, repo, rest.join("/"));
     if (route === "release" && rest.length >= 2) {
       const asset = rest.at(-1) ?? "";
@@ -146,6 +151,7 @@ interface UpstreamContext {
   readonly fetch: Fetch;
   readonly env: GitHubProxyEnv;
   readonly method: string;
+  readonly signal: AbortSignal;
 }
 
 function routeSegments(path: string): string[] | undefined {
@@ -413,6 +419,7 @@ async function fetchReleaseUpstream(context: UpstreamContext, url: string): Prom
       method: "GET",
       redirect: "manual",
       headers: { "user-agent": USER_AGENT },
+      signal: context.signal,
     };
     // Each hop depends on the Location of the one before it.
     // oxlint-disable-next-line no-await-in-loop
@@ -501,6 +508,7 @@ async function fetchUpstream(
       method: "GET",
       redirect: "manual",
       headers: policy.headers,
+      signal: context.signal,
     };
     if (policy.cf) init.cf = policy.cf;
     // Each hop depends on the Location of the one before it.

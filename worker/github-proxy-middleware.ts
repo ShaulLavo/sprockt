@@ -41,6 +41,11 @@ function waitForDrain(response: ServerResponse): Promise<void> {
   });
 }
 
+function writeChunk(response: ServerResponse, chunk: Uint8Array): Promise<void> {
+  if (response.write(chunk)) return Promise.resolve();
+  return waitForDrain(response);
+}
+
 async function pipeBody(body: ReadableStream<Uint8Array>, response: ServerResponse): Promise<void> {
   const reader = body.getReader();
   let completed = false;
@@ -53,10 +58,8 @@ async function pipeBody(body: ReadableStream<Uint8Array>, response: ServerRespon
         break;
       }
       if (response.destroyed) break;
-      if (!response.write(value)) {
-        // oxlint-disable-next-line no-await-in-loop
-        await waitForDrain(response);
-      }
+      // oxlint-disable-next-line no-await-in-loop
+      await writeChunk(response, value);
     }
   } catch (error: unknown) {
     // Destroy the response on mid-stream failure so clients never treat a truncated body as 200 OK.
