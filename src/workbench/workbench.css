@@ -185,6 +185,7 @@
 }
 
 .wb-splitter:focus-visible::after,
+.wb-splitter[data-dragging="true"]::after,
 .wb-splitter.is-dragging::after {
   background: var(--focus);
   background-size: auto;
@@ -842,7 +843,7 @@
     grid-template-columns: 100%;
     grid-template-rows: calc(var(--titlebar-h-phone) + env(safe-area-inset-top, 0px)) minmax(0, 1fr) auto;
     grid-template-areas: "title" "main" "switch";
-    padding-bottom: var(--keyboard-inset, 0px);
+    padding-bottom: var(--wb-keyboard-inset, 0px);
   }
 
   /* When the iOS soft keyboard is open, hide the bottom pane switcher so the terminal keys bar

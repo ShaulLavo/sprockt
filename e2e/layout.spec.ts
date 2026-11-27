@@ -15,9 +15,9 @@ async function height(page: Page, selector: string): Promise<number> {
 }
 
 /** Drags a handle by `dx`, `dy` CSS pixels with the mouse. */
-async function drag(page: Page, testId: string, dx: number, dy: number): Promise<void> {
-  const box = await page.getByTestId(testId).boundingBox();
-  if (!box) throw new Error(`${testId} is not on screen`);
+async function drag(page: Page, splitter: string, dx: number, dy: number): Promise<void> {
+  const box = await page.locator(`[data-wb-splitter="${splitter}"]`).boundingBox();
+  if (!box) throw new Error(`${splitter} is not on screen`);
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
   await page.mouse.move(x, y);
@@ -33,13 +33,13 @@ test("pane sizes and closed panes survive a reload", async ({ page }) => {
   await expect(page.getByTestId("terminal-panel")).toBeVisible();
 
   const explorer = await width(page, "#wb-slot-files");
-  await drag(page, "splitter-explorer", 96, 0);
+  await drag(page, "explorer", 96, 0);
   await expect.poll(() => width(page, "#wb-slot-files")).toBeGreaterThan(explorer + 80);
   const dragged = await width(page, "#wb-slot-files");
 
   // The terminal handle works from the keyboard: three steps up.
   const terminal = await height(page, "#wb-slot-terminal");
-  await page.getByTestId("splitter-terminal").focus();
+  await page.locator('[data-wb-splitter="terminal"]').focus();
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
@@ -47,7 +47,7 @@ test("pane sizes and closed panes survive a reload", async ({ page }) => {
   const raised = await height(page, "#wb-slot-terminal");
 
   // Enter on the preview handle closes the preview.
-  await page.getByTestId("splitter-preview").focus();
+  await page.locator('[data-wb-splitter="preview"]').focus();
   await page.keyboard.press("Enter");
   await expect(page.locator("#wb-slot-preview")).toBeHidden();
 
@@ -132,24 +132,24 @@ test("clicking a handle without dragging changes nothing, and a closed preview k
     terminal: await height(page, "#wb-slot-terminal"),
   });
   const before = await sizes();
-  await page.getByTestId("splitter-explorer").click();
-  await page.getByTestId("splitter-preview").click();
-  await page.getByTestId("splitter-terminal").click();
+  await page.locator('[data-wb-splitter="explorer"]').click();
+  await page.locator('[data-wb-splitter="preview"]').click();
+  await page.locator('[data-wb-splitter="terminal"]').click();
   expect(await sizes()).toEqual(before);
 
   // Enter closes the preview; its handle stays focusable and Enter opens it again.
-  await page.getByTestId("splitter-preview").focus();
+  await page.locator('[data-wb-splitter="preview"]').focus();
   await page.keyboard.press("Enter");
   await expect(page.locator("#wb-slot-preview")).toBeHidden();
-  await expect(page.getByTestId("splitter-preview")).toBeVisible();
-  await page.getByTestId("splitter-preview").focus();
+  await expect(page.locator('[data-wb-splitter="preview"]')).toBeVisible();
+  await page.locator('[data-wb-splitter="preview"]').focus();
   await page.keyboard.press("Enter");
   await expect(page.locator("#wb-slot-preview")).toBeVisible();
 
   // Dragging a closed preview's handle back out opens it.
   await page.keyboard.press("Enter");
   await expect(page.locator("#wb-slot-preview")).toBeHidden();
-  await drag(page, "splitter-preview", -400, 0);
+  await drag(page, "preview", -400, 0);
   await expect.poll(() => width(page, "#wb-slot-preview")).toBeGreaterThan(300);
 });
 
@@ -159,7 +159,7 @@ test("a drag that snaps a pane shut and returns to where it started changes noth
   await expect(page.getByTestId("terminal-panel")).toBeVisible();
   const preview = await width(page, "#wb-slot-preview");
 
-  const box = await page.getByTestId("splitter-preview").boundingBox();
+  const box = await page.locator('[data-wb-splitter="preview"]').boundingBox();
   if (!box) throw new Error("the preview handle is not on screen");
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
@@ -182,19 +182,19 @@ test("a wide saved explorer leaves the editor its room in a narrow window", asyn
   await page.setViewportSize({ width: 1440, height: 900 });
   await newWorkspace(page);
   await expect(page.getByTestId("terminal-panel")).toBeVisible();
-  await page.getByTestId("splitter-explorer").focus();
+  await page.locator('[data-wb-splitter="explorer"]').focus();
   await page.keyboard.press("End");
-  await expect.poll(() => width(page, "#wb-slot-files")).toBe(520);
+  await expect.poll(() => width(page, "#wb-slot-files")).toBe(480);
 
   const roomy = async () => {
     expect(await width(page, "#wb-slot-code")).toBeGreaterThanOrEqual(255);
-    expect(await width(page, "#wb-slot-preview")).toBeGreaterThanOrEqual(270);
+    expect(await width(page, "#wb-slot-preview")).toBeGreaterThanOrEqual(215);
   };
   const explorerValue = async () =>
-    Number(await page.getByTestId("splitter-explorer").getAttribute("aria-valuenow"));
+    Number(await page.locator('[data-wb-splitter="explorer"]').getAttribute("aria-valuenow"));
   expect(await explorerValue()).toBe(100);
   await page.setViewportSize({ width: 800, height: 900 });
-  await expect.poll(() => width(page, "#wb-slot-files")).toBeLessThan(520);
+  await expect.poll(() => width(page, "#wb-slot-files")).toBeLessThan(480);
   await roomy();
   // Assistive technology hears the width on screen, not the saved one.
   expect(await explorerValue()).toBeLessThan(100);
@@ -204,7 +204,7 @@ test("a wide saved explorer leaves the editor its room in a narrow window", asyn
 
   // The saved width comes back with the room.
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect.poll(() => width(page, "#wb-slot-files")).toBe(520);
+  await expect.poll(() => width(page, "#wb-slot-files")).toBe(480);
 });
 
 test("closing a terminal while its startup command runs raises no page error", async ({

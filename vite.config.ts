@@ -30,6 +30,9 @@ function crossOriginIsolation(): Plugin {
 
 export default defineConfig({
   plugins: [react(), crossOriginIsolation(), previewScripts()],
+  resolve: {
+    dedupe: ["react", "react-dom", "@shaulavo/hotkeys", "@base-ui/react"],
+  },
   build: { target: "esnext", sourcemap: true },
   // Each worker is one file. A split worker chunk imports back from the worker's entry file, and
   // WebKit evaluates that entry a second time instead of reusing the running one: the second copy

@@ -145,7 +145,7 @@ test("files and folders can be created, renamed and deleted, and the tree surviv
 
   // Delete asks first; cancelling leaves the file alone.
   await row(page, "guide/readme.md").press("Delete");
-  await expect(page.getByRole("dialog")).toContainText("Delete readme.md?");
+  await expect(page.getByRole("alertdialog")).toContainText("Delete readme.md?");
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(row(page, "guide/readme.md")).toBeVisible();
 
@@ -156,7 +156,7 @@ test("files and folders can be created, renamed and deleted, and the tree surviv
   // A folder goes with everything in it.
   await row(page, "guide").click({ button: "right" });
   await page.getByTestId("menu-delete").click();
-  await expect(page.getByRole("dialog")).toContainText("Delete guide?");
+  await expect(page.getByRole("alertdialog")).toContainText("Delete guide?");
   await page.getByRole("button", { name: "Delete folder" }).click();
   await expect(row(page, "guide")).toHaveCount(0);
   await expect(row(page, "guide/keep.txt")).toHaveCount(0);
@@ -354,9 +354,9 @@ test("the tree always has one Tab stop, and Escape returns from the context menu
   await expect(stops).toHaveCount(1);
 
   await row(page, "top.txt").press("Shift+F10");
-  await expect(page.getByTestId("tree-menu")).toBeVisible();
+  await expect(page.locator("[data-wb-point-context-menu]")).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByTestId("tree-menu")).toHaveCount(0);
+  await expect(page.locator("[data-wb-point-context-menu]")).toHaveCount(0);
   await expect(row(page, "top.txt")).toBeFocused();
 });
 

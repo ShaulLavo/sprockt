@@ -6,8 +6,10 @@
 // The frame's state (layout, window size, phone or not, the shown pane, the boot stage) lives in
 // reactive signals, not React state: the panes' own reactive code (presence, quick open, the
 // editor's "show what opened" effect) reads it, and components read it with `useValue`.
-import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { createMultiHotkeyHandler, detectPlatform } from "@shaulavo/hotkeys";
+import { useKeyboardInset, useLongPressContextMenu } from "@shaulavo/workbench-core/react";
+import { WorkbenchPortalProvider } from "@shaulavo/workbench-ui";
 import { debugHandle } from "../app/debug";
 import { navigate } from "../app/router";
 import { EditorPane } from "../editor/EditorPane";
@@ -23,7 +25,6 @@ import { TAB_POLICY } from "../runtime/tab-policy";
 import { ShareButton } from "../share/ShareButton";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 import { Icon } from "../ui/icons";
-import { useLongPressContextMenu } from "../ui/long-press";
 import { workspaceTurnstile } from "../workspace/lifecycle";
 import { openWorkspace, WorkspaceContext, type WorkspaceSession } from "../workspace/session";
 import { ActivityBar } from "./ActivityBar";
@@ -31,7 +32,6 @@ import { currentStepLabel } from "./boot-steps";
 import { BootProgress } from "./BootProgress";
 import { ui } from "./copy";
 import { focusPane } from "./focus";
-import { useKeyboardInset } from "./keyboard-inset";
 import {
   fitLayout,
   isOpen,
@@ -355,7 +355,7 @@ function Handle(props: {
       label={props.label}
       controls={`wb-slot-${props.controls}`}
       store={frame.layout}
-      measure={() => panes.measure(splitter)}
+      measureSpace={frame.space}
       measureSize={() => panes.shownSize(splitter)}
       valueNow={valueNow}
       onDragging={frame.setDragging}
@@ -517,20 +517,30 @@ function Notice(props: {
  */
 function Frame(props: { frame: FrameState; children: ReactNode }) {
   const { frame } = props;
-  const rootRef = useRef<HTMLElement>(null);
+  const [rootEl, setRootEl] = useState<HTMLElement | null>(null);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const stage = useValue(frame.stage);
   const pane = useValue(frame.pane);
   const phone = useValue(frame.phone);
   const dragging = useValue(frame.dragging);
   const layout = useValue(frame.layout.layout);
   const fitted = useValue(frame.fitted);
-  useKeyboardInset(rootRef, phone);
-  useLongPressContextMenu(rootRef);
+  const handleKeyboardChange = useCallback(
+    (_insetPx: number, open: boolean) => {
+      setKeyboardOpen(phone && open);
+    },
+    [phone],
+  );
+  useKeyboardInset({ onChange: handleKeyboardChange });
+  useLongPressContextMenu(rootEl);
   return (
     <main
-      ref={rootRef}
+      ref={setRootEl}
       className={dragging ? "workbench is-dragging" : "workbench"}
       data-testid="workbench"
+      data-wb-theme="sprockt"
+      data-wb-theme-scope=""
+      data-keyboard-open={phone && keyboardOpen ? "true" : undefined}
       data-stage={stage}
       data-pane={pane}
       data-explorer={layout.explorerOpen ? "open" : "closed"}
@@ -538,7 +548,7 @@ function Frame(props: { frame: FrameState; children: ReactNode }) {
       data-terminal={layout.terminalOpen ? "open" : "closed"}
       style={frameStyle(layout, fitted)}
     >
-      {props.children}
+      <WorkbenchPortalProvider>{props.children}</WorkbenchPortalProvider>
     </main>
   );
 }

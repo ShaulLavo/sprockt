@@ -1,4 +1,6 @@
-// The phone tab bar that picks which pane fills the screen.
+// The phone tab bar that picks which pane fills the screen, dismissing open touch keyboards on switch.
+import { dismissSoftKeyboardOnTouchActivation, resolveActivationFocus } from "@shaulavo/workbench-core";
+import type { MouseEvent } from "react";
 import { Icon, type IconName } from "../ui/icons";
 import { ui } from "./copy";
 
@@ -13,6 +15,12 @@ const PANES: readonly { pane: PhonePane; label: string; icon: IconName }[] = [
 ];
 
 export function PaneSwitcher(props: { pane: PhonePane; onPick(pane: PhonePane): void; dirty: boolean }) {
+  function pick(pane: PhonePane, event: MouseEvent<HTMLButtonElement>): void {
+    const decision = resolveActivationFocus(event, "never");
+    dismissSoftKeyboardOnTouchActivation(decision, event.currentTarget);
+    props.onPick(pane);
+  }
+
   return (
     <nav className="wb-switcher" aria-label={ui.workbench.panes} data-testid="pane-switcher">
       {PANES.map((item) => (
@@ -22,7 +30,7 @@ export function PaneSwitcher(props: { pane: PhonePane; onPick(pane: PhonePane): 
           className="wb-switch"
           aria-pressed={props.pane === item.pane}
           aria-controls={`wb-slot-${item.pane}`}
-          onClick={() => props.onPick(item.pane)}
+          onClick={(event) => pick(item.pane, event)}
         >
           <Icon name={item.icon} />
           <span>{item.label}</span>

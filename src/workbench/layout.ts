@@ -1,6 +1,8 @@
 // The desktop pane layout as plain data: sizes, which panes are open, and the arithmetic that
 // drag handles and keyboard handles share. No Solid and no DOM here, so it is unit tested.
 
+import { LAYOUT_LIMITS } from "@shaulavo/workbench-core";
+
 /** A drag handle between two panes, named after the pane it resizes. */
 export type Splitter = "explorer" | "preview" | "terminal";
 
@@ -26,12 +28,16 @@ export const DEFAULT_LAYOUT: PaneLayout = {
 };
 
 /** Smallest sizes a pane may be dragged to, in CSS pixels. Below half of it the pane closes. */
-export const MIN_PX: Readonly<Record<Splitter, number>> = { explorer: 168, preview: 280, terminal: 120 };
+export const MIN_PX: Readonly<Record<Splitter, number>> = {
+  explorer: LAYOUT_LIMITS.explorerMinPx,
+  preview: LAYOUT_LIMITS.previewMinPx,
+  terminal: LAYOUT_LIMITS.terminalMinPx,
+};
 /** The editor always keeps this much width next to an open preview. */
-export const EDITOR_MIN_PX = 260;
+export const EDITOR_MIN_PX = LAYOUT_LIMITS.editorMinPx;
 /** The editor row always keeps this much height above an open terminal. */
-export const EDITOR_ROW_MIN_PX = 160;
-const EXPLORER_MAX_PX = 520;
+export const EDITOR_ROW_MIN_PX = LAYOUT_LIMITS.codeAreaMinPx;
+const EXPLORER_MAX_PX = LAYOUT_LIMITS.explorerMaxPx;
 
 /** Keyboard steps: arrow keys move a handle by STEP_PX, with Shift by BIG_STEP_PX. */
 export const STEP_PX = 16;
