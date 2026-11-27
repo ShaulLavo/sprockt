@@ -24,6 +24,8 @@ const [hintRevision, setHintRevision] = createSignal(0);
  * changes externally.
  */
 const fallbackHints = new Map<string, WorkspaceMeta>();
+/** Per-workspace in-process lock tail so concurrent callers serialize even without Web Locks. */
+const nameLockQueues = new Map<string, Promise<unknown>>();
 
 function bumpHints(): void {
   setHintRevision((value) => value + 1);
@@ -105,6 +107,46 @@ export interface HydrateWorkspaceNameDeps {
   now?: () => Date;
 }
 
+/** Serializes metadata check-and-write per workspace within this tab and across attached tabs. */
+function withWorkspaceNameLock<T>(id: string, task: () => Promise<T>): Promise<T> {
+  const runInBrowserLock = (): Promise<T> => {
+    if (typeof navigator === "undefined" || !navigator.locks) return task();
+    return navigator.locks.request(`sprockt:${id}:meta-name`, task);
+  };
+  const previous = nameLockQueues.get(id) ?? Promise.resolve();
+  const next = previous.then(runInBrowserLock, runInBrowserLock);
+  const tail = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  nameLockQueues.set(id, tail);
+  void tail.finally(() => {
+    if (nameLockQueues.get(id) === tail) nameLockQueues.delete(id);
+  });
+  return next;
+}
+
+type MetaRead = { readonly ok: true; readonly raw: string | undefined } | { readonly ok: false };
+
+async function readMetaStrict(deps: HydrateWorkspaceNameDeps): Promise<MetaRead> {
+  try {
+    return { ok: true, raw: await deps.readMeta() };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/** Whether `raw` is absent or a JSON object we can safely merge into without clobbering corrupt data. */
+function canMergeMetaRaw(raw: string | undefined): boolean {
+  if (raw === undefined) return true;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
+
 function newerTimestamp(a: string | undefined, b: string | undefined): string | undefined {
   if (!a) return b;
   if (!b) return a;
@@ -136,43 +178,49 @@ async function deriveNameFromWorkspace(
 
 /**
  * Hydrates a workspace's display name from `/.sprockt/workspace.json` -> root `package.json`,
- * updating the reactive hint without ever overwriting an explicit user rename or legacy name.
+ * updating the reactive hint without ever overwriting an explicit user rename, legacy name,
+ * or unreadable metadata file.
  */
-export async function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps): Promise<string> {
-  const now = deps.now ? deps.now() : new Date();
-  const nowIso = now.toISOString();
-  const rawMeta = await deps.readMeta().catch(() => undefined);
-  const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
-  const hint = readWorkspaceHint(id);
+export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps): Promise<string> {
+  return withWorkspaceNameLock(id, async () => {
+    const now = deps.now ? deps.now() : new Date();
+    const nowIso = now.toISOString();
+    const hint = readWorkspaceHint(id);
+    const metaRead = await readMetaStrict(deps);
+    if (!metaRead.ok) return hint?.name ?? id;
 
-  if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) {
-    const lastOpened =
-      newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
-    saveWorkspaceHint(id, { ...fileMeta, lastOpened });
-    return fileMeta.name;
-  }
+    const rawMeta = metaRead.raw;
+    const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
 
-  if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
-    saveWorkspaceHint(id, { ...hint, lastOpened: newerTimestamp(hint.lastOpened, nowIso) ?? nowIso });
-    return hint.name;
-  }
+    if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) {
+      const lastOpened =
+        newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
+      saveWorkspaceHint(id, { ...fileMeta, lastOpened });
+      return fileMeta.name;
+    }
 
-  const derived = await deriveNameFromWorkspace(fileMeta, deps);
-  if (derived) {
-    const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
-    saveWorkspaceHint(id, meta);
-    await persistDerivedMeta(deps, fileMeta?.state, json);
-    return derived;
-  }
+    if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
+      saveWorkspaceHint(id, { ...hint, lastOpened: newerTimestamp(hint.lastOpened, nowIso) ?? nowIso });
+      return hint.name;
+    }
 
-  if (fileMeta) {
-    const lastOpened =
-      newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
-    saveWorkspaceHint(id, { ...fileMeta, lastOpened });
-    return fileMeta.name;
-  }
+    const derived = await deriveNameFromWorkspace(fileMeta, deps);
+    if (derived) {
+      const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
+      saveWorkspaceHint(id, meta);
+      if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, fileMeta?.state, json);
+      return derived;
+    }
 
-  return hint?.name ?? id;
+    if (fileMeta) {
+      const lastOpened =
+        newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
+      saveWorkspaceHint(id, { ...fileMeta, lastOpened });
+      return fileMeta.name;
+    }
+
+    return hint?.name ?? id;
+  });
 }
 
 export interface UploadedNameItem {
@@ -189,32 +237,38 @@ async function uploadedPackageJsonName(items: readonly UploadedNameItem[]): Prom
 
 /**
  * Adopts a project name from a root folder upload or uploaded root `package.json` when the
- * workspace still has no real name (never overwrites an explicit rename or named project).
+ * workspace still has no real name (never overwrites an explicit rename, named project, or
+ * unreadable metadata file). Serialized per workspace so concurrent uploads never race.
  */
-export async function adoptUploadedWorkspaceName(
+export function adoptUploadedWorkspaceName(
   id: string,
   items: readonly UploadedNameItem[],
   deps: HydrateWorkspaceNameDeps,
 ): Promise<string | undefined> {
-  const rawMeta = await deps.readMeta().catch(() => undefined);
-  const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
-  const hint = readWorkspaceHint(id);
+  return withWorkspaceNameLock(id, async () => {
+    const metaRead = await readMetaStrict(deps);
+    if (!metaRead.ok) return undefined;
 
-  if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) return undefined;
-  if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) return undefined;
+    const rawMeta = metaRead.raw;
+    const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
+    const hint = readWorkspaceHint(id);
 
-  const folderName = deriveUploadFolderName(
-    items.map((item) => ({ path: item.path, hasData: item.data !== undefined })),
-  );
-  const derived =
-    folderName ??
-    (await uploadedPackageJsonName(items)) ??
-    packageJsonName(await deps.readPackageJson().catch(() => undefined));
-  if (!derived) return undefined;
+    if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) return undefined;
+    if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) return undefined;
 
-  const now = deps.now ? deps.now() : new Date();
-  const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
-  saveWorkspaceHint(id, meta);
-  await persistDerivedMeta(deps, fileMeta?.state, json);
-  return derived;
+    const folderName = deriveUploadFolderName(
+      items.map((item) => ({ path: item.path, hasData: item.data !== undefined })),
+    );
+    const derived =
+      folderName ??
+      (await uploadedPackageJsonName(items)) ??
+      packageJsonName(await deps.readPackageJson().catch(() => undefined));
+    if (!derived) return undefined;
+
+    const now = deps.now ? deps.now() : new Date();
+    const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
+    saveWorkspaceHint(id, meta);
+    if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, fileMeta?.state, json);
+    return derived;
+  });
 }

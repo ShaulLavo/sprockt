@@ -273,4 +273,71 @@ describe("workspace name hydration and reactivity", () => {
     removeWorkspaceHint(looseId);
     expect(workspaceName(looseId)).toBe(looseId);
   });
+
+  test("never overwrites workspace.json or hint when readMeta fails transiently", async () => {
+    const id = "readfail01";
+    let writes = 0;
+
+    const hydrated = await hydrateWorkspaceName(id, {
+      readMeta: () => Promise.reject(new Error("transient IndexedDB error")),
+      writeMeta: async () => void (writes += 1),
+      readPackageJson: async () => JSON.stringify({ name: "should-not-write" }),
+    });
+    expect(hydrated).toBe(id);
+    expect(writes).toBe(0);
+    expect(readWorkspaceHint(id)).toBeUndefined();
+
+    const adopted = await adoptUploadedWorkspaceName(
+      id,
+      [{ path: "uploaded-folder/index.ts", data: new Blob(["1"]) }],
+      {
+        readMeta: () => Promise.reject(new Error("transient IndexedDB error")),
+        writeMeta: async () => void (writes += 1),
+        readPackageJson: async () => JSON.stringify({ name: "should-not-write" }),
+      },
+    );
+    expect(adopted).toBeUndefined();
+    expect(writes).toBe(0);
+    expect(readWorkspaceHint(id)).toBeUndefined();
+  });
+
+  test("serializes concurrent upload adoptions so the first writer wins and the second does not overwrite", async () => {
+    const id = "concurrent1";
+    let storedMeta: string | undefined = serializeWorkspaceMeta(
+      createWorkspaceMeta({ name: "workspace", template: "blank", defaultName: true }),
+    );
+    const writes: string[] = [];
+    const gate = Promise.withResolvers<void>();
+
+    const deps = {
+      readMeta: async () => storedMeta,
+      writeMeta: async (json: string) => {
+        writes.push(json);
+        storedMeta = json;
+      },
+      readPackageJson: async () => undefined,
+    };
+
+    const slowBlob = {
+      text: async () => {
+        await gate.promise;
+        return JSON.stringify({ name: "first-upload" });
+      },
+    } as Blob;
+
+    const first = adoptUploadedWorkspaceName(id, [{ path: "package.json", data: slowBlob }], deps);
+    const second = adoptUploadedWorkspaceName(
+      id,
+      [{ path: "second-folder/index.ts", data: new Blob(["2"]) }],
+      deps,
+    );
+
+    gate.resolve();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult).toBe("first-upload");
+    expect(secondResult).toBeUndefined();
+    expect(writes).toHaveLength(1);
+    expect(workspaceName(id)).toBe("first-upload");
+  });
 });
