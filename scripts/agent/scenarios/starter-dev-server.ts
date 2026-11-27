@@ -99,7 +99,6 @@ export const starterDevServerScenario: AgentScenario = {
     await page.locator(SELECTORS.landing.templateCard(starterId)).click();
     await page.waitForURL(/\/w\/[a-z0-9]+$/, { timeout: 30_000 });
     await waitForWorkbenchReady(page, args.timeoutMs);
-    await page.waitForSelector(SELECTORS.editor.root, { timeout: 30_000 });
 
     if (spec.entryFile) {
       await page
@@ -110,6 +109,7 @@ export const starterDevServerScenario: AgentScenario = {
         ({ sel, name }) => document.querySelector(sel)?.getAttribute("aria-label")?.endsWith(name) ?? false,
         { sel: SELECTORS.editor.activeFile, name: spec.entryFile },
       );
+      await page.waitForSelector(SELECTORS.editor.root, { timeout: 30_000 });
     }
     await page.waitForTimeout(1500);
 

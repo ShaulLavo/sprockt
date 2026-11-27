@@ -6,6 +6,7 @@
    Every color is light-dark(light, dark). The page follows the system unless <html data-theme>
    is "light" or "dark" (src/workbench/theme.ts sets it from the stored choice). */
 
+@import "@shaulavo/workbench/layers.css";
 @import "@fontsource-variable/schibsted-grotesk/wght.css";
 @import "@fontsource-variable/jetbrains-mono/wght.css";
 @import "@fontsource-variable/jetbrains-mono/wght-italic.css";
@@ -102,16 +103,19 @@
   --syn-comment: light-dark(#616772, #7d899d);
   --syn-comment-style: italic;
 
-  /* ── Workbench editor token bridge ── */
-  --wb-warning: var(--warn);
+  /* ── Workbench editor token bridge (canonical --wb-* names) ── */
+  --wb-warn: var(--warn);
+  --wb-syn-text: var(--syn-text);
   --wb-syn-comment: var(--syn-comment);
   --wb-syn-keyword: var(--syn-keyword);
   --wb-syn-string: var(--syn-string);
   --wb-syn-number: var(--syn-number);
-  --wb-syn-fn: var(--syn-function);
+  --wb-syn-function: var(--syn-function);
   --wb-syn-type: var(--syn-type);
-  --wb-syn-var: var(--syn-text);
-  --wb-syn-prop: var(--syn-property);
+  --wb-syn-attr: var(--syn-attr);
+  --wb-syn-variable: var(--syn-text);
+  --wb-syn-property: var(--syn-property);
+  --wb-syn-punct: var(--syn-punct);
 
   /* ── Terminal (ANSI) ── */
   --ansi-fg: light-dark(#181b20, #dce3ed);
@@ -246,6 +250,25 @@
   color-scheme: dark;
 }
 
+/* Override workbench default syntax and warning tokens on themed workbench scopes too. */
+@layer workbench-app {
+  [data-wb-theme="sprockt"],
+  [data-wb-theme-scope] {
+    --wb-warn: var(--warn);
+    --wb-syn-text: var(--syn-text);
+    --wb-syn-comment: var(--syn-comment);
+    --wb-syn-keyword: var(--syn-keyword);
+    --wb-syn-string: var(--syn-string);
+    --wb-syn-number: var(--syn-number);
+    --wb-syn-function: var(--syn-function);
+    --wb-syn-type: var(--syn-type);
+    --wb-syn-attr: var(--syn-attr);
+    --wb-syn-variable: var(--syn-text);
+    --wb-syn-property: var(--syn-property);
+    --wb-syn-punct: var(--syn-punct);
+  }
+}
+
 /* Multicolor tab tone assignments (shared by editor tabs, terminal tabs and the landing demo). */
 [data-tab-tone="ts"] {
   --tab-accent: var(--tab-ts);
@@ -289,93 +312,100 @@
 
 /* ───────────── Base ───────────── */
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
 
-html {
-  -webkit-text-size-adjust: 100%;
-  -webkit-tap-highlight-color: transparent;
-  overscroll-behavior: none;
-}
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
 
-html,
-body,
-#app {
-  height: 100%;
-  margin: 0;
-}
+  html,
+  body,
+  #app {
+    height: 100%;
+    margin: 0;
+  }
 
-body {
-  background: var(--bg);
-  color: var(--fg);
-  font: var(--weight-regular) var(--text-sm) / var(--leading-ui) var(--font-ui);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  font-optical-sizing: auto;
-}
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: var(--weight-regular) var(--text-sm) / var(--leading-ui) var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-optical-sizing: auto;
+  }
 
-button {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-touch-callout: none;
-}
+  button {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
 
-[role="button"],
-[role="tab"],
-[role="menuitem"],
-[role="separator"],
-[role="toolbar"],
-summary,
-label {
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-touch-callout: none;
-}
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  [role="separator"],
+  [role="toolbar"],
+  summary,
+  label {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
 
-button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
+  button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
 
-input,
-textarea,
-select {
-  color: inherit;
-  font: inherit;
-}
-
-/* iOS Safari zooms into a focused field under 16px and never zooms back out. */
-@media (pointer: coarse) {
   input,
   textarea,
   select {
-    font-size: 16px;
+    color: inherit;
+    font: inherit;
   }
-}
 
-kbd {
-  font: var(--weight-medium) var(--text-2xs) / 1 var(--font-mono);
-}
+  /* iOS Safari zooms into a focused field under 16px and never zooms back out. */
+  @media (pointer: coarse) {
+    input,
+    textarea,
+    select {
+      font-size: 16px;
+    }
+  }
 
-::selection {
-  background: var(--bg-selection);
-}
+  kbd {
+    font: var(--weight-medium) var(--text-2xs) / 1 var(--font-mono);
+  }
 
-:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
-  border-radius: var(--radius-sm);
+  ::selection {
+    background: var(--bg-selection);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+    border-radius: var(--radius-sm);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
 }
 
 /* A solid button is filled with the focus color itself, so its ring draws inside in currentColor. */
@@ -383,11 +413,6 @@ kbd {
 .term-key.is-mod[aria-pressed="true"]:focus-visible {
   outline: 2px solid currentColor;
   outline-offset: -4px;
-}
-
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--line-strong) transparent;
 }
 
 .sr-only {

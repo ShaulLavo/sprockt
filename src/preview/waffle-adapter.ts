@@ -1,12 +1,12 @@
 // Adapts Sprockt's PreviewTransport (mounted SW or isolated subdomain) + remote dev-server ports
-// onto @shaulavo/workbench-core's PreviewAdapter and PreviewFrameController.
+// onto @shaulavo/workbench/core's PreviewAdapter and PreviewFrameController.
 import type {
   PreviewAdapter,
   PreviewFrameController,
   PreviewFrameEvent,
   PreviewServerInfo,
   Subscribable,
-} from "@shaulavo/workbench-core";
+} from "@shaulavo/workbench/core";
 import { frameCommand, type FrameMessage } from "./bridge";
 import { normalizePreviewPath } from "./paths";
 import { listedPorts } from "./server-status";

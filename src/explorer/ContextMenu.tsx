@@ -1,6 +1,6 @@
-// Coordinate-anchored context menu backed by `@shaulavo/workbench-ui`'s Base UI `PointContextMenu`.
+// Coordinate-anchored context menu backed by `@shaulavo/workbench`'s Base UI `PointContextMenu`.
 import { useRef } from "react";
-import { PointContextMenu, type ContextMenuItem } from "@shaulavo/workbench-ui";
+import { PointContextMenu, type ContextMenuItem } from "@shaulavo/workbench";
 
 export interface MenuItem {
   readonly label: string;

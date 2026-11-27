@@ -1,17 +1,17 @@
-// Adapts Sprockt's Waffle FileService + EditorStore to @shaulavo/workbench-core's lazy FileSystemAdapter.
+// Adapts Sprockt's Waffle FileService + EditorStore to @shaulavo/workbench/core's lazy FileSystemAdapter.
 import type {
   DirectoryLoadState,
   FileSystemAdapter,
   LazyInvalidationEvent,
   Subscribable,
-} from "@shaulavo/workbench-core";
+} from "@shaulavo/workbench/core";
 import {
   ancestorsOf,
   isSameOrInside,
   normalizeTreePath,
   parentOf,
   topLevelPaths,
-} from "@shaulavo/workbench-tree";
+} from "@shaulavo/workbench/tree/model";
 import type { EditorStore } from "../editor/store";
 import { DestinationExistsError } from "../files/errors";
 import { rebase } from "../files/paths";

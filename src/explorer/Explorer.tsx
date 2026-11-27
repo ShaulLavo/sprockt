@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { StrokeIcon } from "@shaulavo/workbench-icons/react";
+import { StrokeIcon } from "@shaulavo/workbench";
 import {
   ancestorsOf,
   baseName,
   FileTreeModel,
+  FileTreeView,
   targetDirectory,
   topLevelPaths,
+  type FileTreeViewHandle,
   type TreeEntryRow,
-} from "@shaulavo/workbench-tree";
-import { FileTreeView, type FileTreeViewHandle } from "@shaulavo/workbench-tree/react";
+} from "@shaulavo/workbench/tree";
 import type { EditorStore } from "../editor/store";
 import { DestinationExistsError, FolderGoneError } from "../files/errors";
 import type { UploadItem } from "../files/service";
@@ -487,7 +488,7 @@ export function Explorer(props: { readonly store: EditorStore }) {
         <FileTreeView
           model={model}
           adapter={waffle.adapter}
-          handleRef={handleRef}
+          ref={handleRef}
           label={copy.title}
           showFilter={false}
           filterPlaceholder={copy.filterPlaceholder}

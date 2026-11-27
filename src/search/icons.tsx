@@ -1,6 +1,6 @@
-// UI chrome icons for editor tabs, search, and quick open; file-type icons come from @shaulavo/workbench-icons.
+// UI chrome icons for editor tabs, search, and quick open; file-type icons come from @shaulavo/workbench/icons.
 import type { ReactNode } from "react";
-import { FileTypeIcon } from "@shaulavo/workbench-icons/react";
+import { FileTypeIcon } from "@shaulavo/workbench/icons";
 
 function Icon(props: { class?: string; children: ReactNode }) {
   return (

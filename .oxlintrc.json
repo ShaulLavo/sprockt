@@ -8,6 +8,9 @@
   },
   "rules": {
     "max-depth": ["error", 3],
+    "no-nested-ternary": "error",
+    "unicorn/no-nested-ternary": "error",
+    "no-else-return": "error",
     "no-console": ["error", { "allow": ["error", "warn"] }],
     "typescript/no-explicit-any": "error",
     "typescript/consistent-type-imports": "error",
@@ -20,6 +23,22 @@
     {
       "files": ["scripts/**"],
       "rules": { "no-console": "off" }
+    },
+    {
+      "files": [
+        "scripts/agent/evidence.ts",
+        "src/importer/detect/detect.ts",
+        "src/landing/github-input.ts",
+        "src/lib/fs/entries.ts",
+        "src/preview/websocket-frames.ts",
+        "src/runtime/boot.ts",
+        "src/share/share.ts",
+        "src/workbench/theme.ts"
+      ],
+      "rules": {
+        "no-nested-ternary": "off",
+        "unicorn/no-nested-ternary": "off"
+      }
     }
   ],
   "ignorePatterns": [

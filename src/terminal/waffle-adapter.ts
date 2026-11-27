@@ -1,5 +1,5 @@
 // Adapts Sprockt's Waffle + bash-web TerminalStore and CSS light-dark() tokens onto
-// @shaulavo/workbench-core's TerminalAdapter and @shaulavo/workbench-terminal's TerminalThemeInput.
+// @shaulavo/workbench/core's TerminalAdapter and @shaulavo/workbench/terminal's TerminalThemeInput.
 import { BrowserSession } from "bash-web/session";
 import type {
   Subscribable,
@@ -7,9 +7,9 @@ import type {
   TerminalAttachment,
   TerminalSessionInfo,
   TerminalSessionStatus,
-} from "@shaulavo/workbench-core";
-import type { TerminalThemeInput } from "@shaulavo/workbench-terminal";
-import { parseCssColor, type RgbColor } from "@shaulavo/workbench-tokens";
+} from "@shaulavo/workbench/core";
+import type { TerminalThemeInput } from "@shaulavo/workbench/terminal";
+import { parseCssColor, type RgbColor } from "@shaulavo/workbench/tokens";
 import type { Terminal } from "ghostty-webgpu";
 import { createEffect, createRoot, type Accessor } from "../lib/reactive";
 import { PROJECT_ROOT, projectRelative } from "../workspace/paths";
@@ -39,22 +39,28 @@ const FONT_FAMILY =
   '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
 const FALLBACK_BLACK: RgbColor = { r: 0, g: 0, b: 0 };
 
-function createReactiveSubscribable<T>(
+export function createReactiveSubscribable<T>(
   read: () => T,
   equals: (a: T, b: T) => boolean = Object.is,
 ): Subscribable<T> {
   let snapshot = read();
+  // Track the last notified value separately from `snapshot`: synchronous `getSnapshot()` reads
+  // (for example when a sibling subscribable notifies first inside `flushEffects()`) must never
+  // advance the notification baseline and swallow `useSyncExternalStore` updates.
+  let lastNotified = snapshot;
   const listeners = new Set<() => void>();
   let stopEffect: (() => void) | undefined;
 
   function ensureRunning(): void {
     if (stopEffect) return;
+    lastNotified = snapshot;
     stopEffect = createRoot((dispose) => {
       createEffect(() => {
         const next = read();
-        if (equals(snapshot, next)) return;
-        snapshot = next;
-        for (const listener of listeners) listener();
+        if (!equals(snapshot, next)) snapshot = next;
+        if (equals(lastNotified, snapshot)) return;
+        lastNotified = snapshot;
+        for (const listener of Array.from(listeners)) listener();
       });
       return dispose;
     });
@@ -78,6 +84,15 @@ function createReactiveSubscribable<T>(
       };
     },
   };
+}
+
+function sameSplitPair(
+  a: readonly [string, string] | undefined,
+  b: readonly [string, string] | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a[0] === b[0] && a[1] === b[1];
 }
 
 function mapSessionStatus(state: SessionState): TerminalSessionStatus {
@@ -133,16 +148,20 @@ export function createSprocktTerminalThemeSubscribable(
   scheme: Accessor<"light" | "dark">,
 ): Subscribable<TerminalThemeInput> {
   let lastScheme = scheme();
+  let lastNotifiedScheme = lastScheme;
   let cached = readSprocktTerminalTheme(lastScheme);
   const listeners = new Set<() => void>();
   let stopEffect: (() => void) | undefined;
 
-  function refresh(): void {
+  function syncTheme(): void {
     const nextScheme = scheme();
-    if (nextScheme === lastScheme) return;
-    lastScheme = nextScheme;
-    cached = readSprocktTerminalTheme(nextScheme);
-    for (const listener of listeners) listener();
+    if (nextScheme !== lastScheme) {
+      lastScheme = nextScheme;
+      cached = readSprocktTerminalTheme(nextScheme);
+    }
+    if (nextScheme === lastNotifiedScheme) return;
+    lastNotifiedScheme = nextScheme;
+    for (const listener of Array.from(listeners)) listener();
   }
 
   return {
@@ -157,10 +176,11 @@ export function createSprocktTerminalThemeSubscribable(
     subscribe(listener) {
       listeners.add(listener);
       if (!stopEffect) {
+        lastNotifiedScheme = lastScheme;
         stopEffect = createRoot((dispose) => {
           createEffect(() => {
             scheme();
-            refresh();
+            syncTheme();
           });
           return dispose;
         });
@@ -227,8 +247,12 @@ export function createWaffleTerminalBridge(
     }));
   }, sameSessions);
 
-  const activeId = createReactiveSubscribable<string | undefined>(() => terminals.tabs().active);
+  const activeId = createReactiveSubscribable<string | undefined>(() => terminals.tabs().focused);
   const splitId = createReactiveSubscribable<string | undefined>(() => terminals.tabs().split);
+  const splitPair = createReactiveSubscribable<readonly [string, string] | undefined>(() => {
+    const { active, split } = terminals.tabs();
+    return active && split ? [active, split] : undefined;
+  }, sameSplitPair);
 
   function runStartupCommand(sessionId: string, browserSession: BrowserSession): void {
     if (terminals.stateOf(sessionId) !== "ready") return;
@@ -242,6 +266,7 @@ export function createWaffleTerminalBridge(
     sessions,
     activeId,
     splitId,
+    splitPair,
     async createSession(options) {
       return terminals.create(options?.title ? { title: options.title } : undefined);
     },

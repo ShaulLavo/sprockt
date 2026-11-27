@@ -1,12 +1,13 @@
-// One persistent Singapore editor over @shaulavo/workbench-editor's EditorSessionView.
+// One persistent Singapore editor over @shaulavo/workbench/editor's unified CodeEditor.
 // Switching tabs attaches that file's buffer session, preserving text, undo history, carets, and scroll.
+import { useViewportMode } from "@shaulavo/workbench";
 import {
-  EditorSessionView,
+  CodeEditor,
   languageIdForPath,
   languageLabelForPath,
   type EditorRevealTarget,
   type EditorSessionAttachment,
-} from "@shaulavo/workbench-editor";
+} from "@shaulavo/workbench/editor";
 import type { Editor, EditorScrollPosition } from "@singapore-editor/core/editor";
 import { createPlugin } from "@singapore-editor/core/extensions";
 import "@singapore-editor/core/style.css";
@@ -73,17 +74,6 @@ function createClipboardBridgePlugin(onReady: (runner: InputCommandRunner | unde
       scope.onDispose(() => onReady(undefined));
     },
   });
-}
-
-function useNarrow(): boolean {
-  const [media] = useState(() => matchMedia("(max-width: 768px)"));
-  const [narrow, setNarrow] = useState(media.matches);
-  useEffect(() => {
-    const update = () => setNarrow(media.matches);
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, [media]);
-  return narrow;
 }
 
 interface ShownBuffer {
@@ -181,7 +171,7 @@ function buildEditorMenuItems(
 export function EditorView(props: { store: EditorStore; onEditor?: (editor: Editor) => void }) {
   const { store, onEditor } = props;
   const workspace = useWorkspace();
-  const narrow = useNarrow();
+  const narrow = useViewportMode() === "phone";
   const writable = useValue(workspace.files.writable);
   const active = useValue(store.active);
   const reveal = useValue(store.reveal);
@@ -356,8 +346,8 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
 
   return (
     <>
-      <EditorSessionView
-        attachment={attachment}
+      <CodeEditor
+        session={attachment}
         readOnly={!writable}
         fontFamily={MONO}
         fontSize={13}
@@ -368,7 +358,6 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
         wordWrapBreak="word"
         cursorLineHighlight={CURSOR_LINE_HIGHLIGHT}
         narrowViewport={narrow}
-        useDefaultHighlighting
         foldIcons={FOLD_ICONS}
         includeMergeConflict={false}
         extraPlugins={extraPlugins}

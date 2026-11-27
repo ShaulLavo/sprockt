@@ -1,0 +1,4 @@
+# Structure debt that existed when this project adopted unknot.
+# Fixing an entry never fails the run; anything not listed here does.
+# rules: field-leak forward-ref import-cycle long-file module-cycle prop-drilling shallow-module tangle wide-directory wide-injection
+module-cycle src/app <-> src/editor <-> src/explorer <-> src/files <-> src/importer <-> src/landing <-> src/preview <-> src/runtime <-> src/share <-> src/tasks <-> src/templates <-> src/terminal <-> src/workbench <-> src/workspace

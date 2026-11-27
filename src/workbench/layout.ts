@@ -1,10 +1,18 @@
 // The desktop pane layout as plain data: sizes, which panes are open, and the arithmetic that
 // drag handles and keyboard handles share. No Solid and no DOM here, so it is unit tested.
 
-import { fitPaneGeometry, LAYOUT_LIMITS } from "@shaulavo/workbench-core";
+import { fitPaneGeometry, LAYOUT_LIMITS } from "@shaulavo/workbench/core";
 
 /** A drag handle between two panes, named after the pane it resizes. */
 export type Splitter = "explorer" | "preview" | "terminal";
+
+/**
+ * The terminal pane's desktop visibility:
+ * - `open`: expanded body + tab strip (`terminal` px)
+ * - `collapsed`: body minimized, tab strip visible (`--tab-h`)
+ * - `hidden`: completely hidden, tab strip included (`0px`)
+ */
+export type TerminalState = "open" | "collapsed" | "hidden";
 
 export interface PaneLayout {
   /** Explorer width in CSS pixels. */
@@ -15,7 +23,7 @@ export interface PaneLayout {
   readonly terminal: number;
   readonly explorerOpen: boolean;
   readonly previewOpen: boolean;
-  readonly terminalOpen: boolean;
+  readonly terminalState: TerminalState;
 }
 
 export const DEFAULT_LAYOUT: PaneLayout = {
@@ -24,7 +32,7 @@ export const DEFAULT_LAYOUT: PaneLayout = {
   terminal: 236,
   explorerOpen: true,
   previewOpen: true,
-  terminalOpen: true,
+  terminalState: "open",
 };
 
 /** Smallest sizes a pane may be dragged to, in CSS pixels. Below half of it the pane closes. */
@@ -43,23 +51,42 @@ const EXPLORER_MAX_PX = LAYOUT_LIMITS.explorerMaxPx;
 export const STEP_PX = 16;
 export const BIG_STEP_PX = 80;
 
-const OPEN_KEY: Readonly<Record<Splitter, "explorerOpen" | "previewOpen" | "terminalOpen">> = {
-  explorer: "explorerOpen",
-  preview: "previewOpen",
-  terminal: "terminalOpen",
-};
-
 export const GLOBAL_LAYOUT_KEY = "sprockt:layout:v1";
 
 /** Legacy per-workspace key, kept only for one-way migration into GLOBAL_LAYOUT_KEY. */
 export const layoutStorageKey = (workspaceId: string) => `sprockt:layout:${workspaceId}`;
 
 export function isOpen(layout: PaneLayout, splitter: Splitter): boolean {
-  return layout[OPEN_KEY[splitter]];
+  if (splitter === "explorer") return layout.explorerOpen;
+  if (splitter === "preview") return layout.previewOpen;
+  return layout.terminalState !== "hidden";
 }
 
 export function setOpen(layout: PaneLayout, splitter: Splitter, open: boolean): PaneLayout {
-  return { ...layout, [OPEN_KEY[splitter]]: open };
+  if (splitter === "explorer") return { ...layout, explorerOpen: open };
+  if (splitter === "preview") return { ...layout, previewOpen: open };
+  return { ...layout, terminalState: open ? "open" : "hidden" };
+}
+
+export function setTerminalState(layout: PaneLayout, terminalState: TerminalState): PaneLayout {
+  return { ...layout, terminalState };
+}
+
+export function toggleTerminalCollapsed(layout: PaneLayout): PaneLayout {
+  const next: TerminalState = layout.terminalState === "open" ? "collapsed" : "open";
+  return { ...layout, terminalState: next };
+}
+
+function parseTerminalState(value: Record<string, unknown>): TerminalState {
+  if (
+    value.terminalState === "open" ||
+    value.terminalState === "collapsed" ||
+    value.terminalState === "hidden"
+  ) {
+    return value.terminalState;
+  }
+  if (value.terminalOpen === false) return "hidden";
+  return DEFAULT_LAYOUT.terminalState;
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), Math.max(min, max));
@@ -84,7 +111,7 @@ export function parseLayout(text: string | null | undefined): PaneLayout {
     terminal: Math.max(finite(value.terminal, DEFAULT_LAYOUT.terminal), MIN_PX.terminal),
     explorerOpen: flag(value.explorerOpen, true),
     previewOpen: flag(value.previewOpen, true),
-    terminalOpen: flag(value.terminalOpen, true),
+    terminalState: parseTerminalState(value),
   };
 }
 
@@ -169,7 +196,8 @@ export function keyTo(
   if (key === "min") return withSizePx(layout, splitter, toPx(range.min), room);
   if (key === "max") return withSizePx(layout, splitter, toPx(range.max), room);
   const saved = shown ?? sizePx(layout, splitter, room);
-  const current = isOpen(layout, splitter) ? saved : MIN_PX[splitter];
+  const expanded = splitter === "terminal" ? layout.terminalState === "open" : isOpen(layout, splitter);
+  const current = expanded ? saved : MIN_PX[splitter];
   const step = (big ? BIG_STEP_PX : STEP_PX) * (key === "grow" ? 1 : -1);
   return withSizePx(layout, splitter, current + step, room);
 }
@@ -230,7 +258,7 @@ export function fitLayout(layout: PaneLayout, space: Space): Fitted {
       terminalHeightPx: layout.terminal,
       explorerOpen: layout.explorerOpen,
       previewOpen: layout.previewOpen,
-      terminalOpen: layout.terminalOpen,
+      terminalOpen: layout.terminalState === "open",
     },
     space,
   );

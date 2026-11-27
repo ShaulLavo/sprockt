@@ -9,14 +9,7 @@
         "@fontsource-variable/jetbrains-mono": "5.3.0",
         "@fontsource-variable/schibsted-grotesk": "5.3.0",
         "@shaulavo/hotkeys": "0.0.4",
-        "@shaulavo/workbench-core": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-core-0.1.17.tgz",
-        "@shaulavo/workbench-editor": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-editor-0.1.17.tgz",
-        "@shaulavo/workbench-icons": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-icons-0.1.17.tgz",
-        "@shaulavo/workbench-preview": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-preview-0.1.17.tgz",
-        "@shaulavo/workbench-terminal": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-terminal-0.1.17.tgz",
-        "@shaulavo/workbench-tokens": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-tokens-0.1.17.tgz",
-        "@shaulavo/workbench-tree": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-tree-0.1.17.tgz",
-        "@shaulavo/workbench-ui": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-ui-0.1.17.tgz",
+        "@shaulavo/workbench": "0.1.21",
         "@singapore-editor/core": "0.2.14",
         "@singapore-editor/find": "0.2.14",
         "@singapore-editor/gutters": "0.2.14",
@@ -44,6 +37,7 @@
         "oxfmt": "0.70.0",
         "oxlint": "1.88.0",
         "typescript": "7.0.2",
+        "unknot": "0.1.2",
         "vite": "8.3.4",
         "wrangler": "4.151.0",
       },
@@ -52,16 +46,6 @@
   "trustedDependencies": [
     "bun-wasm",
   ],
-  "overrides": {
-    "@shaulavo/workbench-core": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-core-0.1.17.tgz",
-    "@shaulavo/workbench-editor": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-editor-0.1.17.tgz",
-    "@shaulavo/workbench-icons": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-icons-0.1.17.tgz",
-    "@shaulavo/workbench-preview": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-preview-0.1.17.tgz",
-    "@shaulavo/workbench-terminal": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-terminal-0.1.17.tgz",
-    "@shaulavo/workbench-tokens": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-tokens-0.1.17.tgz",
-    "@shaulavo/workbench-tree": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-tree-0.1.17.tgz",
-    "@shaulavo/workbench-ui": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-ui-0.1.17.tgz",
-  },
   "packages": {
     "@babel/runtime": ["@babel/runtime@8.1.3", "", {}, "sha512-tno/enifiFAE77kbJadRE5wKfmzxlYvdB5Dj8yqmWoT49mDJE+wvLgvJY/EKt/jQllv369GMxyyJ9tKfTL33Nw=="],
 
@@ -339,21 +323,7 @@
 
     "@shaulavo/hotkeys": ["@shaulavo/hotkeys@0.0.4", "", { "dependencies": { "@tanstack/store": "^0.11.1" }, "peerDependencies": { "@tanstack/react-store": "^0.11.1", "react": ">=18", "react-dom": ">=18" }, "optionalPeers": ["@tanstack/react-store", "react", "react-dom"] }, "sha512-CFFlIU0zSouq7wmNRcB87MM6VNA4yaOXvN4ZaoZ+J2UZn6Erw180gV22uYOdsPvFH1Uw/QaLDg6SxpL75bOQ9w=="],
 
-    "@shaulavo/workbench-core": ["@shaulavo/workbench-core@https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-core-0.1.17.tgz", { "dependencies": { "@shaulavo/hotkeys": "0.0.4", "@shaulavo/workbench-tokens": "0.0.1" }, "peerDependencies": { "react": ">=19.2.0" }, "optionalPeers": ["react"] }, "sha512-kcWDGPZaukkjDUYGGcqbZ6z0pcA0tQxeji67eFZrLH8SDGOXyuHOAlhbHd9C9AqgWpX7KALOVVFP+QKBINU92A=="],
-
-    "@shaulavo/workbench-editor": ["@shaulavo/workbench-editor@https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-editor-0.1.17.tgz", { "dependencies": { "@shaulavo/workbench-core": "0.0.1", "@shaulavo/workbench-icons": "0.0.1", "@shaulavo/workbench-tokens": "0.0.1", "@shaulavo/workbench-ui": "0.0.1" }, "peerDependencies": { "@base-ui/react": ">=1.0.0", "@dnd-kit/core": ">=6.0.0", "@dnd-kit/sortable": ">=8.0.0", "@dnd-kit/utilities": ">=3.0.0", "@singapore-editor/core": ">=0.2.13", "@singapore-editor/diff": ">=0.2.13", "@singapore-editor/find": ">=0.2.13", "@singapore-editor/gutters": ">=0.2.13", "@singapore-editor/highlighting": ">=0.2.16", "@singapore-editor/lsp": ">=0.2.13", "@singapore-editor/lsp-plugin": ">=0.2.16", "@singapore-editor/markdown": ">=0.2.13", "@singapore-editor/minimap": ">=0.2.13", "@singapore-editor/plugin-ui": ">=0.2.13", "@singapore-editor/react": ">=0.2.13", "@singapore-editor/scope-lines": ">=0.2.13", "react": ">=19.2.0", "react-dom": ">=19.2.0" }, "optionalPeers": ["@dnd-kit/core", "@dnd-kit/sortable", "@dnd-kit/utilities", "@singapore-editor/diff", "@singapore-editor/lsp", "@singapore-editor/lsp-plugin", "@singapore-editor/markdown", "@singapore-editor/minimap", "@singapore-editor/scope-lines"] }, "sha512-On7dT2vHwgTvRxXOENEZUOd3zUo4tc0BqjGFgDBOp6ouBLZXSeh/qJHHQVTRVkgY5fDCfewEILoGIA72zHbvTQ=="],
-
-    "@shaulavo/workbench-icons": ["@shaulavo/workbench-icons@https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-icons-0.1.17.tgz", { "peerDependencies": { "react": ">=19.2.0" }, "optionalPeers": ["react"] }, "sha512-m9zcLo7CNcbJPukpQwjCNMUZQ9gXktizO29NsCctJgA3b+hQh9dUxB9QOBH4pVYRpFGvdWQJBIB66lAB0mwVCA=="],
-
-    "@shaulavo/workbench-preview": ["@shaulavo/workbench-preview@https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-preview-0.1.17.tgz", { "dependencies": { "@shaulavo/workbench-core": "0.0.1", "@shaulavo/workbench-icons": "0.0.1", "@shaulavo/workbench-tokens": "0.0.1", "@shaulavo/workbench-ui": "0.0.1" }, "peerDependencies": { "@base-ui/react": ">=1.0.0", "react": ">=19.2.0", "react-dom": ">=19.2.0" } }, "sha512-muM0NT1VTjIN66KlEY17ukZYo76eXmpQTewhn5yfJdAUeIPk0LKvh7vjlT0ZMoEPdZcqN2eONNFPu+z7F1Mj9w=="],
-
-    "@shaulavo/workbench-terminal": ["@shaulavo/workbench-terminal@https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-terminal-0.1.17.tgz", { "dependencies": { "@shaulavo/hotkeys": "0.0.4", "@shaulavo/workbench-core": "0.0.1", "@shaulavo/workbench-icons": "0.0.1", "@shaulavo/workbench-tokens": "0.0.1", "@shaulavo/workbench-ui": "0.0.1" }, "peerDependencies": { "@base-ui/react": ">=1.0.0", "ghostty-webgpu": ">=0.3.34", "react": ">=19.2.0", "react-dom": ">=19.2.0" } }, "sha512-YhTgAklK/oGVxnJKNTyct1vpJKJxTxizjDhhmY86yy0BrfsDPBbWbcj6axZnGQLRoWOndppNsBhauEMc2mnIdA=="],
-
-    "@shaulavo/workbench-tokens": ["@shaulavo/workbench-tokens@https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-tokens-0.1.17.tgz", {}, "sha512-szvyMShkda7OW10CtD1D0n1nGAJMc1GoZiKdrgqkNFecIaJDZqnR0arzEVpAFoXQEkL6CY8e/nBLfa0NG8WNHw=="],
-
-    "@shaulavo/workbench-tree": ["@shaulavo/workbench-tree@https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-tree-0.1.17.tgz", { "dependencies": { "@shaulavo/workbench-core": "0.0.1", "@shaulavo/workbench-icons": "0.0.1", "@shaulavo/workbench-tokens": "0.0.1", "@shaulavo/workbench-ui": "0.0.1", "@tanstack/react-virtual": "3.14.28" }, "peerDependencies": { "@base-ui/react": ">=1.0.0", "react": ">=19.2.0", "react-dom": ">=19.2.0" } }, "sha512-O14BjFI7pw9HizLSezHMeevsXVer8V/RWRgd1QP4dKblBpF8ZATpbokpnlb3QYKtegqZsuqUAagQszB8Q11toQ=="],
-
-    "@shaulavo/workbench-ui": ["@shaulavo/workbench-ui@https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-ui-0.1.17.tgz", { "dependencies": { "@shaulavo/workbench-core": "0.0.1", "@shaulavo/workbench-icons": "0.0.1", "@shaulavo/workbench-tokens": "0.0.1", "@tanstack/react-virtual": "3.14.28" }, "peerDependencies": { "@base-ui/react": ">=1.0.0", "react": ">=19.2.0", "react-dom": ">=19.2.0" } }, "sha512-HbvPb3hTK78sE94rEt6avO1JaKA+w49ziKli8K828azPgfe0bsgceM/Bd/AwNlfiNecADluX2/CKLC/zWm+E0w=="],
+    "@shaulavo/workbench": ["@shaulavo/workbench@0.1.21", "", { "dependencies": { "@shaulavo/hotkeys": "0.0.4" }, "peerDependencies": { "@base-ui/react": "1.9.0", "@dnd-kit/core": "6.3.1", "@dnd-kit/sortable": "10.0.0", "@dnd-kit/utilities": "3.2.2", "@singapore-editor/core": "0.2.14", "@singapore-editor/diff": "0.2.14", "@singapore-editor/find": "0.2.14", "@singapore-editor/gutters": "0.2.14", "@singapore-editor/highlighting": "0.2.17", "@singapore-editor/lsp": "0.2.13", "@singapore-editor/lsp-plugin": "0.2.17", "@singapore-editor/markdown": "0.2.14", "@singapore-editor/plugin-ui": "0.2.14", "@singapore-editor/react": "0.2.14", "ghostty-webgpu": "0.3.34", "react": ">=19.2.0", "react-dom": ">=19.2.0" }, "optionalPeers": ["@base-ui/react", "@dnd-kit/core", "@dnd-kit/sortable", "@dnd-kit/utilities", "@singapore-editor/core", "@singapore-editor/diff", "@singapore-editor/find", "@singapore-editor/gutters", "@singapore-editor/highlighting", "@singapore-editor/lsp", "@singapore-editor/lsp-plugin", "@singapore-editor/markdown", "@singapore-editor/plugin-ui", "@singapore-editor/react", "ghostty-webgpu", "react", "react-dom"] }, "sha512-EIRBOwNqHHtIVW2zhnio2nCXPpR+PkcaACELoPH+J7rIxeVzPaYWbGTeTF4XbW0nzMPYbn4peU6z9ZgmhnHaBQ=="],
 
     "@shikijs/core": ["@shikijs/core@4.6.0", "", { "dependencies": { "@shikijs/primitive": "4.6.0", "@shikijs/types": "4.6.0", "@shikijs/vscode-textmate": "^10.1.0", "@types/hast": "^3.0.5", "hast-util-to-html": "^9.0.6" } }, "sha512-bfd4OKgvoyXYiYmMRuleA656P4V7M/Du9lcTl38Ngm6KszMj7bq4J1IGZwSYR4c95Tv5UQALtYNWUwaI9UT3xw=="],
 
@@ -399,11 +369,7 @@
 
     "@speed-highlight/core": ["@speed-highlight/core@1.2.24", "", {}, "sha512-qeW2e1l78afw8VhRPfPQ1Gjj+KU5XFQ/OFV5ti6eTa9bruO7mJyZtA4vw0ofqmA3tKCkROE9xLk3VZoeRc98nw=="],
 
-    "@tanstack/react-virtual": ["@tanstack/react-virtual@3.14.28", "", { "dependencies": { "@tanstack/virtual-core": "3.19.13" }, "peerDependencies": { "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0", "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-zoM4eddIVUsOsunOe26ur+h6YJQbvdzU10a2tKzIovThu5P4SvEyQ+cRx0mbeKfgnR0Mz7KR/NwrZ3GzVnUF/g=="],
-
     "@tanstack/store": ["@tanstack/store@0.11.3", "", {}, "sha512-/Mt3h2Qe67HmRMc5SJ+8jM2Fp7O4fBbwOlS0ujUvx34KgAvkvdLSHrJatv0PJG5fbvlDsACTawMMY4ptCpVI8w=="],
-
-    "@tanstack/virtual-core": ["@tanstack/virtual-core@3.19.13", "", {}, "sha512-CyCvMm7m5JuvPW6eMPZkZBZk6diySrlUQNNRpQPiEnh2vakyghx82Hw3wW2THFUsl6xJ6uM4lSUaiA2T0oYW8w=="],
 
     "@tree-sitter-grammars/tree-sitter-lua": ["@tree-sitter-grammars/tree-sitter-lua@0.4.1", "", { "dependencies": { "node-addon-api": "^8.5.0", "node-gyp-build": "^4.8.4" }, "peerDependencies": { "tree-sitter": "^0.22.4" }, "optionalPeers": ["tree-sitter"], "hasInstallScript": true }, "sha512-EwagFaU6ZveVk18/Y8qUhZkkiBKnQ7dSCHbm//TUroLVKy3i1rOYGy/cNHtSkAb1eDvS1HhCLybH2S541Cya/g=="],
 
@@ -901,6 +867,8 @@
 
     "unist-util-visit-parents": ["unist-util-visit-parents@6.1.0", "", { "dependencies": { "@types/unist": "^3.0.0", "unist-util-is": "^6.0.0" } }, "sha512-vKXxz6O38sKDj1mtx/k2cWvkkFBuYGx6uGrlzBkVeWCRF/F8sdI0j3Wbkz/5rVNRRuVc8UrgRdbCxNhmYXgP3w=="],
 
+    "unknot": ["unknot@0.1.2", "", { "dependencies": { "typescript": "^5.9.3" }, "bin": { "unknot": "bin/unknot.mjs" } }, "sha512-k5oZ+L2M8y0AN6XZLVBo5SA06fEglF2C+POmd8h/rlzUV97NGTz4Ry/rgL5jA3LEj4bHJq/VrsfpAlKiU0ICDg=="],
+
     "use-sync-external-store": ["use-sync-external-store@1.7.0", "", { "peerDependencies": { "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-6L+EeigHMQhdaIPNIFUKwfWJSwWFQ8gJbJ2DLOs5sDIegTwR9fRxvnM3uciHKjIZhFz+KAv2emhWMRvDmMcY8A=="],
 
     "vfile": ["vfile@6.0.3", "", { "dependencies": { "@types/unist": "^3.0.0", "vfile-message": "^4.0.0" } }, "sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q=="],
@@ -972,6 +940,8 @@
     "tree-sitter-md/web-tree-sitter": ["web-tree-sitter@github:ShaulLavo/tree-sitter-x#ded7776", {}, "ShaulLavo-tree-sitter-x-ded7776", "sha512-ITLwR/Uo3z3pZuqIGoa6zzmkIODgH6a9diWzAHpCj9Hce7oRhotV/fkgkFpTQhhY9J9WeTgq5EY/0CaISpwWxQ=="],
 
     "tree-sitter-typescript/tree-sitter-javascript": ["tree-sitter-javascript@0.23.1", "", { "dependencies": { "node-addon-api": "^8.2.2", "node-gyp-build": "^4.8.2" }, "peerDependencies": { "tree-sitter": "^0.21.1" }, "optionalPeers": ["tree-sitter"], "hasInstallScript": true }, "sha512-/bnhbrTD9frUYHQTiYnPcxyHORIw157ERBa6dqzaKxvR/x3PC4Yzd+D1pZIMS6zNg2v3a8BZ0oK7jHqsQo9fWA=="],
+
+    "unknot/typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "waffle-git/diff": ["diff@8.0.2", "", {}, "sha512-sSuxWU5j5SR9QQji/o2qMvqRNYRDOcBTgsJ/DeCf4iSN4gW+gNMXM7wFIP+fdXZxoNiAnHUTGjCr+TSWXdRDKg=="],
   }

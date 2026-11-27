@@ -1,5 +1,5 @@
-// Modal confirmation dialog backed by `@shaulavo/workbench-ui`'s Base UI `ConfirmDialog`.
-import { ConfirmDialog as WorkbenchConfirmDialog } from "@shaulavo/workbench-ui";
+// Modal confirmation dialog backed by `@shaulavo/workbench`'s Base UI `ConfirmDialog`.
+import { ConfirmDialog as WorkbenchConfirmDialog } from "@shaulavo/workbench";
 
 export function ConfirmDialog(props: {
   title: string;
