@@ -1,6 +1,6 @@
-// Runs a project's dev server as a task: detect the command, run it in its own shell on the
-// workspace's runtime, and report whether it is up. The task and the terminals are separate
-// shells, so stopping the task never touches what the person runs by hand.
+// Runs a project's dev server as a task: detect the command, run it in a dedicated visible `dev`
+// terminal tab on the workspace's runtime (falling back to a standalone shell in headless hosts),
+// and report whether it is up.
 //
 // One tab of a workspace runs the server (tasks/dev-server-line.ts decides which); this file is
 // the process and the signals a pane reads.
@@ -10,14 +10,22 @@ import type { Runtime } from "waffle";
 import type { FileService } from "../files/service";
 import type { PreviewTransport } from "../preview/transport";
 import type { ShellSettings } from "../runtime/boot";
+import type { TerminalStore } from "../terminal/store";
 import { createDevServerCoordinator } from "../workspace/coordinator";
 import { PROJECT_ROOT } from "../workspace/paths";
 import { createDevServerLine, type DevServerStatus, type ServerProcess } from "./dev-server-line";
-import { detectWorkspace, devStart, type DevStart } from "./detect";
+import {
+  detectWorkspaceTargets,
+  devStart,
+  devStartForTarget,
+  type DevStart,
+  type WorkspaceTarget,
+} from "./detect";
 import { latestOnly } from "./latest";
 import { affectsProject, isSourceEdit, restartingProcess, type Run } from "./restarting";
 
 export type { DevServerStatus } from "./dev-server-line";
+export type { WorkspaceTarget } from "./detect";
 
 export interface DevServer {
   /** The workspace's dev server, in whichever tab it runs. */
@@ -40,6 +48,12 @@ export interface DevServer {
   readonly restartHeld: Accessor<boolean>;
   /** Whether the project has something to start: a dev script or a server entry file. */
   readonly startable: Accessor<boolean>;
+  /** Detected runnable workspace apps and scripts (monorepo packages plus root scripts). */
+  readonly targets: Accessor<readonly WorkspaceTarget[]>;
+  /** Explicitly chosen target id, or `undefined` to use the detected default. */
+  readonly selectedTargetId: Accessor<string | undefined>;
+  /** Chooses which detected workspace app or script the next start will run. */
+  selectTarget(id: string | undefined): void;
   /**
    * Asks for the dev server. Calls made while one is under way share it. Resolves false when
    * the project has nothing to start.
@@ -57,6 +71,8 @@ export interface DevServerHost {
   readonly shell: ShellSettings;
   readonly files: FileService;
   readonly preview: PreviewTransport;
+  /** When present, dev server runs appear inside a visible `dev` terminal tab. */
+  readonly terminals?: TerminalStore;
 }
 
 /** How much of the task's output is kept. */
@@ -83,7 +99,10 @@ export function createDevServer(host: DevServerHost): DevServer {
   const [output, setOutput] = createSignal("");
   const [ended, setEnded] = createSignal(false);
   const [restartHeld, setRestartHeld] = createSignal(false);
+  const [targets, setTargets] = createSignal<readonly WorkspaceTarget[]>([]);
+  const [selectedTargetId, setSelectedTargetId] = createSignal<string | undefined>(undefined);
   const decoder = new TextDecoder();
+  let devTabId: string | undefined;
 
   function append(bytes: Uint8Array): void {
     setOutput((text) => (text + decoder.decode(bytes, { stream: true })).slice(-OUTPUT_LIMIT));
@@ -94,15 +113,69 @@ export function createDevServer(host: DevServerHost): DevServer {
   }
 
   async function command(): Promise<DevStart | undefined> {
-    const [project, modules] = await Promise.all([
-      detectWorkspace(host.files),
+    const [detected, modules] = await Promise.all([
+      detectWorkspaceTargets(host.files),
       host.runtime.filesystem.resolvePath(`${PROJECT_ROOT}/node_modules`),
     ]);
-    return devStart(project, modules !== undefined);
+    setTargets(detected.targets);
+    const chosenId = selectedTargetId();
+    const chosen = chosenId ? detected.targets.find((target) => target.id === chosenId) : undefined;
+    if (chosenId && !chosen) setSelectedTargetId(undefined);
+    const hasNodeModules = modules !== undefined;
+    if (chosen) return devStartForTarget(detected.detection, chosen, hasNodeModules);
+    return devStart(detected.detection, hasNodeModules);
   }
 
-  /** One run of `script` in a shell of its own, its output copied until it ends. */
-  async function openRun(script: string): Promise<Run> {
+  function ensureDevTerminal(terminals: TerminalStore): string {
+    terminals.requestReveal();
+    const existing = devTabId && terminals.tabs().tabs.some((tab) => tab.id === devTabId);
+    if (existing && devTabId) {
+      const handle = terminals.handle(devTabId);
+      if (!handle?.isRunning()) {
+        terminals.select(devTabId);
+        return devTabId;
+      }
+    }
+    const created = terminals.create({ title: "dev", named: true });
+    devTabId = created || undefined;
+    return created;
+  }
+
+  /** One run of `script` in the visible `dev` terminal tab, streaming output live and honoring Ctrl-C. */
+  async function openTerminalRun(
+    terminals: TerminalStore,
+    script: string,
+    signal: AbortSignal,
+  ): Promise<Run> {
+    const tabId = ensureDevTerminal(terminals);
+    if (!tabId) return { done: Promise.resolve(), interrupt() {} };
+    const handle = await terminals.waitForHandle(tabId, signal);
+    if (!handle || signal.aborted) return { done: Promise.resolve(), interrupt() {} };
+
+    let interrupted = false;
+    let settled = false;
+    const unsubscribeOutput = terminals.subscribeOutput(tabId, append);
+    const done = handle
+      .submit(script)
+      .catch((error: unknown) => {
+        if (!interrupted && !signal.aborted) report(error);
+      })
+      .finally(() => {
+        settled = true;
+        unsubscribeOutput();
+      });
+    return {
+      done,
+      interrupt() {
+        if (settled) return;
+        interrupted = true;
+        handle.interrupt();
+      },
+    };
+  }
+
+  /** Headless fallback when no `TerminalStore` is attached. */
+  async function openHeadlessRun(script: string): Promise<Run> {
     const shell = await createShell({
       runtime: host.runtime,
       wasmUrl: host.shell.wasmUrl,
@@ -138,7 +211,8 @@ export function createDevServer(host: DevServerHost): DevServer {
       script: start.script,
       rerun: start.rerun,
       signal,
-      open: openRun,
+      open: (script) =>
+        host.terminals ? openTerminalRun(host.terminals, script, signal) : openHeadlessRun(script),
       // Only what a person changed through the file service: what the server writes itself, or
       // anything else a program writes, must never restart it.
       onSourceEdit: (listener) =>
@@ -194,6 +268,9 @@ export function createDevServer(host: DevServerHost): DevServer {
     ended,
     restartHeld,
     startable,
+    targets,
+    selectedTargetId,
+    selectTarget: (id) => void setSelectedTargetId(id),
     start: () => line.start(),
     stop: () => line.stop(),
     dispose() {

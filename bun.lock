@@ -26,6 +26,7 @@
         "react-dom": "19.3.1",
         "waffle": "npm:@waffle-os/runtime@0.0.150",
         "waffle-base": "https://github.com/ShaulLavo/waffle/releases/download/programs-v0.0.23/waffle-base-0.0.23.tgz",
+        "waffle-git": "https://github.com/ShaulLavo/waffle/releases/download/programs-v0.0.23/waffle-git-0.0.23.tgz",
       },
       "devDependencies": {
         "@playwright/test": "1.64.1",

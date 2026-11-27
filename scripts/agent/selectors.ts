@@ -72,6 +72,8 @@ export const SELECTORS = {
     bar: ".wb-preview-toolbar",
     url: '[data-testid="wb-preview-url-input"]',
     port: '[data-testid="wb-preview-port-select"]',
+    target: '[data-testid="preview-target-select"]',
+    emptyTarget: '[data-testid="preview-empty-target-select"]',
     task: '[data-testid="preview-task"]',
     taskOutput: '[data-testid="preview-task-output"]',
     startButton: '[data-testid="preview-start"]',

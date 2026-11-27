@@ -20,6 +20,7 @@ export const ui = {
   errors: "Preview errors: {count}",
   startServer: "Start dev server",
   stopServer: "Stop dev server on port {port}",
+  selectTarget: "Select workspace app or script",
   openInTab: "Open preview in new tab",
   unavailable:
     "Previews are unavailable in this window. Enable service workers or open Sprockt in a regular window.",

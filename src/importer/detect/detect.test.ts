@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { writeFiles } from "../../lib/fs/entries.ts";
 import { MemoryFs } from "../../lib/fs/memory.ts";
 import { textEncoder } from "../../lib/bytes.ts";
-import { detectProject, detectProjectInFs, type ProjectDetection } from "./detect.ts";
+import {
+  detectProject,
+  detectProjectInFs,
+  detectProjectTargets,
+  detectProjectTargetsInFs,
+  type ProjectDetection,
+} from "./detect.ts";
 
 function detect(files: Record<string, string | object>): ProjectDetection {
   const texts = new Map(
@@ -205,5 +211,71 @@ describe("detectProjectInFs", () => {
     const fs = new MemoryFs();
     await writeFiles(fs, [{ path: "src/server.ts", bytes: textEncoder.encode("Bun.serve({ fetch() {} })") }]);
     expect((await detectProjectInFs(fs)).dev).toEqual({ command: "bun", args: ["src/server.ts"] });
+  });
+
+  test("discovers monorepo targets from package.json workspaces and pnpm-workspace.yaml", async () => {
+    const fs = new MemoryFs();
+    await writeFiles(fs, [
+      {
+        path: "package.json",
+        bytes: textEncoder.encode(
+          JSON.stringify({
+            name: "mono",
+            private: true,
+            workspaces: { packages: ["apps/*", "packages/*", "!packages/ignored"] },
+          }),
+        ),
+      },
+      {
+        path: "apps/web/package.json",
+        bytes: textEncoder.encode(
+          JSON.stringify({ name: "@mono/web", scripts: { dev: "vite" }, devDependencies: { vite: "7" } }),
+        ),
+      },
+      {
+        path: "apps/web/vite.config.ts",
+        bytes: textEncoder.encode("export default { server: { port: 5174 } }"),
+      },
+      {
+        path: "apps/api/package.json",
+        bytes: textEncoder.encode(
+          JSON.stringify({ name: "@mono/api", scripts: { dev: "bun run server.ts -p 3102" } }),
+        ),
+      },
+      {
+        path: "packages/ignored/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "ignored", scripts: { dev: "vite" } })),
+      },
+    ]);
+
+    const result = await detectProjectTargetsInFs(fs);
+    expect(result.targets.map((t) => ({ id: t.id, name: t.name, port: t.port, dir: t.dir }))).toEqual([
+      { id: "apps/api:dev", name: "@mono/api", port: 3102, dir: "apps/api" },
+      { id: "apps/web:dev", name: "@mono/web", port: 5174, dir: "apps/web" },
+    ]);
+    // Root has no dev script, so fallback picks the Vite app in apps/web.
+    expect(result.detection).toMatchObject({
+      hasPackageJson: true,
+      framework: "vite",
+      devScript: "dev",
+      dev: { command: "bun", args: ["run", "--cwd", "apps/web", "dev"] },
+      port: 5174,
+    });
+
+    // Also supports pnpm-workspace.yaml with quoted entries and comments.
+    const pnpm = detectProjectTargets({
+      paths: ["package.json", "pnpm-workspace.yaml", "apps/site/package.json"],
+      read: (path) => {
+        if (path === "package.json") return JSON.stringify({ name: "pnpm-mono" });
+        if (path === "pnpm-workspace.yaml") return 'packages:\n  - "apps/*" # apps\n  - "!apps/skip"\n';
+        if (path === "apps/site/package.json") {
+          return JSON.stringify({ name: "site", scripts: { dev: "astro dev", start: "astro preview" } });
+        }
+        return undefined;
+      },
+    });
+    expect(pnpm.targets.map((t) => t.id)).toEqual(["apps/site:dev", "apps/site:start"]);
+    expect(pnpm.detection.dev).toEqual({ command: "bun", args: ["run", "--cwd", "apps/site", "dev"] });
+    expect(pnpm.detection.port).toBe(4321);
   });
 });

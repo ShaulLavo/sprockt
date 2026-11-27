@@ -37,8 +37,9 @@ export function addTab(
   id: string,
   title: string = nextTitle(state),
   placement: "tab" | "split" = "tab",
+  named = false,
 ): TerminalTabs {
-  const tabs = state.tabs.concat({ id, title, named: false });
+  const tabs = state.tabs.concat({ id, title, named });
   if (placement === "split" && state.active) return { tabs, active: state.active, split: id, focused: id };
   return { tabs, active: id, split: undefined, focused: id };
 }

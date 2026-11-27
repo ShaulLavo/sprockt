@@ -304,6 +304,7 @@ export function createWaffleTerminalBridge(
         rows: initialSize.rows,
         signal,
         onOutput: (bytes) => {
+          terminals.emitOutput(sessionId, bytes);
           onEvent({ type: "output", data: bytes });
         },
         onState: (state, detail) => {
@@ -372,6 +373,8 @@ export function createWaffleTerminalBridge(
       focus: () => terminal.focus(),
       submit: (command) => browserSession.submit(command),
       input: (data) => browserSession.input(data),
+      interrupt: () => browserSession.interrupt(),
+      isRunning: () => browserSession.running,
       clear() {
         terminal.clearSelection();
         terminal.write("\x1b[3J\x1b[2J\x1b[H");

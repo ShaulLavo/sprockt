@@ -1,10 +1,12 @@
 // Preview pane: wraps @shaulavo/workbench/preview's PreviewPane over Sprockt's Waffle
 // PreviewTransport and dev-server lifecycle.
 import { useEffect, useMemo, useState } from "react";
+import type { PreviewServerInfo } from "@shaulavo/workbench/core";
 import { PreviewPane as WorkbenchPreviewPane, type PreviewViewportPreset } from "@shaulavo/workbench/preview";
+import { onAfterImport } from "../importer/after-import";
 import { onCleanup } from "../lib/reactive";
 import { Scope, useValue } from "../lib/react";
-import { createDevServer, type DevServer } from "../tasks/dev-server";
+import { createDevServer, type DevServer, type WorkspaceTarget } from "../tasks/dev-server";
 import { plainOutput } from "../tasks/output";
 import { RESTART_LIMIT } from "../tasks/restarting";
 import { trackOverflowFade } from "../ui/fade";
@@ -45,18 +47,40 @@ function TaskOutput(props: { devServer: DevServer }) {
   );
 }
 
+function targetOptionLabel(target: WorkspaceTarget, targets: readonly WorkspaceTarget[]): string {
+  if (!target.dir) return target.script;
+  const duplicateName = targets.some((other) => other.dir !== target.dir && other.name === target.name);
+  const label = duplicateName ? target.dir : target.name;
+  return `${label} · ${target.script}`;
+}
+
+function formatPreviewPort(server: PreviewServerInfo, targets: readonly WorkspaceTarget[]): string {
+  if (server.label) return `${portLabel(server.port)} · ${server.label}`;
+  const matching = targets.filter((target) => target.dir !== "" && target.port === server.port);
+  const uniqueNames = new Set(matching.map((target) => target.name));
+  if (uniqueNames.size === 1) {
+    const [name] = uniqueNames;
+    if (name) return `${portLabel(server.port)} · ${name}`;
+  }
+  return portLabel(server.port);
+}
+
 function PreviewPaneBody(props: { devServer: DevServer }) {
   const { devServer } = props;
   const workspace = useWorkspace();
   const { preview } = workspace;
-  const { status, owned, ended, restartHeld, startable, remotePorts } = useValue(() => ({
-    status: devServer.status(),
-    owned: devServer.owned(),
-    ended: devServer.ended(),
-    restartHeld: devServer.restartHeld(),
-    startable: devServer.startable(),
-    remotePorts: devServer.remotePorts(),
-  }));
+  const { status, owned, ended, restartHeld, startable, remotePorts, targets, selectedTargetId } = useValue(
+    () => ({
+      status: devServer.status(),
+      owned: devServer.owned(),
+      ended: devServer.ended(),
+      restartHeld: devServer.restartHeld(),
+      startable: devServer.startable(),
+      remotePorts: devServer.remotePorts(),
+      targets: devServer.targets(),
+      selectedTargetId: devServer.selectedTargetId(),
+    }),
+  );
 
   const adapter = useMemo(() => createWafflePreviewAdapter(preview), [preview]);
   const [activePort, setActivePort] = useState<number>();
@@ -84,6 +108,14 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
     setNoScript(!(await devServer.start()));
   }
 
+  function handleTargetChange(nextId: string): void {
+    devServer.selectTarget(nextId || undefined);
+    if (devServer.status() !== "stopped" && devServer.owned()) {
+      devServer.stop();
+      void devServer.start();
+    }
+  }
+
   function emptyText(): string {
     if (status === "starting") return ui.starting;
     if (ended) return ui.serverEnded;
@@ -96,6 +128,25 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
   }
 
   const canStart = status === "stopped" && startable;
+  const activeTargetId = selectedTargetId ?? targets[0]?.id ?? "";
+  const showTargetPicker = targets.length > 1;
+
+  const targetPicker = showTargetPicker ? (
+    <select
+      className="preview-target-select"
+      data-testid="preview-target-select"
+      aria-label={ui.selectTarget}
+      disabled={elsewhere}
+      value={activeTargetId}
+      onChange={(event) => handleTargetChange(event.currentTarget.value)}
+    >
+      {targets.map((target) => (
+        <option key={target.id} value={target.id}>
+          {targetOptionLabel(target, targets)}
+        </option>
+      ))}
+    </select>
+  ) : null;
 
   return (
     <WorkbenchPreviewPane
@@ -107,7 +158,7 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
       errorDisplay="toggle"
       alwaysShowPortSelect
       hideViewportsWhenEmpty
-      formatPortLabel={(server) => portLabel(server.port)}
+      formatPortLabel={(server) => formatPreviewPort(server, targets)}
       urlLabel={ui.url}
       viewportLabels={{ responsive: ui.desktop, tablet: ui.tablet, mobile: ui.phone }}
       renderViewportIcon={viewportIcon}
@@ -118,17 +169,20 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
       onActivePortChange={setActivePort}
       toolbarScrollRef={fadeScroller}
       toolbarActions={
-        <button
-          type="button"
-          className="icon-button preview-task"
-          data-testid="preview-task"
-          data-status={status}
-          aria-label={taskLabel()}
-          disabled={elsewhere}
-          onClick={() => void toggleDevServer()}
-        >
-          {status === "stopped" ? <PlayIcon /> : <Icon name="stop" />}
-        </button>
+        <>
+          {targetPicker}
+          <button
+            type="button"
+            className="icon-button preview-task"
+            data-testid="preview-task"
+            data-status={status}
+            aria-label={taskLabel()}
+            disabled={elsewhere}
+            onClick={() => void toggleDevServer()}
+          >
+            {status === "stopped" ? <PlayIcon /> : <Icon name="stop" />}
+          </button>
+        </>
       }
       banner={
         restartHeld ? (
@@ -149,15 +203,32 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
             {noScript ? <p>{ui.nothingToStart}</p> : null}
             <TaskOutput devServer={devServer} />
             {canStart ? (
-              <button
-                type="button"
-                className="primary preview-start"
-                data-testid="preview-start"
-                onClick={() => void toggleDevServer()}
-              >
-                <PlayIcon />
-                {ui.startServer}
-              </button>
+              <div className="preview-empty-actions">
+                {showTargetPicker ? (
+                  <select
+                    className="preview-target-select"
+                    data-testid="preview-empty-target-select"
+                    aria-label={ui.selectTarget}
+                    value={activeTargetId}
+                    onChange={(event) => devServer.selectTarget(event.currentTarget.value || undefined)}
+                  >
+                    {targets.map((target) => (
+                      <option key={target.id} value={target.id}>
+                        {targetOptionLabel(target, targets)}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                <button
+                  type="button"
+                  className="primary preview-start"
+                  data-testid="preview-start"
+                  onClick={() => void toggleDevServer()}
+                >
+                  <PlayIcon />
+                  {ui.startServer}
+                </button>
+              </div>
             ) : null}
           </div>
         )
@@ -172,6 +243,19 @@ export function PreviewPane() {
     <Scope
       create={() => {
         const server = createDevServer(workspace);
+        onCleanup(
+          onAfterImport((importedSession, plan) => {
+            if (importedSession.id !== workspace.id) return;
+            if (plan.dev) {
+              void server.start();
+              return;
+            }
+            if (plan.install) {
+              workspace.terminals.requestReveal();
+              workspace.terminals.create({ title: "dev", named: true, run: "bun install" });
+            }
+          }),
+        );
         onCleanup(() => void server.dispose());
         return server;
       }}

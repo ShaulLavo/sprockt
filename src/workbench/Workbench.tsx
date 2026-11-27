@@ -162,6 +162,13 @@ interface PaneScope {
 function createPanes(session: WorkspaceSession, frame: FrameState): PaneScope {
   const editor = createEditorStore(session);
   onCleanup(attachAfterImport(session));
+  onCleanup(
+    session.terminals.onRevealRequest(() => {
+      if (!frame.phone() && frame.layout.layout().terminalState !== "open") {
+        frame.layout.set(setTerminalState(frame.layout.layout(), "open"));
+      }
+    }),
+  );
   const tabs = trackPresence(session.id, () => frame.stage() !== "moved");
   const slots: Partial<Record<PhonePane, HTMLElement>> = {};
   const rect = (pane: PhonePane) => slots[pane]?.getBoundingClientRect();
