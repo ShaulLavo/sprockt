@@ -341,9 +341,14 @@ describe("workspace name hydration and reactivity", () => {
     expect(workspaceName(id)).toBe("first-upload");
   });
 
-  test("preserves a saved name in workspace.json even when timestamps are missing", async () => {
+  test("preserves a saved name and valid fields in workspace.json even when timestamps are missing", async () => {
     const id = "notimestmp";
-    const partialJson = JSON.stringify({ name: "My Custom Workspace" });
+    const partialJson = JSON.stringify({
+      name: "My Custom Workspace",
+      template: "github",
+      state: "importing",
+      source: { kind: "github", owner: "acme", repo: "demo", ref: "main", subdir: "" },
+    });
     let writes = 0;
 
     const hydrated = await hydrateWorkspaceName(id, {
@@ -353,6 +358,12 @@ describe("workspace name hydration and reactivity", () => {
     });
     expect(hydrated).toBe("My Custom Workspace");
     expect(workspaceName(id)).toBe("My Custom Workspace");
+    expect(readWorkspaceHint(id)).toMatchObject({
+      name: "My Custom Workspace",
+      template: "github",
+      state: "importing",
+      source: { kind: "github", owner: "acme", repo: "demo", ref: "main", subdir: "" },
+    });
     expect(writes).toBe(0);
 
     const adopted = await adoptUploadedWorkspaceName(
@@ -367,5 +378,44 @@ describe("workspace name hydration and reactivity", () => {
     expect(adopted).toBeUndefined();
     expect(workspaceName(id)).toBe("My Custom Workspace");
     expect(writes).toBe(0);
+  });
+
+  test("retries persisting an adopted folder name on reopen after a transient write failure", async () => {
+    const id = "retrywrite1";
+    let storedMeta: string | undefined = serializeWorkspaceMeta(
+      createWorkspaceMeta({ name: "workspace", template: "blank", defaultName: true }),
+    );
+    let failWrites = true;
+    const deps = {
+      readMeta: async () => storedMeta,
+      writeMeta: async (json: string) => {
+        if (failWrites) throw new Error("transient write failure");
+        storedMeta = json;
+      },
+      readPackageJson: async () => undefined,
+    };
+
+    const adopted = await adoptUploadedWorkspaceName(
+      id,
+      [{ path: "uploaded-app/index.ts", data: new Blob(["1"]) }],
+      deps,
+    );
+    expect(adopted).toBe("uploaded-app");
+    expect(workspaceName(id)).toBe("uploaded-app");
+    // Disk still holds the placeholder because the write failed transiently.
+    expect(JSON.parse(storedMeta!).defaultName).toBe(true);
+
+    // Reopening after writes recover persists the adopted name to disk.
+    failWrites = false;
+    const hydrated = await hydrateWorkspaceName(id, deps);
+    expect(hydrated).toBe("uploaded-app");
+    expect(JSON.parse(storedMeta!)).toMatchObject({ name: "uploaded-app" });
+    expect(JSON.parse(storedMeta!).defaultName).toBeUndefined();
+
+    // Clearing the browser hint still recovers "uploaded-app" from disk.
+    removeWorkspaceHint(id);
+    const afterClear = await hydrateWorkspaceName(id, deps);
+    expect(afterClear).toBe("uploaded-app");
+    expect(workspaceName(id)).toBe("uploaded-app");
   });
 });

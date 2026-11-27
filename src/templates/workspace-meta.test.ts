@@ -161,5 +161,27 @@ describe("workspace metadata", () => {
       lastOpened: "2026-11-27T12:00:00.000Z",
       extra: 42,
     });
+
+    // Renaming partial metadata missing `created` preserves valid `template`, `lastOpened`, `state`, and `source`.
+    const partialRenamed = updateWorkspaceMetaName(
+      JSON.stringify({
+        name: "old",
+        template: "github",
+        lastOpened: "2026-11-20T08:00:00.000Z",
+        state: "importing",
+        source: { kind: "github", owner: "acme", repo: "demo", ref: "main", subdir: "" },
+      }),
+      "renamed",
+      new Date("2026-11-27T12:00:00.000Z"),
+    );
+    expect(partialRenamed.meta).toEqual({
+      name: "renamed",
+      template: "github",
+      created: "2026-11-27T12:00:00.000Z",
+      lastOpened: "2026-11-20T08:00:00.000Z",
+      state: "importing",
+      source: { kind: "github", owner: "acme", repo: "demo", ref: "main", subdir: "" },
+    });
+    expect(parseWorkspaceMeta(partialRenamed.json)).toEqual(partialRenamed.meta);
   });
 });

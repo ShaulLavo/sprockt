@@ -10,9 +10,10 @@ import {
   isPlaceholderWorkspaceName,
   mergeDerivedWorkspaceName,
   packageJsonName,
+  parsePartialWorkspaceMeta,
   parseWorkspaceMeta,
-  readSavedWorkspaceName,
   serializeWorkspaceMeta,
+  type PartialWorkspaceMeta,
   type WorkspaceMeta,
 } from "../templates/workspace-meta";
 
@@ -168,19 +169,38 @@ async function persistDerivedMeta(
 }
 
 async function deriveNameFromWorkspace(
-  fileMeta: WorkspaceMeta | undefined,
+  partial: PartialWorkspaceMeta | undefined,
   deps: HydrateWorkspaceNameDeps,
 ): Promise<string | undefined> {
-  if (fileMeta?.source?.kind === "github") {
-    return deriveGitHubWorkspaceName(fileMeta.source.repo, fileMeta.source.subdir);
+  if (partial?.source?.kind === "github") {
+    return deriveGitHubWorkspaceName(partial.source.repo, partial.source.subdir);
   }
   return packageJsonName(await deps.readPackageJson().catch(() => undefined));
+}
+
+function hintFromPartial(
+  partial: PartialWorkspaceMeta,
+  name: string,
+  hint: WorkspaceMeta | undefined,
+  nowIso: string,
+): WorkspaceMeta {
+  const lastOpened = newerTimestamp(newerTimestamp(partial.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
+  const source = partial.source ?? hint?.source;
+  return {
+    name,
+    template: partial.template ?? hint?.template ?? "blank",
+    created: partial.created ?? hint?.created ?? nowIso,
+    lastOpened,
+    ...(partial.state ? { state: partial.state } : {}),
+    ...(source ? { source } : {}),
+  };
 }
 
 /**
  * Hydrates a workspace's display name from `/.sprockt/workspace.json` -> root `package.json`,
  * updating the reactive hint without ever overwriting an explicit user rename, legacy name,
- * or unreadable metadata file.
+ * or unreadable metadata file. Retries persisting a non-placeholder hint name if an earlier
+ * metadata write failed transiently.
  */
 export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps): Promise<string> {
   return withWorkspaceNameLock(id, async () => {
@@ -192,7 +212,7 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
 
     const rawMeta = metaRead.raw;
     const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
-    const savedName = readSavedWorkspaceName(rawMeta);
+    const partial = parsePartialWorkspaceMeta(rawMeta);
 
     if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) {
       const lastOpened =
@@ -201,28 +221,28 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
       return fileMeta.name;
     }
 
-    // Preserve any non-placeholder saved name on disk even if `workspace.json` lacks timestamps.
-    if (savedName && !savedName.defaultName) {
-      saveWorkspaceHint(id, {
-        name: savedName.name,
-        template: hint?.template ?? "blank",
-        created: hint?.created ?? nowIso,
-        lastOpened: newerTimestamp(hint?.lastOpened, nowIso) ?? nowIso,
-        ...(hint?.source ? { source: hint.source } : {}),
-      });
-      return savedName.name;
+    // Preserve any non-placeholder saved name on disk (along with its valid template/source/state)
+    // even if `workspace.json` lacks timestamps.
+    if (partial?.name && !partial.defaultName) {
+      saveWorkspaceHint(id, hintFromPartial(partial, partial.name, hint, nowIso));
+      return partial.name;
     }
 
+    // If an earlier adoption/rename saved a real hint while disk still holds a placeholder or
+    // nothing, retry persisting it to disk so clearing browser storage never loses the name.
     if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
-      saveWorkspaceHint(id, { ...hint, lastOpened: newerTimestamp(hint.lastOpened, nowIso) ?? nowIso });
+      const { json, meta } = mergeDerivedWorkspaceName(rawMeta, hint.name, now);
+      const lastOpened = newerTimestamp(hint.lastOpened, nowIso) ?? nowIso;
+      saveWorkspaceHint(id, { ...meta, lastOpened });
+      if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
       return hint.name;
     }
 
-    const derived = await deriveNameFromWorkspace(fileMeta, deps);
+    const derived = await deriveNameFromWorkspace(partial, deps);
     if (derived) {
       const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
       saveWorkspaceHint(id, meta);
-      if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, fileMeta?.state, json);
+      if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
       return derived;
     }
 
@@ -265,11 +285,11 @@ export function adoptUploadedWorkspaceName(
 
     const rawMeta = metaRead.raw;
     const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
-    const savedName = readSavedWorkspaceName(rawMeta);
+    const partial = parsePartialWorkspaceMeta(rawMeta);
     const hint = readWorkspaceHint(id);
 
     if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) return undefined;
-    if (savedName && !savedName.defaultName) return undefined;
+    if (partial?.name && !partial.defaultName) return undefined;
     if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) return undefined;
 
     const folderName = deriveUploadFolderName(
@@ -284,7 +304,7 @@ export function adoptUploadedWorkspaceName(
     const now = deps.now ? deps.now() : new Date();
     const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
     saveWorkspaceHint(id, meta);
-    if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, fileMeta?.state, json);
+    if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
     return derived;
   });
 }

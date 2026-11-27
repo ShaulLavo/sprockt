@@ -1,10 +1,10 @@
-// Routes `bun install` downloads of public GitHub Release `.tgz` tarballs through Sprockt's
-// same-origin Worker proxy (`/api/github/release/...` and `/api/github/release-latest/...`),
+// Routes `bun install` downloads of public tagged GitHub Release `.tgz` tarballs through
+// Sprockt's same-origin Worker proxy (`/api/github/release/<owner>/<repo>/<tag>/<asset>.tgz`),
 // because GitHub's release-asset CDN redirect lacks CORS/CORP headers under COEP (`require-corp`).
-// GitHub release downloads use `packageFetch` directly so the browser's HTTP cache obeys the
-// Worker's `Cache-Control` TTL (`max-age=300` for tagged assets, `no-store` for latest) instead
-// of `installFetch`'s indefinite Cache Storage. All other fetches pass through `installFetch`
-// unchanged.
+// Only tagged release URLs are proxied: mutable `/releases/latest/download/` URLs are intentionally
+// excluded because `bun-wasm`'s guest tarball cache keys by URL without expiration. Tagged release
+// fetches use `packageFetch` directly so browser HTTP caching honors the Worker's `Cache-Control`
+// TTL; all other requests pass through `bun-wasm`'s `installFetch` unchanged.
 import type { NetFetch } from "waffle/browser/net/helper";
 import { installFetch } from "../../node_modules/bun-wasm/web/src/net/install-cache.ts";
 import { packageFetch } from "../../node_modules/bun-wasm/web/src/net/package-fetch.ts";
@@ -19,20 +19,12 @@ import {
 export const DEFAULT_GITHUB_PROXY_PREFIX = "/api/github";
 const INSTALL_TARBALL_ACCEPT = "application/vnd.bun.install-tarball";
 
-export type GitHubReleaseTarball =
-  | {
-      readonly kind: "tag";
-      readonly owner: string;
-      readonly repo: string;
-      readonly tag: string;
-      readonly asset: string;
-    }
-  | {
-      readonly kind: "latest";
-      readonly owner: string;
-      readonly repo: string;
-      readonly asset: string;
-    };
+export interface GitHubReleaseTarball {
+  readonly owner: string;
+  readonly repo: string;
+  readonly tag: string;
+  readonly asset: string;
+}
 
 function decodeSegments(pathname: string): string[] | undefined {
   try {
@@ -46,8 +38,8 @@ function decodeSegments(pathname: string): string[] | undefined {
 }
 
 /**
- * Parses a public GitHub Release `.tgz` URL (`.../releases/download/<tag>/<asset>.tgz` or
- * `.../releases/latest/download/<asset>.tgz`), returning `undefined` for any other host, query
+ * Parses a public tagged GitHub Release `.tgz` URL (`https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>.tgz`),
+ * returning `undefined` for any other host, mutable `/releases/latest/download/` URL, query
  * string, credentials, or invalid path component.
  */
 export function parseGitHubReleaseTarballUrl(input: string): GitHubReleaseTarball | undefined {
@@ -69,17 +61,14 @@ export function parseGitHubReleaseTarballUrl(input: string): GitHubReleaseTarbal
   }
   const segments = decodeSegments(url.pathname);
   if (!segments || segments.length < 6) return undefined;
-  const [owner = "", repo = "", releases, fourth, ...rest] = segments;
-  if (releases !== "releases" || !isOwnerName(owner) || !isRepoName(repo)) return undefined;
-  if (fourth === "latest" && rest.length === 2 && rest[0] === "download") {
-    const asset = rest[1] ?? "";
-    return isReleaseAssetName(asset) ? { kind: "latest", owner, repo, asset } : undefined;
-  }
-  if (fourth !== "download" || rest.length < 2) return undefined;
+  const [owner = "", repo = "", releases, download, ...rest] = segments;
+  if (releases !== "releases" || download !== "download" || rest.length < 2) return undefined;
   const asset = rest.at(-1) ?? "";
   const tag = rest.slice(0, -1).join("/");
-  if (!isRefName(tag) || !isReleaseAssetName(asset)) return undefined;
-  return { kind: "tag", owner, repo, tag, asset };
+  if (!isOwnerName(owner) || !isRepoName(repo) || !isRefName(tag) || !isReleaseAssetName(asset)) {
+    return undefined;
+  }
+  return { owner, repo, tag, asset };
 }
 
 export interface RewriteConfig {
@@ -89,8 +78,8 @@ export interface RewriteConfig {
 
 /**
  * Returns Sprockt's same-origin proxy URL for an unauthenticated `bun install` tarball request
- * targeting a public GitHub Release `.tgz` asset, or `undefined` when the request should pass
- * straight through untouched.
+ * targeting a public tagged GitHub Release `.tgz` asset, or `undefined` when the request should
+ * pass straight through untouched.
  */
 export function rewriteGitHubReleaseTarballUrl(
   url: string,
@@ -110,7 +99,6 @@ export function rewriteGitHubReleaseTarballUrl(
   const owner = encodeURIComponent(release.owner);
   const repo = encodeURIComponent(release.repo);
   const asset = encodeURIComponent(release.asset);
-  if (release.kind === "latest") return `${origin}${prefix}/release-latest/${owner}/${repo}/${asset}`;
   return `${origin}${prefix}/release/${owner}/${repo}/${encodeRefPath(release.tag)}/${asset}`;
 }
 
@@ -121,7 +109,7 @@ export interface RuntimeFetchOptions {
   readonly releaseFetch?: NetFetch;
 }
 
-/** Network fetch policy for `installBunAdapters`, proxying public GitHub Release `.tgz` tarballs. */
+/** Network fetch policy for `installBunAdapters`, proxying public tagged GitHub Release `.tgz` tarballs. */
 export function createRuntimeFetch(options: RuntimeFetchOptions = {}): NetFetch {
   const prefix = options.prefix ?? DEFAULT_GITHUB_PROXY_PREFIX;
   const baseFetch = options.baseFetch ?? installFetch;
