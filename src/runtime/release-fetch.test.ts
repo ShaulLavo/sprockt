@@ -126,13 +126,18 @@ describe("rewriteGitHubReleaseTarballUrl and createRuntimeFetch", () => {
     ).toBeUndefined();
   });
 
-  test("delegates rewritten and pass-through URLs to baseFetch with original init", async () => {
-    const seen: { url: string; init: RequestInit }[] = [];
+  test("routes tagged releases through baseFetch and latest releases through uncachedFetch", async () => {
+    const cachedSeen: { url: string; init: RequestInit }[] = [];
+    const uncachedSeen: { url: string; init: RequestInit }[] = [];
     const runtimeFetch = createRuntimeFetch({
       origin: "https://sprockt.dev",
       baseFetch: async (url, init) => {
-        seen.push({ url, init });
+        cachedSeen.push({ url, init });
         return new Response("ok");
+      },
+      uncachedFetch: async (url, init) => {
+        uncachedSeen.push({ url, init });
+        return new Response("latest");
       },
     });
 
@@ -140,12 +145,20 @@ describe("rewriteGitHubReleaseTarballUrl and createRuntimeFetch", () => {
       "https://github.com/ShaulLavo/waffle/releases/download/programs-v0.0.23/waffle-base-0.0.23.tgz",
       TARBALL_INIT,
     );
+    await runtimeFetch(
+      "https://github.com/ShaulLavo/waffle/releases/latest/download/waffle-base.tgz",
+      TARBALL_INIT,
+    );
     await runtimeFetch("https://registry.npmjs.org/react/-/react-19.3.1.tgz", TARBALL_INIT);
 
-    expect(seen.map((entry) => entry.url)).toEqual([
+    expect(cachedSeen.map((entry) => entry.url)).toEqual([
       "https://sprockt.dev/api/github/release/ShaulLavo/waffle/programs-v0.0.23/waffle-base-0.0.23.tgz",
       "https://registry.npmjs.org/react/-/react-19.3.1.tgz",
     ]);
-    expect(seen[0]?.init).toBe(TARBALL_INIT);
+    expect(uncachedSeen.map((entry) => entry.url)).toEqual([
+      "https://sprockt.dev/api/github/release-latest/ShaulLavo/waffle/waffle-base.tgz",
+    ]);
+    expect(cachedSeen[0]?.init).toBe(TARBALL_INIT);
+    expect(uncachedSeen[0]?.init).toBe(TARBALL_INIT);
   });
 });

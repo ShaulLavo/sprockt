@@ -158,7 +158,7 @@ export function renameStoredWorkspace(
 export function retryStoredWorkspace(
   id: string,
   templateId: string,
-  name: string,
+  name?: string,
 ): Promise<
   | { readonly status: "seeded"; readonly meta: WorkspaceMeta }
   | { readonly status: "already-ready" | "busy" | "missing" }

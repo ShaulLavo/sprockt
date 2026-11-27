@@ -470,6 +470,7 @@ describe("GitHub proxy: release tarballs", () => {
     );
     expect(response.status).toBe(200);
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(body);
+    expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin");
     expect(calls.map((call) => call.url)).toEqual([
       "https://github.com/acme/demo/releases/latest/download/demo.tgz",

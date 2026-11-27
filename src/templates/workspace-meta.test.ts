@@ -146,5 +146,20 @@ describe("workspace metadata", () => {
     expect(derived.meta.name).toBe("cool-app");
     expect(isPlaceholderWorkspaceName(derived.meta)).toBe(false);
     expect(JSON.parse(derived.json).defaultName).toBeUndefined();
+
+    // Merging onto an incomplete JSON object (missing `created`) fills required fields so it parses back.
+    const repaired = mergeDerivedWorkspaceName(
+      JSON.stringify({ source: { kind: "share", template: "blank" }, extra: 42 }),
+      "recovered-app",
+      new Date("2026-11-27T12:00:00.000Z"),
+    );
+    expect(parseWorkspaceMeta(repaired.json)).toEqual(repaired.meta);
+    expect(JSON.parse(repaired.json)).toMatchObject({
+      name: "recovered-app",
+      template: "blank",
+      created: "2026-11-27T12:00:00.000Z",
+      lastOpened: "2026-11-27T12:00:00.000Z",
+      extra: 42,
+    });
   });
 });

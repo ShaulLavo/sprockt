@@ -121,7 +121,8 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
   }
 
   async function retryTemplateWorkspace(id: string, meta: WorkspaceMeta): Promise<void> {
-    const result = await retryStoredWorkspace(id, meta.template ?? "blank", meta.name);
+    const customName = meta.defaultName ? undefined : meta.name;
+    const result = await retryStoredWorkspace(id, meta.template ?? "blank", customName);
     if (result.status === "seeded" || result.status === "already-ready") {
       props.onOpen(id);
       return;

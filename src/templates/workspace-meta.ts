@@ -168,23 +168,25 @@ export function parseWorkspaceMeta(raw: string): WorkspaceMeta | undefined {
   };
 }
 
-function mergeMetaJson(
-  raw: string | undefined,
-  fields: Readonly<Record<string, unknown>>,
-  fallback: WorkspaceMeta,
-): string {
-  if (!raw) return serializeWorkspaceMeta(fallback);
+function mergeMetaJson(raw: string | undefined, meta: WorkspaceMeta): string {
+  if (!raw) return serializeWorkspaceMeta(meta);
   try {
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const merged: Record<string, unknown> = { ...(parsed as Record<string, unknown>), ...fields };
+      const merged: Record<string, unknown> = {
+        ...(parsed as Record<string, unknown>),
+        name: meta.name,
+        template: meta.template,
+        created: meta.created,
+        lastOpened: meta.lastOpened,
+      };
       delete merged.defaultName;
       return `${JSON.stringify(merged, null, 2)}\n`;
     }
   } catch {
     // Fall through to clean serialized metadata.
   }
-  return serializeWorkspaceMeta(fallback);
+  return serializeWorkspaceMeta(meta);
 }
 
 /** Records an explicit user rename while preserving any extra fields (e.g. importer source/detected). */
@@ -201,8 +203,9 @@ export function updateWorkspaceMetaName(
   const base = existing
     ? stripDefaultName(existing)
     : { name: nextName, template: "blank", created: timestamp, lastOpened: timestamp };
-  const meta: WorkspaceMeta = { ...base, name: nextName };
-  return { json: mergeMetaJson(raw, { name: nextName }, meta), meta };
+  const fallback: WorkspaceMeta = { ...base, name: nextName };
+  const json = mergeMetaJson(raw, fallback);
+  return { json, meta: parseWorkspaceMeta(json) ?? fallback };
 }
 
 /** Updates an auto-derived workspace name and clears any placeholder flag. */
@@ -219,8 +222,9 @@ export function mergeDerivedWorkspaceName(
   const base = existing
     ? stripDefaultName(existing)
     : { name: derivedName, template: "blank", created: timestamp, lastOpened: timestamp };
-  const meta: WorkspaceMeta = { ...base, name: derivedName, lastOpened: timestamp };
-  return { json: mergeMetaJson(raw, { name: derivedName }, meta), meta };
+  const fallback: WorkspaceMeta = { ...base, name: derivedName, lastOpened: timestamp };
+  const json = mergeMetaJson(raw, fallback);
+  return { json, meta: parseWorkspaceMeta(json) ?? fallback };
 }
 
 function stripDefaultName(meta: WorkspaceMeta): WorkspaceMeta {

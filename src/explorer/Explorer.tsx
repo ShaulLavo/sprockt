@@ -240,9 +240,11 @@ export function Explorer(props: { readonly store: EditorStore }) {
           model.setExpanded(directory, true);
           persistExpanded();
         } else if (result.written.length > 0) {
+          const accepted = new Set(result.written);
+          const acceptedItems = items.filter((item) => accepted.has(item.path));
           void adoptUploadedWorkspaceName(
             workspace.id,
-            items,
+            acceptedItems,
             workspaceNameDeps(workspace.runtime, files),
           ).catch(() => undefined);
         }

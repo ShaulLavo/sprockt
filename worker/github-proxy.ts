@@ -331,7 +331,7 @@ async function releaseAsset(
     return errorResponse(400, "invalid-source", `"${asset}" is not a valid .tgz release asset.`);
   }
   const url = `${GITHUB_ORIGIN}/${owner}/${repo}/releases/download/${encodeRefPath(tag)}/${encodeURIComponent(asset)}`;
-  return streamReleaseAsset(context, `${owner}/${repo}`, asset, tag, url);
+  return streamReleaseAsset(context, `${owner}/${repo}`, asset, tag, url, `public, max-age=${SHORT_CACHE}`);
 }
 
 async function releaseLatestAsset(
@@ -344,7 +344,7 @@ async function releaseLatestAsset(
     return errorResponse(400, "invalid-source", `"${asset}" is not a valid .tgz release asset.`);
   }
   const url = `${GITHUB_ORIGIN}/${owner}/${repo}/releases/latest/download/${encodeURIComponent(asset)}`;
-  return streamReleaseAsset(context, `${owner}/${repo}`, asset, "latest", url);
+  return streamReleaseAsset(context, `${owner}/${repo}`, asset, "latest", url, "no-store");
 }
 
 async function streamReleaseAsset(
@@ -353,6 +353,7 @@ async function streamReleaseAsset(
   asset: string,
   label: string,
   url: string,
+  cacheControl: string,
 ): Promise<Response> {
   const response = await fetchReleaseUpstream(context, url);
   if (!response) return errorResponse(502, "upstream", "GitHub redirected somewhere unexpected.");
@@ -376,7 +377,7 @@ async function streamReleaseAsset(
   }
   const headers = new Headers({
     "content-type": "application/gzip",
-    "cache-control": `public, max-age=${SHORT_CACHE}`,
+    "cache-control": cacheControl,
     ...SECURITY_HEADERS,
   });
   if (context.method === "HEAD") {

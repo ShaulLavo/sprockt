@@ -1,10 +1,12 @@
 // Routes `bun install` downloads of public GitHub Release `.tgz` tarballs through Sprockt's
 // same-origin Worker proxy (`/api/github/release/...` and `/api/github/release-latest/...`),
 // because GitHub's release-asset CDN redirect lacks CORS/CORP headers under COEP (`require-corp`).
-// All other fetches pass through `bun-wasm`'s `installFetch` unchanged (preserving its Cache
-// Storage tarball cache).
+// Tagged releases pass through `bun-wasm`'s `installFetch` (preserving its Cache Storage tarball
+// cache); mutable `/releases/latest/download/` URLs bypass Cache Storage via `packageFetch` so
+// newly published releases are never shadowed by an obsolete cached tarball.
 import type { NetFetch } from "waffle/browser/net/helper";
 import { installFetch } from "../../node_modules/bun-wasm/web/src/net/install-cache.ts";
+import { packageFetch } from "../../node_modules/bun-wasm/web/src/net/package-fetch.ts";
 import {
   encodeRefPath,
   isOwnerName,
@@ -84,16 +86,16 @@ export interface RewriteConfig {
   readonly prefix?: string;
 }
 
-/**
- * Returns Sprockt's same-origin proxy URL for an unauthenticated `bun install` tarball request
- * targeting a public GitHub Release `.tgz` asset, or `undefined` when the request should pass
- * straight through untouched.
- */
-export function rewriteGitHubReleaseTarballUrl(
+export interface RewrittenReleaseRequest {
+  readonly kind: GitHubReleaseTarball["kind"];
+  readonly url: string;
+}
+
+function buildRewrittenRelease(
   url: string,
   options: RequestInit,
   config: RewriteConfig,
-): string | undefined {
+): RewrittenReleaseRequest | undefined {
   const method = (options.method ?? "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD") return undefined;
   const headers = new Headers(options.headers);
@@ -107,23 +109,45 @@ export function rewriteGitHubReleaseTarballUrl(
   const owner = encodeURIComponent(release.owner);
   const repo = encodeURIComponent(release.repo);
   const asset = encodeURIComponent(release.asset);
-  if (release.kind === "latest") return `${origin}${prefix}/release-latest/${owner}/${repo}/${asset}`;
-  return `${origin}${prefix}/release/${owner}/${repo}/${encodeRefPath(release.tag)}/${asset}`;
+  if (release.kind === "latest") {
+    return { kind: "latest", url: `${origin}${prefix}/release-latest/${owner}/${repo}/${asset}` };
+  }
+  return {
+    kind: "tag",
+    url: `${origin}${prefix}/release/${owner}/${repo}/${encodeRefPath(release.tag)}/${asset}`,
+  };
+}
+
+/**
+ * Returns Sprockt's same-origin proxy URL for an unauthenticated `bun install` tarball request
+ * targeting a public GitHub Release `.tgz` asset, or `undefined` when the request should pass
+ * straight through untouched.
+ */
+export function rewriteGitHubReleaseTarballUrl(
+  url: string,
+  options: RequestInit,
+  config: RewriteConfig,
+): string | undefined {
+  return buildRewrittenRelease(url, options, config)?.url;
 }
 
 export interface RuntimeFetchOptions {
   readonly origin?: string;
   readonly prefix?: string;
   readonly baseFetch?: NetFetch;
+  readonly uncachedFetch?: NetFetch;
 }
 
 /** Network fetch policy for `installBunAdapters`, proxying public GitHub Release `.tgz` tarballs. */
 export function createRuntimeFetch(options: RuntimeFetchOptions = {}): NetFetch {
   const prefix = options.prefix ?? DEFAULT_GITHUB_PROXY_PREFIX;
   const baseFetch = options.baseFetch ?? installFetch;
+  const uncachedFetch = options.uncachedFetch ?? packageFetch;
   return (url: string, init: RequestInit): Promise<Response> => {
     const origin = options.origin ?? location.origin;
-    const proxied = rewriteGitHubReleaseTarballUrl(url, init, { origin, prefix });
-    return baseFetch(proxied ?? url, init);
+    const rewritten = buildRewrittenRelease(url, init, { origin, prefix });
+    if (!rewritten) return baseFetch(url, init);
+    if (rewritten.kind === "latest") return uncachedFetch(rewritten.url, init);
+    return baseFetch(rewritten.url, init);
   };
 }
