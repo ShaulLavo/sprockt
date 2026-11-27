@@ -125,7 +125,9 @@ async function mapInBatches<T, R>(items: readonly T[], work: (item: T) => Promis
   for (let start = 0; start < items.length; start += BATCH) {
     // Each batch settles completely before the next starts or an error escapes (and unlocks).
     // oxlint-disable-next-line no-await-in-loop
-    const outcomes = await Promise.allSettled(items.slice(start, start + BATCH).map(work));
+    const outcomes = await Promise.allSettled(
+      items.slice(start, start + BATCH).map(async (item) => work(item)),
+    );
     results.push(...collectFulfilled(outcomes));
   }
   return results;

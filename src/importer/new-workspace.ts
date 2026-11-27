@@ -69,7 +69,7 @@ async function removeInBatches(
     // Settle each batch before starting the next so cleanup never saturates the filesystem RPC queue.
     // oxlint-disable-next-line no-await-in-loop
     const outcomes = await Promise.allSettled(
-      paths.slice(start, start + REMOVE_BATCH).map((path) => filesystem.remove(path)),
+      paths.slice(start, start + REMOVE_BATCH).map(async (path) => filesystem.remove(path)),
     );
     const failed = outcomes.find(
       (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",

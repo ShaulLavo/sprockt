@@ -398,15 +398,16 @@ describe("bulk imports over 1,024 files", () => {
       }),
     };
 
-    const id = await createWorkspaceWithFiles(numberedFiles(1500, "fresh"), META, deps, { into: "cut" });
+    const fresh = numberedFiles(1500, "fresh");
+    const id = await createWorkspaceWithFiles(fresh, META, deps, { into: "cut" });
     expect(id).toBe("cut");
     expect(metered.peak).toBeLessThanOrEqual(8);
-    expect(metered.files.has(`${PROJECT_ROOT}/old-0/stale-0.ts`)).toBe(false);
-    expect(metered.files.has(`${PROJECT_ROOT}/old-59/stale-1499.ts`)).toBe(false);
-    expect(metered.files.has(`${PROJECT_ROOT}/pkg-0/fresh-0.ts`)).toBe(true);
-    expect(metered.files.has(`${PROJECT_ROOT}/pkg-59/fresh-1499.ts`)).toBe(true);
+    const expectedPaths = [WORKSPACE_META_PATH]
+      .concat(Object.keys(fresh).map((path) => `${PROJECT_ROOT}/${path}`))
+      .sort();
+    expect(Array.from(metered.files.keys()).sort()).toEqual(expectedPaths);
     const metaBytes = metered.files.get(WORKSPACE_META_PATH);
-    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBeUndefined();
+    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))).toEqual(META);
   });
 
   test("Retry closes the session and keeps the marker if stale cleanup fails", async () => {
@@ -437,6 +438,49 @@ describe("bulk imports over 1,024 files", () => {
     await expect(createWorkspaceWithFiles({ "a.txt": "a" }, META, deps, { into: "cut" })).rejects.toThrow(
       "remove failed",
     );
+    expect(closed).toBe(true);
+    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
+    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
+  });
+
+  test("Retry waits for pending sibling removals to settle before closing when another removal throws synchronously", async () => {
+    let closed = false;
+    const pendingRemoval = Promise.withResolvers<boolean>();
+    const stale: Record<string, string> = {
+      [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
+      [`${PROJECT_ROOT}/slow.txt`]: "slow",
+      [`${PROJECT_ROOT}/sync-boom.txt`]: "boom",
+    };
+    const metered = meteredProjectFilesystem(stale);
+    const failingFs = {
+      ...metered.filesystem,
+      remove: (path: string) => {
+        if (path === `${PROJECT_ROOT}/slow.txt`) return pendingRemoval.promise;
+        if (path === `${PROJECT_ROOT}/sync-boom.txt`) throw new Error("sync remove boom");
+        return metered.filesystem.remove(path);
+      },
+    };
+    const deps: NewWorkspaceDeps = {
+      exists: async () => true,
+      remove: async () => "deleted",
+      open: async () => ({
+        files: { writeMany: async () => undefined },
+        runtime: { filesystem: failingFs },
+        dispose: async () => {
+          closed = true;
+        },
+      }),
+    };
+
+    const attempt = createWorkspaceWithFiles({ "a.txt": "a" }, META, deps, { into: "cut" }).catch(
+      (error: unknown) => error,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(closed).toBe(false);
+
+    pendingRemoval.reject(new Error("late sibling rejection"));
+    const error = await attempt;
+    expect(error).toEqual(new Error("late sibling rejection"));
     expect(closed).toBe(true);
     const metaBytes = metered.files.get(WORKSPACE_META_PATH);
     expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
