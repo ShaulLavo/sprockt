@@ -186,8 +186,11 @@ function smokeSteps(driver: WebDriver, baseUrl: string) {
         await showPhonePane(driver, "wb-slot-files");
         await driver.until(`${textOf("file-tree")}?.includes("proof.txt")`, "proof.txt");
         await driver.until(`${textOf("save-state")} === "saved"`, "the save");
-        await driver.script("location.reload(); return true;");
-        await driver.until(`${textOf("terminal-state")} === "ready"`, "the shell after the reload");
+        await driver.script("globalThis.__sprocktBeforeReload = true; location.reload(); return true;");
+        await driver.until(
+          `!globalThis.__sprocktBeforeReload && ${textOf("terminal-state")} === "ready"`,
+          "the shell after the reload",
+        );
         await showPhonePane(driver, "wb-slot-files");
         await driver.until(`${textOf("file-tree")}?.includes("proof.txt")`, "proof.txt after the reload");
         await runInTerminal(driver, "cat proof.txt");
