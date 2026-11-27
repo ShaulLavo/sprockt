@@ -676,6 +676,18 @@ describe("workspace name hydration and reactivity", () => {
       expect(adopted).toBe("tight-quota-folder");
       expect(workspaceName(id)).toBe("tight-quota-folder");
 
+      // A second upload while only the in-memory hint exists must not wipe the pending name.
+      const second = await adoptUploadedWorkspaceName(
+        id,
+        [{ path: "second-folder/other.ts", data: new Blob(["2"]) }],
+        {
+          readMeta: async () => storedMeta,
+          writeMeta: () => Promise.reject(new Error("transient write failure")),
+          readPackageJson: async () => undefined,
+        },
+      );
+      expect(second).toBeUndefined();
+
       // Simulate a page reload dropping in-memory fallbackHints while localStorage keeps only what fit.
       handleHintStorageEvent(WORKSPACE_HINT_PREFIX + id);
       rejectLargeWrites = false;

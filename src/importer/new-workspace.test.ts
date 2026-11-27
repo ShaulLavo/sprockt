@@ -486,16 +486,23 @@ describe("bulk imports over 1,024 files", () => {
     expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
   });
 
-  test("Retry accepts an incomplete GitHub import whose workspace.json omits name", async () => {
+  test("Retry accepts an incomplete GitHub import whose workspace.json omits or nulls name", async () => {
     const namelessIncomplete = JSON.stringify({
       state: INCOMPLETE,
       created: "2026-04-01T00:00:00.000Z",
       source: { kind: "github", owner: "acme", repo: "demo", ref: "main", subdir: "apps/web" },
     });
+    const nullNameIncomplete = JSON.stringify({
+      name: null,
+      state: INCOMPLETE,
+      created: "2026-04-01T00:00:00.000Z",
+      source: { kind: "github", owner: "acme", repo: "demo", ref: "main", subdir: "apps/web" },
+    });
     expect(parseMeta(namelessIncomplete)).toMatchObject({ name: "web", state: INCOMPLETE });
+    expect(parseMeta(nullNameIncomplete)).toMatchObject({ name: "web", state: INCOMPLETE });
 
     const metered = meteredProjectFilesystem({
-      [WORKSPACE_META_PATH]: namelessIncomplete,
+      [WORKSPACE_META_PATH]: nullNameIncomplete,
       [`${PROJECT_ROOT}/stale.txt`]: "old",
     });
     const projectFiles = createProjectFiles(metered.filesystem, () => () => {});

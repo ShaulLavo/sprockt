@@ -128,14 +128,10 @@ export function parseMeta(text: string | undefined): WorkspaceMeta | undefined {
     const value: unknown = JSON.parse(text);
     if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
     const record = value as Record<string, unknown>;
-    if (typeof record.name === "string") {
-      if (record.name.trim() !== "") return value as WorkspaceMeta;
-      const recovered = recoverableGitHubName(record.source);
-      return recovered ? ({ ...record, name: recovered } as WorkspaceMeta) : (value as WorkspaceMeta);
-    }
-    if (record.name !== undefined) return undefined;
+    if (typeof record.name === "string" && record.name.trim() !== "") return value as WorkspaceMeta;
     const recovered = recoverableGitHubName(record.source);
-    return recovered ? ({ ...record, name: recovered } as WorkspaceMeta) : undefined;
+    if (recovered) return { ...record, name: recovered } as WorkspaceMeta;
+    return typeof record.name === "string" ? (value as WorkspaceMeta) : undefined;
   } catch {
     return undefined;
   }

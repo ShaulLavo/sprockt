@@ -66,6 +66,13 @@ function clearPendingWorkspaceName(id: string): void {
   }
 }
 
+/** Clears a pending name once its hint is durable in localStorage or replaced by a different name. */
+function clearPendingIfReplacedOrDurable(id: string, name: string): void {
+  if (!fallbackHints.has(id) || readPendingWorkspaceName(id) !== name) {
+    clearPendingWorkspaceName(id);
+  }
+}
+
 /** Handles cross-tab `storage` events; exported for unit testing. */
 export function handleHintStorageEvent(key: string | null): void {
   if (key === null) {
@@ -421,7 +428,7 @@ export function adoptUploadedWorkspaceName(
         return undefined;
       }
       if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
-        clearPendingWorkspaceName(id);
+        clearPendingIfReplacedOrDurable(id, hint.name);
         return undefined;
       }
 
@@ -432,7 +439,7 @@ export function adoptUploadedWorkspaceName(
       if (!derived || deps.signal?.aborted) return undefined;
       const latestHint = readWorkspaceHint(id);
       if (latestHint && !isPlaceholderWorkspaceName(latestHint) && latestHint.name !== id) {
-        clearPendingWorkspaceName(id);
+        clearPendingIfReplacedOrDurable(id, latestHint.name);
         return undefined;
       }
 
