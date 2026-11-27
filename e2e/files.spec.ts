@@ -71,8 +71,8 @@ async function expandRow(page: Page, path: string): Promise<void> {
   if ((await folder.count()) === 0) return;
   await expect(async () => {
     if ((await folder.count()) === 0 && (await segment.count()) > 0) return;
-    if ((await folder.getAttribute("aria-expanded")) !== "true") {
-      await folder.locator(".wb-tree-chevron").click();
+    if ((await folder.getAttribute("aria-expanded", { timeout: 1000 })) !== "true") {
+      await folder.locator(".wb-tree-chevron").click({ timeout: 1000 });
     }
     if ((await folder.count()) === 0 && (await segment.count()) > 0) return;
     await expect(folder).toHaveAttribute("aria-expanded", "true", { timeout: 1000 });
@@ -543,6 +543,8 @@ test("filtering finds files in unopened folders, batch drag preflights collision
   page,
 }) => {
   const id = await newWorkspace(page);
+  // Stop auto-open before creating folders so `closed` and `dest` are never opened or listed first.
+  await page.getByTestId("collapse-all").click();
   const filler = Array.from({ length: 100 }, (_, i) => `f-${String(i + 1).padStart(3, "0")}.txt`).join(" ");
   await runInTerminal(
     page,
@@ -551,15 +553,20 @@ test("filtering finds files in unopened folders, batch drag preflights collision
   await expect(row(page, "closed")).toBeVisible();
   await expect(row(page, "dest")).toBeVisible();
   await expect(row(page, "f-001.txt")).toBeVisible();
-  await page.getByTestId("collapse-all").click();
   await expect(row(page, "closed")).toHaveAttribute("aria-expanded", "false");
   await expect(row(page, "dest")).toHaveAttribute("aria-expanded", "false");
 
-  // Filter finds closed/needle.txt even though closed was never opened.
+  // Filter finds closed/needle.txt even though closed was never opened, and F2 opens inline rename.
   await row(page, "closed").focus();
   await page.keyboard.type("needle");
   await expect(row(page, "closed/needle.txt")).toBeVisible();
+  await row(page, "closed/needle.txt").focus();
+  await page.keyboard.press("F2");
+  await expect(page.getByTestId("wb-tree-inline-input")).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(page.getByTestId("wb-tree-inline-input")).toHaveCount(0);
+  await page.getByTestId("collapse-all").click();
+  await expect(row(page, "dest")).toHaveAttribute("aria-expanded", "false");
 
   // Multi-select drag of [a.txt, b.txt] into unopened dest (which already has b.txt) refuses before moving a.txt.
   await row(page, "a.txt").click();

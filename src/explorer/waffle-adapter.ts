@@ -7,7 +7,6 @@ import type {
 } from "@shaulavo/workbench-core";
 import {
   ancestorsOf,
-  baseName,
   isSameOrInside,
   normalizeTreePath,
   parentOf,
@@ -109,6 +108,7 @@ export function createWaffleFileSystemAdapter(options: WaffleAdapterOptions): Wa
   function invalidateSlot(slot: DirSlot): void {
     slot.generation += 1;
     slot.inFlight = null;
+    if (slot.state.status === "loading") setSlotState(slot, { status: "idle" });
   }
 
   function seedDirectory(rawDir: string, entries: readonly DirEntry[]): void {
@@ -236,19 +236,10 @@ export function createWaffleFileSystemAdapter(options: WaffleAdapterOptions): Wa
     }
 
     const sourceSet = new Set(normalized.map((move) => move.from));
-    const destDirs = new Set(normalized.map((move) => parentOf(move.to)));
-    const existingByDir = new Map<string, Set<string>>();
-    await Promise.all(
-      Array.from(destDirs, async (dir) => {
-        const entries = (await files.readdir(dir)) ?? [];
-        existingByDir.set(dir, new Set(entries.map((entry) => entry.name)));
-      }),
-    );
-    for (const move of normalized) {
-      if (sourceSet.has(move.to)) continue;
-      const existing = existingByDir.get(parentOf(move.to));
-      if (existing?.has(baseName(move.to))) throw new DestinationExistsError(move.to);
-    }
+    const toCheck = normalized.filter((move) => !sourceSet.has(move.to));
+    const occupied = await Promise.all(toCheck.map((move) => files.exists(move.to)));
+    const collisionIndex = occupied.findIndex(Boolean);
+    if (collisionIndex >= 0) throw new DestinationExistsError(toCheck[collisionIndex]!.to);
 
     for (const move of normalized) {
       // oxlint-disable-next-line no-await-in-loop

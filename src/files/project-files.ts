@@ -631,6 +631,11 @@ export function createProjectFiles(
       if (sizeOf) return sizeOf.size(absolute);
       return (await filesystem.readFile(absolute))?.length;
     },
+    async exists(path) {
+      const destination = projectPath(path);
+      await confiner()(destination, false);
+      return (await found(destination)) !== undefined;
+    },
     write: (path, content) =>
       mutate(() => locked([projectPath(path)], () => writeConfined(confiner(), path, content)), [path]),
     // The read, the comparison and the write hold the file's lock together, so a save in another

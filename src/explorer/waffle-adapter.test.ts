@@ -18,6 +18,7 @@ function deferred<T>() {
 
 function makeHarness(overrides?: {
   readdir?: (dir: string) => Promise<DirEntry[] | undefined>;
+  exists?: (path: string) => Promise<boolean>;
   move?: (from: string, to: string) => Promise<void>;
   remove?: (path: string) => Promise<void>;
   openTabs?: readonly { readonly path: string; readonly unsaved?: boolean }[];
@@ -37,6 +38,7 @@ function makeHarness(overrides?: {
     read: async () => undefined,
     readBytes: async () => undefined,
     size: async () => undefined,
+    exists: overrides?.exists ?? (async () => false),
     write: async () => {},
     writeIfUnchanged: async () => ({ written: true }),
     writeMany: async () => {},
@@ -149,8 +151,38 @@ describe("createWaffleFileSystemAdapter", () => {
     expect(seededState.status).toBe("loaded");
     expect(seededState.entries.map((e) => e.name)).toEqual(["seeded.ts"]);
 
+    // Reset invalidation rejects an in-flight read so stale entries cannot land after a reset.
+    const fourth = deferred<DirEntry[]>();
+    const resetHarness = makeHarness({ readdir: async () => fourth.promise });
+    const resetHandle = createWaffleFileSystemAdapter({
+      workspaceId: "ws-reset",
+      files: resetHarness.files,
+      store: resetHarness.store,
+    });
+    const p4 = resetHandle.refreshDirectory("app");
+    resetHarness.emitChange({ reset: true });
+    fourth.resolve([{ name: "stale-before-reset.ts", kind: "file" }]);
+    await p4;
+    expect(resetHandle.adapter.lazy!.getDirectoryState("app").getSnapshot().status).toBe("idle");
+
+    // Ordinary file-change invalidation also invalidates an in-flight read of that directory.
+    const fifth = deferred<DirEntry[]>();
+    const changeHarness = makeHarness({ readdir: async () => fifth.promise });
+    const changeHandle = createWaffleFileSystemAdapter({
+      workspaceId: "ws-change",
+      files: changeHarness.files,
+      store: changeHarness.store,
+    });
+    const p5 = changeHandle.refreshDirectory("pkg");
+    changeHarness.emitChange({ paths: ["pkg/added.ts"] });
+    fifth.resolve([{ name: "stale-before-change.ts", kind: "file" }]);
+    await p5;
+    expect(changeHandle.adapter.lazy!.getDirectoryState("pkg").getSnapshot().status).toBe("idle");
+
     handle.dispose();
     seedHandle.dispose();
+    resetHandle.dispose();
+    changeHandle.dispose();
   });
 
   test("keeps clean tabs open when FileService.remove rejects, and closes only clean tabs after success", async () => {
@@ -190,9 +222,11 @@ describe("createWaffleFileSystemAdapter", () => {
     okHandle.dispose();
   });
 
-  test("movePaths preflights existing destinations and duplicate names before moving the first item", async () => {
+  test("movePaths preflights existing destinations (including non-readdir entries like sockets) and duplicate names before moving the first item", async () => {
     const harness = makeHarness({
-      readdir: async (dir) => (dir === "dest" ? [{ name: "b.txt", kind: "file" }] : []),
+      // readdir intentionally omits Unix sockets while exists() uses the same lookup as FileService.move.
+      readdir: async () => [],
+      exists: async (path) => path === "dest/b.txt",
     });
     const handle = createWaffleFileSystemAdapter({
       workspaceId: "ws-move",
