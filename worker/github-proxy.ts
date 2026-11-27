@@ -321,6 +321,35 @@ async function archive(
   return new Response(body, { status: 200, headers });
 }
 
+async function buildReleaseResponse(
+  context: UpstreamContext,
+  response: Response,
+  asset: string,
+): Promise<Response> {
+  const limit = maxArchiveBytes(context.env);
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > limit) {
+    await response.body?.cancel();
+    return errorResponse(
+      413,
+      "too-large",
+      `${asset} is larger than the ${Math.round(limit / 1048576)} MiB download limit.`,
+    );
+  }
+  const headers = new Headers({
+    "content-type": "application/gzip",
+    "cache-control": `public, max-age=${SHORT_CACHE}`,
+    ...SECURITY_HEADERS,
+  });
+  if (context.method === "HEAD") {
+    await response.body?.cancel();
+    return new Response(null, { status: 200, headers });
+  }
+  // Always enforce the byte limit on release streams, even if upstream under-reports content-length.
+  const body = response.body?.pipeThrough(byteLimit(limit));
+  return new Response(body, { status: 200, headers });
+}
+
 async function releaseAsset(
   context: UpstreamContext,
   owner: string,
@@ -334,44 +363,23 @@ async function releaseAsset(
   }
   const url = `${GITHUB_ORIGIN}/${owner}/${repo}/releases/download/${encodeRefPath(tag)}/${encodeURIComponent(asset)}`;
   const name = `${owner}/${repo}`;
-  let response: Response | undefined;
   try {
-    response = await fetchReleaseUpstream(context, url);
+    const response = await fetchReleaseUpstream(context, url);
+    if (!response) return errorResponse(502, "upstream", "GitHub redirected somewhere unexpected.");
+    if (response.status === 404) {
+      await response.body?.cancel().catch(() => undefined);
+      return errorResponse(
+        404,
+        "not-found",
+        `${name} has no release asset "${asset}" on "${tag}", or it is private.`,
+      );
+    }
+    if (!response.ok || !response.body) return await upstreamError(response, name);
+    return await buildReleaseResponse(context, response, asset);
   } catch (error: unknown) {
     if (context.signal.aborted) throw error;
     return errorResponse(502, "upstream", `Could not reach GitHub for ${name}.`);
   }
-  if (!response) return errorResponse(502, "upstream", "GitHub redirected somewhere unexpected.");
-  if (response.status === 404) {
-    return errorResponse(
-      404,
-      "not-found",
-      `${name} has no release asset "${asset}" on "${tag}", or it is private.`,
-    );
-  }
-  if (!response.ok || !response.body) return upstreamError(response, name);
-  const limit = maxArchiveBytes(context.env);
-  const declared = Number(response.headers.get("content-length") ?? "0");
-  if (declared > limit) {
-    await response.body.cancel();
-    return errorResponse(
-      413,
-      "too-large",
-      `${asset} is larger than the ${Math.round(limit / 1048576)} MiB download limit.`,
-    );
-  }
-  const headers = new Headers({
-    "content-type": "application/gzip",
-    "cache-control": `public, max-age=${SHORT_CACHE}`,
-    ...SECURITY_HEADERS,
-  });
-  if (context.method === "HEAD") {
-    await response.body.cancel();
-    return new Response(null, { status: 200, headers });
-  }
-  // Always enforce the byte limit on release streams, even if upstream under-reports content-length.
-  const body = response.body.pipeThrough(byteLimit(limit));
-  return new Response(body, { status: 200, headers });
 }
 
 function parseUrl(input: string, base?: URL): URL | undefined {

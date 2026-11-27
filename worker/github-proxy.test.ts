@@ -562,6 +562,19 @@ describe("GitHub proxy: release tarballs", () => {
     expect(failed.headers.get("cross-origin-resource-policy")).toBe("same-origin");
     expect(await failed.json()).toMatchObject({ error: "upstream" });
 
+    // A transport failure while reading a 403 error body also maps to structured 502.
+    const brokenBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new Error("error body reset"));
+      },
+    });
+    const broken403 = await createGitHubProxy({
+      fetch: async () => new Response(brokenBody, { status: 403 }),
+    })(get("/api/github/release/acme/demo/v1/pkg.tgz"));
+    expect(broken403.status).toBe(502);
+    expect(broken403.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    expect(await broken403.json()).toMatchObject({ error: "upstream" });
+
     const controller = new AbortController();
     controller.abort(new Error("client disconnected"));
     await expect(
