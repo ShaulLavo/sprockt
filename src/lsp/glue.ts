@@ -1,9 +1,7 @@
-// The page-side wiring between the Singapore editor and a language server process on Waffle.
-// Copied from the LSP lane's verified glue (sprockt-glue.ts, its headless Chromium acceptance
-// ran this file unchanged). Differences: Waffle is imported as `waffle` (Sprockt's alias for
-// `@waffle-os/runtime`), `openFile` answers whether it opened the file, and the host can
-// follow the connection (`onConnected`) to send notifications of its own and restart the
-// server (`onStart`) when it has to re-read the disk.
+// The page-side wiring between the Singapore editor and a language server process on Waffle,
+// bridged onto @shaulavo/workbench-editor/lsp's createWorkbenchLspPlugin.
+import type { LspServerStatus, Subscribable } from "@shaulavo/workbench-core";
+import { createWorkbenchLspPlugin, type SingaporeLspAdapter } from "@shaulavo/workbench-editor/lsp";
 import {
   LspServerExitedError,
   createStdioLspTransport,
@@ -11,7 +9,6 @@ import {
 } from "@singapore-editor/lsp";
 import {
   LspConnectionPool,
-  createLanguageServerAdapterPlugin,
   fileUriToPath,
   pathToFileUri,
   type LanguageServerConnectionContext,
@@ -31,6 +28,11 @@ export type GuestServer = {
 };
 
 const STDERR_TAIL_BYTES = 4096;
+
+const IDLE_LSP_STATUS: Subscribable<LspServerStatus> = {
+  getSnapshot: () => ({ state: "idle", errorCount: 0, warningCount: 0 }),
+  subscribe: () => () => {},
+};
 
 /** Keeps the end of the server's stderr, for the message shown when it exits. */
 function createStderrTail() {
@@ -103,18 +105,39 @@ export function disposeLanguageServers(): void {
   pool = new LspConnectionPool();
 }
 
+export function createSprocktLspAdapter(
+  runtime: Runtime,
+  server: GuestServer,
+  host: LanguageServerHost,
+): SingaporeLspAdapter {
+  return {
+    status: IDLE_LSP_STATUS,
+    pathToUri: pathToFileUri,
+    uriToPath: fileUriToPath,
+    createTransport: () => connectLanguageServer(runtime, server, host.onStart),
+    openLocation(location) {
+      const zeroLine = Math.max(0, location.line - 1);
+      const zeroChar = Math.max(0, location.column - 1);
+      return host.openFile(location.path, {
+        start: { line: zeroLine, character: zeroChar },
+        end: { line: zeroLine, character: zeroChar },
+      });
+    },
+    dispose: disposeLanguageServers,
+  };
+}
+
 export function createGuestLanguageServerPlugin(
   runtime: Runtime,
   name: string,
   server: GuestServer,
   host: LanguageServerHost,
 ): LanguageServerPlugin {
-  return createLanguageServerAdapterPlugin({
+  return createWorkbenchLspPlugin({
+    adapter: createSprocktLspAdapter(runtime, server, host),
+    languageId: name,
     name,
     rootUri: pathToFileUri(server.rootPath),
-    // Synchronous: the process starts and its transport returns in this call, so there is no
-    // pending step for the factory's abort signal to cancel; closing the transport stops it.
-    createTransport: () => connectLanguageServer(runtime, server, host.onStart),
     reconnect: { delaysMs: [250, 1000, 4000] },
     connectionProvider: pool.provider(`${name}:${server.rootPath}`),
     // Document ids are absolute Waffle paths, mapped to URIs exactly.
@@ -122,10 +145,5 @@ export function createGuestLanguageServerPlugin(
       uriForDocument: (snapshot) => (snapshot.documentId ? pathToFileUri(snapshot.documentId) : null),
     },
     onConnected: host.onConnected,
-    onOpenDefinition(target) {
-      const path = fileUriToPath(target.uri);
-      if (path === null) return false;
-      return host.openFile(path, target.range);
-    },
   });
 }

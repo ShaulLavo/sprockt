@@ -84,7 +84,13 @@
   min-height: 0;
 }
 
-.editor-body > .editor-host {
+.editor-body > .wb-editor-view {
+  position: absolute;
+  inset: 0;
+  height: auto;
+}
+
+.editor-body .editor-host {
   position: absolute;
   inset: 0;
   height: auto;
@@ -136,10 +142,11 @@
   text-wrap: balance;
 }
 
-/* ── Tabs ── */
-.editor-tabs {
+/* ── Tabs (Sheet & Biro over @shaulavo/workbench-editor EditorTabBar / BarTabStrip) ── */
+.editor-tabs.wb-tab-strip-row {
   flex: none;
   height: var(--ed-tab-h);
+  border-bottom: 0;
   background: var(--bg-tabstrip, var(--ed-panel));
   /* The bottom line is a shadow so the active tab's background can cover it. */
   box-shadow: inset 0 -1px 0 var(--ed-line);
@@ -147,14 +154,14 @@
   --fade-end: 0px;
 }
 
-.editor-tabs.fade-start {
+.editor-tabs[data-fade-start="true"] {
   --fade-start: 28px;
 }
-.editor-tabs.fade-end {
+.editor-tabs[data-fade-end="true"] {
   --fade-end: 28px;
 }
 
-.editor-tabs-strip {
+.editor-tabs .wb-tab-strip {
   display: flex;
   height: 100%;
   padding-left: 0;
@@ -165,12 +172,8 @@
   scrollbar-width: none;
 }
 
-.editor-tabs-strip::-webkit-scrollbar {
-  display: none;
-}
-
-.editor-tabs.fade-start .editor-tabs-strip,
-.editor-tabs.fade-end .editor-tabs-strip {
+.editor-tabs[data-fade-start="true"] .wb-tab-strip,
+.editor-tabs[data-fade-end="true"] .wb-tab-strip {
   mask-image: linear-gradient(
     to right,
     transparent 0,
@@ -181,37 +184,36 @@
 }
 
 /* Multicolor Sheet & Biro file tabs: each file type carries its own harmonized accent color. */
-.editor-tab {
+.editor-tabs .wb-tab {
   position: relative;
   z-index: 0;
   display: inline-flex;
   flex: none;
-  gap: 7px;
   align-items: center;
   max-width: 240px;
   height: 100%;
-  padding: 0 6px 0 12px;
+  padding: 0 6px 0 0;
   border-right: 1px solid var(--ed-line);
   color: var(--ed-muted);
   font-size: var(--text-xs, 12px);
   white-space: nowrap;
-  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   touch-action: pan-x;
+  box-shadow: none;
   transition:
     background-color var(--ed-dur) var(--ed-ease),
     color var(--ed-dur) var(--ed-ease);
 }
 
-.editor-tab::after {
+.editor-tabs .wb-tab::after {
   content: "";
   position: absolute;
   right: 0;
   bottom: 0;
   left: 0;
   height: var(--ed-indicator);
-  background: var(--tab-accent, var(--ed-accent));
+  background: var(--tab-accent, var(--wb-tab-accent, var(--ed-accent)));
   opacity: 0.22;
   transform: scaleX(0.45);
   transition:
@@ -219,97 +221,104 @@
     transform var(--dur-base, 160ms) var(--ed-ease);
 }
 
-.editor-tab .ft {
+.editor-tabs .wb-tab-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 12px;
+  font-size: inherit;
+  font-weight: inherit;
+  touch-action: pan-x;
+}
+
+.editor-tabs .wb-tab .ft {
   width: 14px;
   height: 14px;
 }
 
-.editor-tab-name {
+.editor-tabs .wb-tab-label {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.editor-tab-hint {
+.editor-tabs .wb-tab-hint {
   overflow: hidden;
   color: var(--ed-subtle);
   font-size: var(--text-2xs, 11px);
   text-overflow: ellipsis;
 }
 
-.editor-tab.is-preview .editor-tab-name {
+.editor-tabs .wb-tab[data-preview="true"] .wb-tab-label {
   font-style: italic;
 }
 
-.editor-tab.is-missing .editor-tab-name {
+.editor-tabs .wb-tab[data-missing="true"] .wb-tab-label {
   color: var(--ed-danger);
   text-decoration: line-through;
 }
 
-.editor-tab.is-active {
+.editor-tabs .wb-tab[data-active="true"] {
   background: var(--ed-bg);
   color: var(--ed-fg);
   font-weight: var(--weight-medium, 500);
+  box-shadow: none;
 }
 
-.editor-tab.is-active::after {
+.editor-tabs .wb-tab[data-active="true"]::after {
   opacity: 0.55;
   transform: scaleX(1);
 }
 
-.editor-pane:focus-within .editor-tab.is-active {
-  background: color-mix(in oklab, var(--tab-accent, var(--ed-accent)) 6%, var(--ed-bg));
+.editor-pane:focus-within .editor-tabs .wb-tab[data-active="true"] {
+  background: color-mix(in oklab, var(--tab-accent, var(--wb-tab-accent, var(--ed-accent))) 6%, var(--ed-bg));
   color: var(--ed-fg);
   font-weight: var(--weight-semibold, 600);
 }
 
-.editor-pane:focus-within .editor-tab.is-active::after {
+.editor-pane:focus-within .editor-tabs .wb-tab[data-active="true"]::after {
   opacity: 1;
   transform: scaleX(1);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .editor-tab:not(.is-active):hover {
-    background: color-mix(in oklab, var(--tab-accent, var(--ed-accent)) 5%, var(--ed-hover));
+  .editor-tabs .wb-tab[data-active="false"]:hover {
+    background: color-mix(
+      in oklab,
+      var(--tab-accent, var(--wb-tab-accent, var(--ed-accent))) 5%,
+      var(--ed-hover)
+    );
   }
-  .editor-tab:not(.is-active):hover::after {
+  .editor-tabs .wb-tab[data-active="false"]:hover::after {
     opacity: 0.35;
     transform: scaleX(0.75);
   }
 }
 
-.editor-tab.is-dragging {
+.editor-tabs .wb-tab[data-dragging="true"] {
   z-index: 1;
   background: var(--ed-hover);
   opacity: 0.85;
 }
 
-.editor-tab:focus-visible {
+.editor-tabs .wb-tab-trigger:focus-visible {
   outline: 2px solid var(--ed-focus);
   outline-offset: -2px;
 }
 
-.editor-tab-end {
-  position: relative;
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-}
-
-.editor-tab-dirty {
-  position: absolute;
+.editor-tabs .wb-tab-dirty {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--ed-muted);
 }
 
-.editor-tab.is-active .editor-tab-dirty {
+.editor-tabs .wb-tab[data-active="true"] .wb-tab-dirty {
   background: var(--ed-dirty);
 }
 
-.editor-tab-close {
+.editor-tabs .wb-tab-close {
   display: grid;
   place-items: center;
   width: 20px;
@@ -323,32 +332,23 @@
     background-color var(--ed-dur) var(--ed-ease);
 }
 
-.editor-tab-close .ico {
-  width: 13px;
-  height: 13px;
-}
-.editor-tab.is-active .editor-tab-close {
+.editor-tabs .wb-tab[data-active="true"] .wb-tab-close {
   opacity: 1;
 }
-.editor-tab.is-dirty .editor-tab-close {
-  opacity: 0;
-}
-.editor-tab-close:focus-visible {
+
+.editor-tabs .wb-tab-close:focus-visible {
   opacity: 1;
   outline: 2px solid var(--ed-focus);
 }
 
 @media (hover: hover) {
-  .editor-tab:hover {
+  .editor-tabs .wb-tab:hover {
     color: var(--ed-fg);
   }
-  .editor-tab:hover .editor-tab-close {
+  .editor-tabs .wb-tab:hover .wb-tab-close {
     opacity: 1;
   }
-  .editor-tab.is-dirty:hover .editor-tab-dirty {
-    opacity: 0;
-  }
-  .editor-tab-close:hover {
+  .editor-tabs .wb-tab-close:hover {
     background: var(--ed-line);
   }
 }
@@ -421,15 +421,13 @@
 }
 
 @media (max-width: 768px) {
-  .editor-tabs {
+  .editor-tabs.wb-tab-strip-row {
     height: 44px;
   }
-  .editor-tab {
-    padding: 0 6px 0 12px;
+  .editor-tabs .wb-tab {
     font-size: var(--text-sm, 13px);
   }
-  .editor-tab-end,
-  .editor-tab-close {
+  .editor-tabs .wb-tab-close {
     width: 28px;
     height: 28px;
   }
@@ -443,11 +441,11 @@
     display: none;
   }
   /* The one pane on screen is the one in use, so its open tab carries its full accent bar. */
-  .editor-tab.is-active {
+  .editor-tabs .wb-tab[data-active="true"] {
     color: var(--ed-fg);
     font-weight: var(--weight-semibold, 600);
   }
-  .editor-tab.is-active::after {
+  .editor-tabs .wb-tab[data-active="true"]::after {
     opacity: 1;
   }
   .editor-conflict-action {

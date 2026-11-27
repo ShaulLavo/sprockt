@@ -237,7 +237,6 @@ export function EditorPane(props: { store: EditorStore }) {
     return path === undefined ? undefined : originalPath(path);
   });
   const searchOpen = useValue(store.searchOpen);
-  const empty = useValue(() => store.active() === undefined);
   const pendingClose = useValue(store.pendingClose);
   const quickOpenSeed = useValue(store.quickOpenSeed);
   const onEditor = useCallback((instance: Editor) => {
@@ -268,11 +267,6 @@ export function EditorPane(props: { store: EditorStore }) {
           <ConflictBar store={store} />
           <div className="editor-body">
             <EditorView store={store} onEditor={onEditor} />
-            {empty ? (
-              <p className="editor-empty" data-testid="editor-empty">
-                {EDITOR_COPY.noOpenEditor}
-              </p>
-            ) : null}
           </div>
         </div>
       </div>

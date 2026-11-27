@@ -54,7 +54,10 @@ test("closing a dirty tab opens the Sheet & Biro save dialog and tab context men
   await expect.poll(() => editorText(page)).toBe("export const b = 2;\n");
 
   await typeInEditor(page, "// edited");
-  await expect(page.locator('[data-testid="editor-tab"][data-path="beta.ts"]')).toHaveClass(/is-dirty/);
+  await expect(page.locator('[data-testid="editor-tab"][data-path="beta.ts"]')).toHaveAttribute(
+    "data-dirty",
+    "true",
+  );
 
   // Close dirty tab -> custom dialog appears; Cancel keeps tab open.
   await page.getByRole("button", { name: "Close beta.ts" }).click();
@@ -280,7 +283,7 @@ test.describe("mobile and hybrid touch tab activation", () => {
       clientX: 20,
     });
     await page.evaluate(dispatchCancelledMouseDrag);
-    await alphaTab.focus();
+    await alphaTab.locator('[role="tab"]').focus();
     await page.keyboard.press("Enter");
     await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
     await expect.poll(() => editorHasFocus(page)).toBe(true);

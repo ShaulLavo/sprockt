@@ -110,6 +110,17 @@
   --syn-comment: light-dark(#616772, #7d899d);
   --syn-comment-style: italic;
 
+  /* ── Workbench editor token bridge ── */
+  --wb-warning: var(--warn);
+  --wb-syn-comment: var(--syn-comment);
+  --wb-syn-keyword: var(--syn-keyword);
+  --wb-syn-string: var(--syn-string);
+  --wb-syn-number: var(--syn-number);
+  --wb-syn-fn: var(--syn-function);
+  --wb-syn-type: var(--syn-type);
+  --wb-syn-var: var(--syn-text);
+  --wb-syn-prop: var(--syn-property);
+
   /* ── Terminal (ANSI) ── */
   --ansi-fg: light-dark(#181b20, #dce3ed);
   --ansi-dim: light-dark(#616772, #7d899d);
