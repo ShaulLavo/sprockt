@@ -56,6 +56,27 @@ export class NotIncompleteError extends Error {}
 
 /** Ten random characters rarely collide; this many tries makes it practically impossible. */
 const ID_ATTEMPTS = 8;
+/** Stale files removed at once when retrying an unfinished import, to stay under Waffle's in-flight RPC quota. */
+const REMOVE_BATCH = 8;
+
+async function removeInBatches(
+  filesystem: WorkspaceWriterFilesystem,
+  paths: readonly string[],
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  for (let start = 0; start < paths.length; start += REMOVE_BATCH) {
+    signal?.throwIfAborted();
+    // Settle each batch before starting the next so cleanup never saturates the filesystem RPC queue.
+    // oxlint-disable-next-line no-await-in-loop
+    const outcomes = await Promise.allSettled(
+      paths.slice(start, start + REMOVE_BATCH).map(async (path) => filesystem.remove(path)),
+    );
+    const failed = outcomes.find(
+      (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
+    );
+    if (failed) throw failed.reason;
+  }
+}
 
 async function unusedId(deps: NewWorkspaceDeps): Promise<string> {
   const newId = deps.newId ?? newWorkspaceId;
@@ -106,8 +127,13 @@ async function rewriteIncomplete(
     throw new NotIncompleteError(`Workspace ${id} is not an unfinished import`);
   }
   // Clear what the cut-off attempt wrote; the marker lives outside the project and stays.
-  const stale = await session.runtime.filesystem.listFiles(PROJECT_ROOT);
-  await Promise.all(stale.map((path) => session.runtime.filesystem.remove(path)));
+  try {
+    const stale = await session.runtime.filesystem.listFiles(PROJECT_ROOT);
+    await removeInBatches(session.runtime.filesystem, stale, signal);
+  } catch (error) {
+    await close(session);
+    throw error;
+  }
   return fill(id, session, files, meta, { deps, signal, created: false });
 }
 

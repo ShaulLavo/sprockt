@@ -56,7 +56,7 @@ export interface ProjectFiles extends FileService {
 
 /** How long changes are gathered before the explorer is told: an install touches many files. */
 const COALESCE_MS = 50;
-/** Files read or written at once while uploading or exporting, to bound memory. */
+/** Files inspected, checked, read or written at once in bulk operations, to bound memory and in-flight RPCs. */
 const BATCH = 8;
 
 interface Pending {
@@ -109,6 +109,28 @@ async function inBatches<T>(
     }
   }
   if (failed) throw firstError;
+}
+
+function collectFulfilled<R>(outcomes: readonly PromiseSettledResult<R>[]): R[] {
+  const values: R[] = [];
+  for (const outcome of outcomes) {
+    if (outcome.status === "rejected") throw outcome.reason;
+    values.push(outcome.value);
+  }
+  return values;
+}
+
+async function mapInBatches<T, R>(items: readonly T[], work: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  for (let start = 0; start < items.length; start += BATCH) {
+    // Each batch settles completely before the next starts or an error escapes (and unlocks).
+    // oxlint-disable-next-line no-await-in-loop
+    const outcomes = await Promise.allSettled(
+      items.slice(start, start + BATCH).map(async (item) => work(item)),
+    );
+    results.push(...collectFulfilled(outcomes));
+  }
+  return results;
 }
 
 const parentOf = (absolute: string) => absolute.slice(0, absolute.lastIndexOf("/"));
@@ -198,6 +220,24 @@ function createInspector(resolve: Lookup): (absolute: string) => Promise<Located
     return known;
   };
 
+  async function followLinkSteps(
+    parts: readonly string[],
+    links: Set<string>,
+    visiting: Set<string>,
+    done: Set<string>,
+  ): Promise<void> {
+    let prefix = "";
+    for (const part of parts) {
+      prefix = `${prefix}/${part}`;
+      // Resolve one segment at a time so each target keeps at most one RPC in flight and `visiting` tracks cycles.
+      // oxlint-disable-next-line no-await-in-loop
+      const step = await lookup(prefix);
+      if (step?.kind !== "symlink") continue;
+      // oxlint-disable-next-line no-await-in-loop
+      await collectLinks(step, links, visiting, done);
+    }
+  }
+
   async function collectLinks(
     entry: ResolvedEntry,
     links: Set<string>,
@@ -213,15 +253,7 @@ function createInspector(resolve: Lookup): (absolute: string) => Promise<Located
     visiting.add(entry.path);
     try {
       const next = entry.target.startsWith("/") ? entry.target : `${parentOf(entry.path)}/${entry.target}`;
-      const parts = next.split("/").filter(Boolean);
-      const steps = await Promise.all(
-        parts.map((_, index) => lookup(`/${parts.slice(0, index + 1).join("/")}`)),
-      );
-      for (const step of steps) {
-        if (step?.kind !== "symlink") continue;
-        // oxlint-disable-next-line no-await-in-loop -- depth-first so `visiting` accurately tracks cycles
-        await collectLinks(step, links, visiting, done);
-      }
+      await followLinkSteps(next.split("/").filter(Boolean), links, visiting, done);
       done.add(entry.path);
     } finally {
       visiting.delete(entry.path);
@@ -447,7 +479,7 @@ export function createProjectFiles(
     change: () => Promise<T>,
     options: { readonly bulk?: boolean; readonly first?: readonly Located[] } = {},
   ): Promise<T> {
-    const before = await Promise.all(targets.map(createInspector(found)));
+    const before = await mapInBatches(targets, createInspector(found));
     const origin = options.first ?? before;
     const request: LockRequest = options.bulk
       ? planBulkLocks(before)
@@ -462,7 +494,7 @@ export function createProjectFiles(
             ),
         };
     const outcome = await locks.hold(request, async () => {
-      const now = await Promise.all(targets.map(createInspector(found)));
+      const now = await mapInBatches(targets, createInspector(found));
       const gone = now.findIndex((place, index) => isBelow(origin[index]!.base, place.base));
       if (gone >= 0) throw new FolderGoneError(projectRelative(targets[gone]!) ?? targets[gone]!);
       const moved = now.some(
@@ -551,9 +583,7 @@ export function createProjectFiles(
   ): Promise<void> {
     const confine = confiner();
     // Links are checked for the whole set first, so a bad entry writes nothing.
-    const checks = await Promise.allSettled(targets.map((absolute) => confine(absolute, true)));
-    const failed = checks.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
-    if (failed) throw failed.reason;
+    await inBatches(targets, (absolute) => confine(absolute, true));
     await inBatches(entries, async ([path, content], isAborted) => {
       if (isAborted()) return;
       const absolute = projectPath(path);
