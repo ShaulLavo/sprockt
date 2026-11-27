@@ -83,18 +83,28 @@ export async function openWorkspace(
   opened.resolve();
   const files = createFileService(booted.runtime, booted.id);
   const terminals = createTerminalStore();
+  const hydration = new AbortController();
   // Revoking saves first leaves the editor's unsaved text for the new owner; then this tab's
   // shells stop and its runtime goes, so nothing here keeps running against storage it lost.
   // The previews go with them: the preview identity is for a tab that holds the storage.
   revoke = () => {
+    hydration.abort();
     files.revoke(movedError());
     void terminals
       .shutdown()
       .then(() => tearDownAll([() => preview.dispose(), () => booted.dispose()]))
       .catch((error: unknown) => console.error("Releasing a workspace taken by another tab failed", error));
   };
-  if (moved) revoke();
-  else await hydrateWorkspaceName(id, workspaceNameDeps(booted.runtime, files)).catch(() => undefined);
+  if (moved) {
+    revoke();
+  } else {
+    // Hydrate reactively outside the boot turnstile so a stalled lock in another tab never
+    // blocks opening or switching workspaces; disposal aborts any pending lock wait.
+    void hydrateWorkspaceName(id, {
+      ...workspaceNameDeps(booted.runtime, files),
+      signal: hydration.signal,
+    }).catch(() => undefined);
+  }
   terminals.create();
   return {
     ...booted,
@@ -105,7 +115,10 @@ export async function openWorkspace(
     status: createStatusItems(),
     commands: createCommands(),
     // Every step runs even if an earlier one fails: the runtime must not outlive its session.
-    dispose: () => tearDownAll([() => files.dispose(), () => preview.dispose(), () => booted.dispose()]),
+    dispose: () => {
+      hydration.abort();
+      return tearDownAll([() => files.dispose(), () => preview.dispose(), () => booted.dispose()]);
+    },
   };
 }
 

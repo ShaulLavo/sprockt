@@ -10,6 +10,7 @@ import {
 } from "../templates/workspace-meta";
 import {
   hasWorkspaceHints,
+  mergeStoredWorkspaceMeta,
   readWorkspaceHint,
   removeWorkspaceHint,
   saveWorkspaceHint,
@@ -42,16 +43,6 @@ export interface StoredWorkspaceSummary {
   readonly source?: WorkspaceSource;
   readonly meta?: WorkspaceMeta;
   readonly openInOtherTab: boolean;
-}
-
-function newerTimestamp(a: string | undefined, b: string | undefined): string | undefined {
-  if (!a) return b;
-  if (!b) return a;
-  const aMs = Date.parse(a);
-  const bMs = Date.parse(b);
-  if (Number.isNaN(aMs)) return b;
-  if (Number.isNaN(bMs)) return a;
-  return aMs >= bMs ? a : b;
 }
 
 async function listSprocktWorkspaceIds(): Promise<string[]> {
@@ -111,10 +102,7 @@ export function listStoredWorkspaces(): Promise<StoredWorkspaceSummary[]> {
           if (outcome.status === "busy") return summaryFromMeta(id, hint, true);
           const meta = outcome.rawMeta ? parseWorkspaceMeta(outcome.rawMeta) : undefined;
           if (meta) {
-            const merged: WorkspaceMeta = {
-              ...meta,
-              lastOpened: newerTimestamp(meta.lastOpened, hint?.lastOpened) ?? meta.lastOpened,
-            };
+            const merged = mergeStoredWorkspaceMeta(id, meta, hint);
             saveWorkspaceHint(id, merged);
             return summaryFromMeta(id, merged, false);
           }

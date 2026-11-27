@@ -106,17 +106,45 @@ export interface HydrateWorkspaceNameDeps {
   readMeta(): Promise<string | undefined>;
   writeMeta?(json: string): Promise<void>;
   readPackageJson(): Promise<string | undefined>;
+  readonly signal?: AbortSignal;
   now?: () => Date;
 }
 
+function abortError(signal: AbortSignal): Error {
+  const reason: unknown = signal.reason;
+  if (reason instanceof Error) return reason;
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+function waitUnlessAborted(promise: Promise<unknown>, signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) return promise.then(() => undefined);
+  if (signal.aborted) return Promise.reject(abortError(signal));
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => reject(abortError(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.finally(() => {
+      signal.removeEventListener("abort", onAbort);
+      if (!signal.aborted) resolve();
+    });
+  });
+}
+
 /** Serializes metadata check-and-write per workspace within this tab and across attached tabs. */
-function withWorkspaceNameLock<T>(id: string, task: () => Promise<T>): Promise<T> {
+function withWorkspaceNameLock<T>(
+  id: string,
+  task: () => Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (signal?.aborted) return Promise.reject(abortError(signal));
   const runInBrowserLock = (): Promise<T> => {
+    if (signal?.aborted) return Promise.reject(abortError(signal));
     if (typeof navigator === "undefined" || !navigator.locks) return task();
-    return navigator.locks.request(`sprockt:${id}:meta-name`, task);
+    return signal
+      ? navigator.locks.request(`sprockt:${id}:meta-name`, { signal }, task)
+      : navigator.locks.request(`sprockt:${id}:meta-name`, task);
   };
   const previous = nameLockQueues.get(id) ?? Promise.resolve();
-  const next = previous.then(runInBrowserLock, runInBrowserLock);
+  const next = waitUnlessAborted(previous, signal).then(runInBrowserLock);
   const tail = next.then(
     () => undefined,
     () => undefined,
@@ -126,6 +154,23 @@ function withWorkspaceNameLock<T>(id: string, task: () => Promise<T>): Promise<T
     if (nameLockQueues.get(id) === tail) nameLockQueues.delete(id);
   });
   return next;
+}
+
+/**
+ * Merges disk metadata read on the landing page with an existing browser hint, preserving a
+ * pending adopted name when disk still holds a placeholder (e.g. after a transient write failure).
+ */
+export function mergeStoredWorkspaceMeta(
+  id: string,
+  diskMeta: WorkspaceMeta,
+  hint: WorkspaceMeta | undefined,
+): WorkspaceMeta {
+  const lastOpened = newerTimestamp(diskMeta.lastOpened, hint?.lastOpened) ?? diskMeta.lastOpened;
+  if (isPlaceholderWorkspaceName(diskMeta) && hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
+    const { defaultName: _placeholder, ...rest } = diskMeta;
+    return { ...rest, name: hint.name, lastOpened };
+  }
+  return { ...diskMeta, lastOpened };
 }
 
 type MetaRead = { readonly ok: true; readonly raw: string | undefined } | { readonly ok: false };
@@ -203,58 +248,64 @@ function hintFromPartial(
  * metadata write failed transiently.
  */
 export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps): Promise<string> {
-  return withWorkspaceNameLock(id, async () => {
-    const now = deps.now ? deps.now() : new Date();
-    const nowIso = now.toISOString();
-    const hint = readWorkspaceHint(id);
-    const metaRead = await readMetaStrict(deps);
-    if (!metaRead.ok) return hint?.name ?? id;
+  return withWorkspaceNameLock(
+    id,
+    async () => {
+      if (deps.signal?.aborted) return readWorkspaceHint(id)?.name ?? id;
+      const now = deps.now ? deps.now() : new Date();
+      const nowIso = now.toISOString();
+      const hint = readWorkspaceHint(id);
+      const metaRead = await readMetaStrict(deps);
+      if (!metaRead.ok || deps.signal?.aborted) return hint?.name ?? id;
 
-    const rawMeta = metaRead.raw;
-    const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
-    const partial = parsePartialWorkspaceMeta(rawMeta);
+      const rawMeta = metaRead.raw;
+      const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
+      const partial = parsePartialWorkspaceMeta(rawMeta);
 
-    if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) {
-      const lastOpened =
-        newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
-      saveWorkspaceHint(id, { ...fileMeta, lastOpened });
-      return fileMeta.name;
-    }
+      if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) {
+        const lastOpened =
+          newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
+        saveWorkspaceHint(id, { ...fileMeta, lastOpened });
+        return fileMeta.name;
+      }
 
-    // Preserve any non-placeholder saved name on disk (along with its valid template/source/state)
-    // even if `workspace.json` lacks timestamps.
-    if (partial?.name && !partial.defaultName) {
-      saveWorkspaceHint(id, hintFromPartial(partial, partial.name, hint, nowIso));
-      return partial.name;
-    }
+      // Preserve any non-placeholder saved name on disk (along with its valid template/source/state)
+      // even if `workspace.json` lacks timestamps.
+      if (partial?.name && !partial.defaultName) {
+        saveWorkspaceHint(id, hintFromPartial(partial, partial.name, hint, nowIso));
+        return partial.name;
+      }
 
-    // If an earlier adoption/rename saved a real hint while disk still holds a placeholder or
-    // nothing, retry persisting it to disk so clearing browser storage never loses the name.
-    if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
-      const { json, meta } = mergeDerivedWorkspaceName(rawMeta, hint.name, now);
-      const lastOpened = newerTimestamp(hint.lastOpened, nowIso) ?? nowIso;
-      saveWorkspaceHint(id, { ...meta, lastOpened });
-      if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
-      return hint.name;
-    }
+      // If an earlier adoption/rename saved a real hint while disk still holds a placeholder or
+      // nothing, retry persisting it to disk so clearing browser storage never loses the name.
+      if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
+        const { json, meta } = mergeDerivedWorkspaceName(rawMeta, hint.name, now);
+        const lastOpened = newerTimestamp(hint.lastOpened, nowIso) ?? nowIso;
+        saveWorkspaceHint(id, { ...meta, lastOpened });
+        if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
+        return hint.name;
+      }
 
-    const derived = await deriveNameFromWorkspace(partial, deps);
-    if (derived) {
-      const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
-      saveWorkspaceHint(id, meta);
-      if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
-      return derived;
-    }
+      const derived = await deriveNameFromWorkspace(partial, deps);
+      if (deps.signal?.aborted) return hint?.name ?? id;
+      if (derived) {
+        const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
+        saveWorkspaceHint(id, meta);
+        if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
+        return derived;
+      }
 
-    if (fileMeta) {
-      const lastOpened =
-        newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
-      saveWorkspaceHint(id, { ...fileMeta, lastOpened });
-      return fileMeta.name;
-    }
+      if (fileMeta) {
+        const lastOpened =
+          newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
+        saveWorkspaceHint(id, { ...fileMeta, lastOpened });
+        return fileMeta.name;
+      }
 
-    return hint?.name ?? id;
-  });
+      return hint?.name ?? id;
+    },
+    deps.signal,
+  );
 }
 
 export interface UploadedNameItem {
@@ -279,32 +330,37 @@ export function adoptUploadedWorkspaceName(
   items: readonly UploadedNameItem[],
   deps: HydrateWorkspaceNameDeps,
 ): Promise<string | undefined> {
-  return withWorkspaceNameLock(id, async () => {
-    const metaRead = await readMetaStrict(deps);
-    if (!metaRead.ok) return undefined;
+  return withWorkspaceNameLock(
+    id,
+    async () => {
+      if (deps.signal?.aborted) return undefined;
+      const metaRead = await readMetaStrict(deps);
+      if (!metaRead.ok || deps.signal?.aborted) return undefined;
 
-    const rawMeta = metaRead.raw;
-    const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
-    const partial = parsePartialWorkspaceMeta(rawMeta);
-    const hint = readWorkspaceHint(id);
+      const rawMeta = metaRead.raw;
+      const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
+      const partial = parsePartialWorkspaceMeta(rawMeta);
+      const hint = readWorkspaceHint(id);
 
-    if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) return undefined;
-    if (partial?.name && !partial.defaultName) return undefined;
-    if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) return undefined;
+      if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) return undefined;
+      if (partial?.name && !partial.defaultName) return undefined;
+      if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) return undefined;
 
-    const folderName = deriveUploadFolderName(
-      items.map((item) => ({ path: item.path, hasData: item.data !== undefined })),
-    );
-    const derived =
-      folderName ??
-      (await uploadedPackageJsonName(items)) ??
-      packageJsonName(await deps.readPackageJson().catch(() => undefined));
-    if (!derived) return undefined;
+      const folderName = deriveUploadFolderName(
+        items.map((item) => ({ path: item.path, hasData: item.data !== undefined })),
+      );
+      const derived =
+        folderName ??
+        (await uploadedPackageJsonName(items)) ??
+        packageJsonName(await deps.readPackageJson().catch(() => undefined));
+      if (!derived || deps.signal?.aborted) return undefined;
 
-    const now = deps.now ? deps.now() : new Date();
-    const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
-    saveWorkspaceHint(id, meta);
-    if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
-    return derived;
-  });
+      const now = deps.now ? deps.now() : new Date();
+      const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
+      saveWorkspaceHint(id, meta);
+      if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
+      return derived;
+    },
+    deps.signal,
+  );
 }

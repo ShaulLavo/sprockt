@@ -9,6 +9,7 @@ import {
   adoptUploadedWorkspaceName,
   handleHintStorageEvent,
   hydrateWorkspaceName,
+  mergeStoredWorkspaceMeta,
   readWorkspaceHint,
   removeWorkspaceHint,
   saveWorkspaceHint,
@@ -405,6 +406,14 @@ describe("workspace name hydration and reactivity", () => {
     // Disk still holds the placeholder because the write failed transiently.
     expect(JSON.parse(storedMeta!).defaultName).toBe(true);
 
+    // Visiting the landing page while disk still holds the placeholder keeps the adopted hint.
+    const diskMeta = createWorkspaceMeta({ name: "workspace", template: "blank", defaultName: true });
+    const listed = mergeStoredWorkspaceMeta(id, diskMeta, readWorkspaceHint(id));
+    expect(listed.name).toBe("uploaded-app");
+    expect(listed.defaultName).toBeUndefined();
+    saveWorkspaceHint(id, listed);
+    expect(workspaceName(id)).toBe("uploaded-app");
+
     // Reopening after writes recover persists the adopted name to disk.
     failWrites = false;
     const hydrated = await hydrateWorkspaceName(id, deps);
@@ -417,5 +426,34 @@ describe("workspace name hydration and reactivity", () => {
     const afterClear = await hydrateWorkspaceName(id, deps);
     expect(afterClear).toBe("uploaded-app");
     expect(workspaceName(id)).toBe("uploaded-app");
+  });
+
+  test("aborts a stalled lock wait cleanly when its signal cancels without mutating state", async () => {
+    const id = "abortlock1";
+    const gate = Promise.withResolvers<void>();
+    const holder = hydrateWorkspaceName(id, {
+      readMeta: async () => {
+        await gate.promise;
+        return undefined;
+      },
+      readPackageJson: async () => undefined,
+    });
+
+    const controller = new AbortController();
+    let secondWrites = 0;
+    const waiting = hydrateWorkspaceName(id, {
+      readMeta: async () => undefined,
+      writeMeta: async () => void (secondWrites += 1),
+      readPackageJson: async () => JSON.stringify({ name: "cancelled-app" }),
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    await expect(waiting).rejects.toThrow();
+    expect(secondWrites).toBe(0);
+    expect(readWorkspaceHint(id)).toBeUndefined();
+
+    gate.resolve();
+    await holder;
   });
 });
