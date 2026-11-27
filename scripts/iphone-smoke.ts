@@ -136,12 +136,14 @@ const textOf = (id: string) => `${testId(id)}?.textContent`;
 const terminalHas = (pattern: string) =>
   `(globalThis.sprockt?.terminalLines() ?? []).some((line) => ${pattern}.test(line))`;
 
+async function showPhonePane(driver: WebDriver, slotId: "wb-slot-files" | "wb-slot-terminal"): Promise<void> {
+  // A phone shows one pane at a time; virtualized trees and terminals need their pane visible.
+  await driver.click(`[data-testid="pane-switcher"] [aria-controls="${slotId}"]`);
+}
+
 async function runInTerminal(driver: WebDriver, command: string): Promise<void> {
   await driver.until(`${textOf("terminal-state")} === "ready"`, "the shell");
-  // A phone shows one pane at a time: bring the terminal up first.
-  await driver.script(
-    `document.querySelector('[data-testid="pane-switcher"] [aria-controls="wb-slot-terminal"]')?.click(); return true;`,
-  );
+  await showPhonePane(driver, "wb-slot-terminal");
   await driver.click(".wb-terminal-stage");
   // Keys typed before the terminal holds focus are lost, as on a real phone.
   await driver.until(
@@ -181,9 +183,15 @@ function smokeSteps(driver: WebDriver, baseUrl: string) {
       name: "a file written in the shell survives a reload",
       run: async () => {
         await runInTerminal(driver, "echo kept-across-reload > proof.txt");
+        await showPhonePane(driver, "wb-slot-files");
         await driver.until(`${textOf("file-tree")}?.includes("proof.txt")`, "proof.txt");
         await driver.until(`${textOf("save-state")} === "saved"`, "the save");
-        await driver.script("location.reload(); return true;");
+        await driver.script("globalThis.__sprocktBeforeReload = true; location.reload(); return true;");
+        await driver.until(
+          `!globalThis.__sprocktBeforeReload && ${textOf("terminal-state")} === "ready"`,
+          "the shell after the reload",
+        );
+        await showPhonePane(driver, "wb-slot-files");
         await driver.until(`${textOf("file-tree")}?.includes("proof.txt")`, "proof.txt after the reload");
         await runInTerminal(driver, "cat proof.txt");
         await driver.until(terminalHas("/^kept-across-reload$/"), "the file's text");

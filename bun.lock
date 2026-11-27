@@ -17,14 +17,14 @@
         "@shaulavo/workbench-tokens": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-tokens-0.1.17.tgz",
         "@shaulavo/workbench-tree": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-tree-0.1.17.tgz",
         "@shaulavo/workbench-ui": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.17/shaulavo-workbench-ui-0.1.17.tgz",
-        "@singapore-editor/core": "0.2.13",
-        "@singapore-editor/find": "0.2.13",
-        "@singapore-editor/gutters": "0.2.13",
-        "@singapore-editor/highlighting": "0.2.16",
+        "@singapore-editor/core": "0.2.14",
+        "@singapore-editor/find": "0.2.14",
+        "@singapore-editor/gutters": "0.2.14",
+        "@singapore-editor/highlighting": "0.2.17",
         "@singapore-editor/lsp": "0.2.13",
-        "@singapore-editor/lsp-plugin": "0.2.16",
-        "@singapore-editor/plugin-ui": "0.2.13",
-        "@singapore-editor/react": "0.2.13",
+        "@singapore-editor/lsp-plugin": "0.2.17",
+        "@singapore-editor/plugin-ui": "0.2.14",
+        "@singapore-editor/react": "0.2.14",
         "@waffle-os/relay": "0.0.150",
         "bash-web": "0.0.114",
         "bun-wasm": "git+https://github.com/ShaulLavo/bun-wasm.git#a997a2069c5201c75c83e6eb68e0995a8f7254f5",
@@ -373,29 +373,29 @@
 
     "@sindresorhus/is": ["@sindresorhus/is@7.2.0", "", {}, "sha512-P1Cz1dWaFfR4IR+U13mqqiGsLFf1KbayybWwdd2vfctdV6hDpUkgCY0nKOLLTMSoRd/jJNjtbqzf13K8DCCXQw=="],
 
-    "@singapore-editor/core": ["@singapore-editor/core@0.2.13", "", { "dependencies": { "@shaulavo/hotkeys": "^0.0.4", "@shikijs/engine-oniguruma": "4.4.3", "@singapore-editor/textbuffer": "0.2.9", "diff": "^9.0.0", "evlog": "^2.29.0", "shiki": "^4.4.3" } }, "sha512-+OR2pa6pFueeOh6MOOXT6p1ZKX9cC4lkpGEPXoJ+IN4J5FjvPGlFVucYSF2+s55XbdzR9TdZL3MSgv+mZfN13g=="],
+    "@singapore-editor/core": ["@singapore-editor/core@0.2.14", "", { "dependencies": { "@shaulavo/hotkeys": "^0.0.4", "@shikijs/engine-oniguruma": "4.4.3", "@singapore-editor/textbuffer": "0.2.9", "diff": "^9.0.0", "evlog": "^2.29.0", "shiki": "^4.4.3" } }, "sha512-Ky71clId7SrJLYRSKMuvdEiB+07xYAczUKXn0fzRkvAkOUycq9VczcwJBK732UHQ6MKuNq5OIEwDENCKyxRtBA=="],
 
-    "@singapore-editor/diff": ["@singapore-editor/diff@0.2.13", "", { "dependencies": { "@singapore-editor/core": "0.2.13", "diff": "^9.0.0" } }, "sha512-AJNkIKlJG6rCtcdgrV/sLgZDv82C824e91LBzmsR6KM0B+1jPhVe3jXH7BupBHRK4xcVU80wB23R+I+ZkGsR2Q=="],
+    "@singapore-editor/diff": ["@singapore-editor/diff@0.2.14", "", { "dependencies": { "@singapore-editor/core": "0.2.14", "diff": "^9.0.0" } }, "sha512-YqEBx6djzgGuFwoYjM3QdLuMa66otG+9/xaGTDBQjY0gSheHfRi13riZVVbtFrRS37ZUw2B/PFpAMcsxW13A5g=="],
 
-    "@singapore-editor/find": ["@singapore-editor/find@0.2.13", "", { "peerDependencies": { "@singapore-editor/core": "0.2.13" } }, "sha512-ziV9AJY1xCWV9gMAwfpDAqP8zcEENu+faj+qao4nQmcXlmAquSflXtxG091rmVX1pPwvPfSAhxRmDRjxuCLpQA=="],
+    "@singapore-editor/find": ["@singapore-editor/find@0.2.14", "", { "peerDependencies": { "@singapore-editor/core": "0.2.14" } }, "sha512-ij2zYvegDLkmpuR8S9R8QxWF/Z6L4YZvSHj0cKE3hRX04gh5PH6W+kfV/Zk1JxRTS5jod7nf6eVMeo87UHuYMg=="],
 
-    "@singapore-editor/gutters": ["@singapore-editor/gutters@0.2.13", "", { "dependencies": { "@singapore-editor/core": "0.2.13" } }, "sha512-XK+bq7Qrrv4tf0ljvZwIxoMShctOHt2EnD2dDqlNpZC3M8yvS+susknl2rSTQZP96A60zcq2p24wzjRNMNnuLw=="],
+    "@singapore-editor/gutters": ["@singapore-editor/gutters@0.2.14", "", { "dependencies": { "@singapore-editor/core": "0.2.14" } }, "sha512-9JBXWyJNeGF0OIMgWEnGY4xk7AeRKAhUVnPUrjoZzreG5ArsmJjZ4I+GC4EiV541mqOu3GbcerjxUNahUiU+VQ=="],
 
-    "@singapore-editor/highlighting": ["@singapore-editor/highlighting@0.2.16", "", { "dependencies": { "@singapore-editor/diff": "0.2.13", "@singapore-editor/tree-sitter": "0.2.15", "@singapore-editor/tree-sitter-languages": "0.2.16", "shiki": "^4.4.3" }, "peerDependencies": { "@singapore-editor/core": "0.2.13" } }, "sha512-OVAzwU/MQgW5TF1c+e3rv+QvjbMp7gm/QnkNDeeLGOTA9eqCVgHirmBO2x+1XlODN2l/KDAVEKZXI+eO6/5kbA=="],
+    "@singapore-editor/highlighting": ["@singapore-editor/highlighting@0.2.17", "", { "dependencies": { "@shikijs/themes": "^4.4.3", "@singapore-editor/diff": "0.2.14", "@singapore-editor/tree-sitter": "0.2.16", "@singapore-editor/tree-sitter-languages": "0.2.17", "shiki": "^4.4.3" }, "peerDependencies": { "@singapore-editor/core": "0.2.14" } }, "sha512-c+Hldb2Kkqb5E4awJfOy8S/Z7Sq+NeWMxFU+aGIQb0Xz6AgDuKKXBD7KyWAIYCdQUbDXXK24cqUUR/kJzkXmuw=="],
 
     "@singapore-editor/lsp": ["@singapore-editor/lsp@0.2.13", "", { "dependencies": { "vscode-languageserver-protocol": "^3.18.4" } }, "sha512-sMzCfUoSFpCcKvBrCmHTiRqvHnEElqJKQxuiC4QvsZ6PoJpNN1/hZ0FbgoKcHReYQQj7Bw1nDoNuukVei6BWQw=="],
 
-    "@singapore-editor/lsp-plugin": ["@singapore-editor/lsp-plugin@0.2.16", "", { "dependencies": { "@singapore-editor/lsp": "0.2.13", "@singapore-editor/plugin-ui": "0.2.13", "vscode-languageserver-protocol": "^3.18.4" }, "peerDependencies": { "@singapore-editor/core": "0.2.13" } }, "sha512-7L0YjKQI+jpiWwGbgyfVQ4QTQrwZgMd0yEgPMVCrLtun4Q2aWtPpLWuSBwfGeT7e9VNE/75VEYZg17VBg0GXFA=="],
+    "@singapore-editor/lsp-plugin": ["@singapore-editor/lsp-plugin@0.2.17", "", { "dependencies": { "@singapore-editor/lsp": "0.2.13", "@singapore-editor/plugin-ui": "0.2.14", "vscode-languageserver-protocol": "^3.18.4" }, "peerDependencies": { "@singapore-editor/core": "0.2.14" } }, "sha512-JvhapXudlhbzvxwW3km2lFbJPodieOGcadBdjA8Ec8UB35aDTpDF7o8mz/lxGG01oyxKa5nKuT9T2LFvixPMJA=="],
 
-    "@singapore-editor/plugin-ui": ["@singapore-editor/plugin-ui@0.2.13", "", { "dependencies": { "remark-gfm": "^4.0.1", "remark-parse": "^11.0.0", "remark-stringify": "^11.0.0", "unified": "^11.0.5" }, "peerDependencies": { "@singapore-editor/core": "0.2.13" } }, "sha512-4LjdKS3K6n2zDIW28/E1fmQ1UqyjNSCl60etPIaZZl28llCVzdv1i7M58lVjAcI3ivZLg7nYt0skyCZii3H6jg=="],
+    "@singapore-editor/plugin-ui": ["@singapore-editor/plugin-ui@0.2.14", "", { "dependencies": { "remark-gfm": "^4.0.1", "remark-parse": "^11.0.0", "remark-stringify": "^11.0.0", "unified": "^11.0.5" }, "peerDependencies": { "@singapore-editor/core": "0.2.14" } }, "sha512-mE0LszaaKiPB5ddPZZdNFXA4ivGnpHa/OYnjrGWcRNCpaW2veSs9l8qVA44pGZ+sGKYFmn5Y6nKyx0uQmFmJvg=="],
 
-    "@singapore-editor/react": ["@singapore-editor/react@0.2.13", "", { "dependencies": { "@singapore-editor/core": "0.2.13" }, "peerDependencies": { "react": ">=19.0.0", "react-dom": ">=19.0.0" } }, "sha512-rocRWXPPCGNU3lzdJGqHSwZaRiiWGU7yjNtL2vSxbMiEHkKWIEc1utnfp5w7wAXD77QLhsioVaVZX/rMr+TDHA=="],
+    "@singapore-editor/react": ["@singapore-editor/react@0.2.14", "", { "dependencies": { "@singapore-editor/core": "0.2.14" }, "peerDependencies": { "react": ">=19.0.0", "react-dom": ">=19.0.0" } }, "sha512-pJtmhkQmdAfTZfuLd8ze9vNDWKciNTE3pSrrlGN3S3pwKvQ4Kx2zwDIMwbsFaWLFwscJ4WfKD+BAxXce/J8+kQ=="],
 
     "@singapore-editor/textbuffer": ["@singapore-editor/textbuffer@0.2.9", "", {}, "sha512-OBQ26lyh5a3Bhc9amEc2DEhm0gs7nuiWzqvouDimvp48VsIE+hxv/v+A5zj8ALzHjsgiWdsJjY9fi77tt+czZA=="],
 
-    "@singapore-editor/tree-sitter": ["@singapore-editor/tree-sitter@0.2.15", "", { "dependencies": { "@singapore-editor/core": "0.2.13", "tree-sitter-md": "github:ShaulLavo/tree-sitter-md#f02e277a34375f326572b4ade2602f44ac769005", "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#ded777638461e444b80bd8d361fb29cc5e45eb00" } }, "sha512-SCcJGXPtTz0l+oO5Bt9qhLFS9dw2BmXCY8ZH8zXhYnWEU3rtqpKEdLkIlbmltcTqtjM951VNNh0/gPvefeAEWQ=="],
+    "@singapore-editor/tree-sitter": ["@singapore-editor/tree-sitter@0.2.16", "", { "dependencies": { "@singapore-editor/core": "0.2.14", "tree-sitter-md": "github:ShaulLavo/tree-sitter-md#f02e277a34375f326572b4ade2602f44ac769005", "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#33a55c7dabb47ea24b56fe63fc70c7555665fd65" } }, "sha512-2VY7CVE7uy2/jSLSmGaHbWwf5VW/zCf192e9vbbBX2LncBb0o3/nmKBFEahPMhwPoD1lAff3h2bdzFcNiv6LnA=="],
 
-    "@singapore-editor/tree-sitter-languages": ["@singapore-editor/tree-sitter-languages@0.2.16", "", { "dependencies": { "@singapore-editor/tree-sitter": "0.2.15", "@tree-sitter-grammars/tree-sitter-lua": "0.4.1", "@tree-sitter-grammars/tree-sitter-toml": "0.7.0", "@tree-sitter-grammars/tree-sitter-yaml": "0.7.1", "tree-sitter-bash": "0.25.1", "tree-sitter-c": "0.24.1", "tree-sitter-c-sharp": "0.23.5", "tree-sitter-cpp": "0.23.4", "tree-sitter-css": "0.25.0", "tree-sitter-go": "0.25.0", "tree-sitter-html": "0.23.2", "tree-sitter-java": "0.23.5", "tree-sitter-javascript": "0.25.0", "tree-sitter-jsdoc": "0.25.0", "tree-sitter-json": "0.24.8", "tree-sitter-md": "github:ShaulLavo/tree-sitter-md#f02e277a34375f326572b4ade2602f44ac769005", "tree-sitter-php": "0.24.2", "tree-sitter-python": "0.25.0", "tree-sitter-regex": "0.25.0", "tree-sitter-rust": "0.24.0", "tree-sitter-svelte": "0.11.0", "tree-sitter-typescript": "0.23.2" }, "peerDependencies": { "@singapore-editor/core": "0.2.13" } }, "sha512-jA7mv/1Ji6OHn6ZCD+2RV1l5t+jjWdroTcoAUwplfw3jiqKbCZGsknbV/UKxejqUnwv1h3ipvixh+GS6/K+DIg=="],
+    "@singapore-editor/tree-sitter-languages": ["@singapore-editor/tree-sitter-languages@0.2.17", "", { "dependencies": { "@singapore-editor/tree-sitter": "0.2.16", "@tree-sitter-grammars/tree-sitter-lua": "0.4.1", "@tree-sitter-grammars/tree-sitter-toml": "0.7.0", "@tree-sitter-grammars/tree-sitter-yaml": "0.7.1", "tree-sitter-bash": "0.25.1", "tree-sitter-c": "0.24.1", "tree-sitter-c-sharp": "0.23.5", "tree-sitter-cpp": "0.23.4", "tree-sitter-css": "0.25.0", "tree-sitter-go": "0.25.0", "tree-sitter-html": "0.23.2", "tree-sitter-java": "0.23.5", "tree-sitter-javascript": "0.25.0", "tree-sitter-jsdoc": "0.25.0", "tree-sitter-json": "0.24.8", "tree-sitter-md": "github:ShaulLavo/tree-sitter-md#f02e277a34375f326572b4ade2602f44ac769005", "tree-sitter-php": "0.24.2", "tree-sitter-python": "0.25.0", "tree-sitter-regex": "0.25.0", "tree-sitter-rust": "0.24.0", "tree-sitter-svelte": "0.11.0", "tree-sitter-typescript": "0.23.2" }, "peerDependencies": { "@singapore-editor/core": "0.2.14" } }, "sha512-poqsS5p3516kBeYgIFcRBRpCDJIcVJ7uFPib402rs5l8L/OjqEdaSrxS3sofJsioLJjOSVU2x3hsiVzyBf/jFg=="],
 
     "@speed-highlight/core": ["@speed-highlight/core@1.2.24", "", {}, "sha512-qeW2e1l78afw8VhRPfPQ1Gjj+KU5XFQ/OFV5ti6eTa9bruO7mJyZtA4vw0ofqmA3tKCkROE9xLk3VZoeRc98nw=="],
 
@@ -931,7 +931,7 @@
 
     "waffle-sed": ["waffle-sed@https://github.com/ShaulLavo/waffle/releases/download/programs-v0.0.23/waffle-sed-0.0.23.tgz", { "peerDependencies": { "waffle": "*" } }, "sha512-MTx4FIQ8/dwhaPli6hsPf47MmGZyjfpsNd9Yld/vdcYRd86THESB4l/YxK2ucmhBN0QZCO1KXbhahF1axPKcnQ=="],
 
-    "web-tree-sitter": ["web-tree-sitter@github:ShaulLavo/tree-sitter-x#ded7776", {}, "ShaulLavo-tree-sitter-x-ded7776", "sha512-ITLwR/Uo3z3pZuqIGoa6zzmkIODgH6a9diWzAHpCj9Hce7oRhotV/fkgkFpTQhhY9J9WeTgq5EY/0CaISpwWxQ=="],
+    "web-tree-sitter": ["web-tree-sitter@github:ShaulLavo/tree-sitter-x#33a55c7", {}, "ShaulLavo-tree-sitter-x-33a55c7", "sha512-Ujnr04TVZW85BnGxkpf+UaDKtmfjppaOGD5xOo3QZjMqVbNA8TXnNrFWvFb9z/qJnT6RCsIZcDyS0eUNbMP4/g=="],
 
     "which-typed-array": ["which-typed-array@1.1.24", "", { "dependencies": { "available-typed-arrays": "^1.0.7", "call-bind": "^1.0.9", "call-bound": "^1.0.4", "for-each": "^0.3.5", "get-proto": "^1.0.1", "gopd": "^1.2.0", "has-tostringtag": "^1.0.2" } }, "sha512-wk4Mf4pR5mRP7eYuuTBCIQ9d0ud2Fv2jRLQpfgnRjbOxAFHmjKFValgTpitVKzJJS8ajnYQV2Du1SZ8j6b/EUQ=="],
 
@@ -968,6 +968,8 @@
     "shiki/@shikijs/types": ["@shikijs/types@4.6.0", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.1.0", "@types/hast": "^3.0.5" } }, "sha512-+ENG1adsKt/X7cRYw1Nl7BEpBmPOjmQ7bR/eGmHuMlT8gtOFf3KEi5l31DJYyAWhW6Y6bjP1plU7FmaxWGENFw=="],
 
     "tree-sitter-cpp/tree-sitter-c": ["tree-sitter-c@0.23.6", "", { "dependencies": { "node-addon-api": "^8.3.0", "node-gyp-build": "^4.8.4" }, "peerDependencies": { "tree-sitter": "^0.22.1" }, "optionalPeers": ["tree-sitter"], "hasInstallScript": true }, "sha512-0dxXKznVyUA0s6PjNolJNs2yF87O5aL538A/eR6njA5oqX3C3vH4vnx3QdOKwuUdpKEcFdHuiDpRKLLCA/tjvQ=="],
+
+    "tree-sitter-md/web-tree-sitter": ["web-tree-sitter@github:ShaulLavo/tree-sitter-x#ded7776", {}, "ShaulLavo-tree-sitter-x-ded7776", "sha512-ITLwR/Uo3z3pZuqIGoa6zzmkIODgH6a9diWzAHpCj9Hce7oRhotV/fkgkFpTQhhY9J9WeTgq5EY/0CaISpwWxQ=="],
 
     "tree-sitter-typescript/tree-sitter-javascript": ["tree-sitter-javascript@0.23.1", "", { "dependencies": { "node-addon-api": "^8.2.2", "node-gyp-build": "^4.8.2" }, "peerDependencies": { "tree-sitter": "^0.21.1" }, "optionalPeers": ["tree-sitter"], "hasInstallScript": true }, "sha512-/bnhbrTD9frUYHQTiYnPcxyHORIw157ERBa6dqzaKxvR/x3PC4Yzd+D1pZIMS6zNg2v3a8BZ0oK7jHqsQo9fWA=="],
 
