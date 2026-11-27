@@ -26,11 +26,26 @@ function sendMethodNotAllowed(response: ServerResponse): void {
   response.end("Only GET and HEAD are allowed.\n");
 }
 
+function waitForDrain(response: ServerResponse): Promise<void> {
+  if (response.destroyed || response.writableEnded) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const finish = () => {
+      response.off("drain", finish);
+      response.off("close", finish);
+      response.off("error", finish);
+      resolve();
+    };
+    response.once("drain", finish);
+    response.once("close", finish);
+    response.once("error", finish);
+  });
+}
+
 async function pipeBody(body: ReadableStream<Uint8Array>, response: ServerResponse): Promise<void> {
   const reader = body.getReader();
   let completed = false;
   try {
-    for (;;) {
+    while (!response.destroyed) {
       // oxlint-disable-next-line no-await-in-loop
       const { done, value } = await reader.read();
       if (done) {
@@ -38,7 +53,10 @@ async function pipeBody(body: ReadableStream<Uint8Array>, response: ServerRespon
         break;
       }
       if (response.destroyed) break;
-      response.write(value);
+      if (!response.write(value)) {
+        // oxlint-disable-next-line no-await-in-loop
+        await waitForDrain(response);
+      }
     }
   } catch (error: unknown) {
     // Destroy the response on mid-stream failure so clients never treat a truncated body as 200 OK.

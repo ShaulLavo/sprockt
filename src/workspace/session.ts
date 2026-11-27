@@ -81,10 +81,15 @@ export interface WorkspaceSession extends WorkspaceRuntime {
 
 const movedError = () => new Error("This workspace is open in another tab, so this tab can no longer save.");
 
+export interface OpenWorkspaceOptions extends BootOptions {
+  /** Hydrate the display name from workspace metadata/package.json once storage opens (default true). */
+  readonly hydrateName?: boolean;
+}
+
 export async function openWorkspace(
   id: string,
   onStage?: (stage: BootStage) => void,
-  options?: BootOptions,
+  options?: OpenWorkspaceOptions,
 ): Promise<WorkspaceSession> {
   let moved = false;
   const lifecycle = new AbortController();
@@ -121,7 +126,7 @@ export async function openWorkspace(
         // Start hydrating as soon as workspace storage opens so the boot card shows the real
         // project name during program setup, without ever making boot wait for the naming lock.
         onStorageReady: (runtime) => {
-          if (moved || lifecycle.signal.aborted) return;
+          if (options?.hydrateName === false || moved || lifecycle.signal.aborted) return;
           void hydrateWorkspaceName(
             id,
             bootWorkspaceNameDeps(runtime, lifecycle.signal, () => moved),

@@ -10,9 +10,11 @@ class MockServerResponse extends EventEmitter {
   writableEnded = false;
   destroyed = false;
   destroyedError: Error | undefined;
+  backpressure = false;
   readonly headers = new Map<string, string>();
   readonly chunks: Uint8Array[] = [];
   private readonly done = Promise.withResolvers<void>();
+  private writeWaiter: (() => void) | undefined;
 
   setHeader(name: string, value: string): void {
     this.headers.set(name.toLowerCase(), value);
@@ -21,7 +23,15 @@ class MockServerResponse extends EventEmitter {
   write(chunk: Uint8Array | string): boolean {
     this.headersSent = true;
     this.chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
-    return true;
+    this.writeWaiter?.();
+    this.writeWaiter = undefined;
+    return !this.backpressure;
+  }
+
+  nextWrite(): Promise<void> {
+    return new Promise((resolve) => {
+      this.writeWaiter = resolve;
+    });
   }
 
   end(chunk?: Uint8Array | string): this {
@@ -172,5 +182,50 @@ describe("GitHub proxy Connect middleware", () => {
     expect(headRes.statusCode).toBe(200);
     expect(headRes.writableEnded).toBe(true);
     expect(headRes.chunks).toHaveLength(0);
+  });
+
+  test("pauses upstream reads on backpressure until drain and cancels on disconnect", async () => {
+    let pulls = 0;
+    let cancelled = false;
+    const chunks = [new Uint8Array([1, 2]), new Uint8Array([3, 4]), new Uint8Array([5, 6])];
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = chunks[pulls];
+        pulls += 1;
+        if (chunk) controller.enqueue(chunk);
+        else controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const middleware = createGitHubProxyMiddleware(
+      async () =>
+        new Response(body, { status: 200, headers: { "content-type": "application/octet-stream" } }),
+    );
+    const response = new MockServerResponse();
+    response.backpressure = true;
+
+    const firstWrite = response.nextWrite();
+    middleware(
+      mockRequest("GET", "/api/github/release/acme/demo/v1/pkg.tgz"),
+      response as unknown as ServerResponse,
+      () => {},
+    );
+    await firstWrite;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(response.chunks).toHaveLength(1);
+
+    // Emit drain to allow the second chunk, then disconnect while paused on the second write.
+    const secondWrite = response.nextWrite();
+    response.emit("drain");
+    await secondWrite;
+    expect(response.chunks).toHaveLength(2);
+
+    response.destroyed = true;
+    response.emit("close");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(response.chunks).toHaveLength(2);
+    expect(cancelled).toBe(true);
   });
 });

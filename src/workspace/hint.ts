@@ -182,11 +182,11 @@ function waitUnlessAborted(promise: Promise<unknown>, signal: AbortSignal | unde
   });
 }
 
-/** Serializes metadata check-and-write per workspace within this tab and across attached tabs. */
-function withWorkspaceNameLock<T>(
+/** Serializes metadata read-modify-write per workspace within this tab and across attached tabs. */
+export function withWorkspaceMetaLock<T>(
   id: string,
   task: () => Promise<T>,
-  signal: AbortSignal | undefined,
+  signal?: AbortSignal,
 ): Promise<T> {
   if (signal?.aborted) return Promise.reject(abortError(signal));
   const runInBrowserLock = (): Promise<T> => {
@@ -309,7 +309,7 @@ function hintFromPartial(
  * metadata write failed transiently.
  */
 export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps): Promise<string> {
-  return withWorkspaceNameLock(
+  return withWorkspaceMetaLock(
     id,
     async () => {
       if (deps.signal?.aborted) return readWorkspaceHint(id)?.name ?? id;
@@ -356,9 +356,28 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
         return latestHint.name;
       }
       if (derived) {
-        const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
+        // Re-read metadata before merging so a concurrent writer (e.g. an import writing
+        // `source` and `pendingImport`) is never clobbered by a stale snapshot.
+        const freshRead = await readMetaStrict(deps);
+        if (!freshRead.ok || deps.signal?.aborted) return readWorkspaceHint(id)?.name ?? id;
+        const freshRaw = freshRead.raw;
+        const freshFile = freshRaw ? parseWorkspaceMeta(freshRaw) : undefined;
+        const freshPartial = parsePartialWorkspaceMeta(freshRaw);
+        if (freshFile && !isPlaceholderWorkspaceName(freshFile)) {
+          const lastOpened =
+            newerTimestamp(newerTimestamp(freshFile.lastOpened, latestHint?.lastOpened), nowIso) ?? nowIso;
+          clearPendingWorkspaceName(id);
+          saveWorkspaceHint(id, { ...freshFile, lastOpened });
+          return freshFile.name;
+        }
+        if (freshPartial?.name && !freshPartial.defaultName) {
+          clearPendingWorkspaceName(id);
+          saveWorkspaceHint(id, hintFromPartial(freshPartial, freshPartial.name, latestHint, nowIso));
+          return freshPartial.name;
+        }
+        const { json, meta } = mergeDerivedWorkspaceName(freshRaw, derived, now);
         saveWorkspaceHint(id, meta);
-        if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(id, deps, partial?.state, json);
+        if (canMergeMetaRaw(freshRaw)) await persistDerivedMeta(id, deps, freshPartial?.state, json);
         return derived;
       }
 
@@ -407,7 +426,7 @@ export function adoptUploadedWorkspaceName(
   if (!hasRealHint && folderName && !readPendingWorkspaceName(id)) {
     savePendingWorkspaceName(id, folderName);
   }
-  return withWorkspaceNameLock(
+  return withWorkspaceMetaLock(
     id,
     async () => {
       if (deps.signal?.aborted) return undefined;
@@ -443,10 +462,24 @@ export function adoptUploadedWorkspaceName(
         return undefined;
       }
 
+      const freshRead = await readMetaStrict(deps);
+      if (!freshRead.ok || deps.signal?.aborted) return undefined;
+      const freshRaw = freshRead.raw;
+      const freshFile = freshRaw ? parseWorkspaceMeta(freshRaw) : undefined;
+      const freshPartial = parsePartialWorkspaceMeta(freshRaw);
+      if (freshFile && !isPlaceholderWorkspaceName(freshFile)) {
+        clearPendingWorkspaceName(id);
+        return undefined;
+      }
+      if (freshPartial?.name && !freshPartial.defaultName) {
+        clearPendingWorkspaceName(id);
+        return undefined;
+      }
+
       const now = deps.now ? deps.now() : new Date();
-      const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
+      const { json, meta } = mergeDerivedWorkspaceName(freshRaw, derived, now);
       saveWorkspaceHint(id, meta);
-      if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(id, deps, partial?.state, json);
+      if (canMergeMetaRaw(freshRaw)) await persistDerivedMeta(id, deps, freshPartial?.state, json);
       return derived;
     },
     deps.signal,

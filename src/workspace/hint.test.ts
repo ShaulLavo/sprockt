@@ -704,4 +704,38 @@ describe("workspace name hydration and reactivity", () => {
       localStorage.setItem = originalSetItem;
     }
   });
+
+  test("never overwrites GitHub import metadata (source, pendingImport) written concurrently during hydration", async () => {
+    const id = "imprtrace1";
+    let storedMeta: string | undefined;
+    const pkgStarted = Promise.withResolvers<void>();
+    const pkgResume = Promise.withResolvers<void>();
+
+    const hydration = hydrateWorkspaceName(id, {
+      readMeta: async () => storedMeta,
+      writeMeta: async (json: string) => void (storedMeta = json),
+      readPackageJson: async () => {
+        pkgStarted.resolve();
+        await pkgResume.promise;
+        return JSON.stringify({ name: "pkg-derived-name" });
+      },
+    });
+
+    await pkgStarted.promise;
+    // Simulate a completed GitHub import landing while hydration was awaiting package.json.
+    const importedMeta = {
+      name: "demo-repo",
+      template: "github",
+      created: "2026-04-01T00:00:00.000Z",
+      lastOpened: "2026-04-01T00:00:00.000Z",
+      source: { kind: "github", owner: "acme", repo: "demo-repo", ref: "main", subdir: "" },
+      pendingImport: { install: { program: "bun", args: ["install"] }, dev: undefined, port: undefined },
+    };
+    storedMeta = `${JSON.stringify(importedMeta, null, 2)}\n`;
+    pkgResume.resolve();
+
+    expect(await hydration).toBe("demo-repo");
+    expect(workspaceName(id)).toBe("demo-repo");
+    expect(JSON.parse(storedMeta)).toEqual(importedMeta);
+  });
 });

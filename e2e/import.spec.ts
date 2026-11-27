@@ -515,6 +515,43 @@ test("bun install fetches public GitHub Release .tgz dependencies through the sa
   expect(proxyUpstreamCalls).toEqual([releaseUrl, cdnUrl]);
 });
 
+async function holdMetaNameLock(page: Page, workspaceId: string): Promise<void> {
+  await page.evaluate(async (id) => {
+    const acquired = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    (globalThis as Record<string, unknown>).releaseMetaLock = released.resolve;
+    void navigator.locks.request(`sprockt:${id}:meta-name`, () => {
+      acquired.resolve();
+      return released.promise;
+    });
+    await acquired.promise;
+  }, workspaceId);
+}
+
+async function releaseMetaNameLock(page: Page): Promise<void> {
+  await page
+    .evaluate(() => {
+      const release = (globalThis as Record<string, unknown>).releaseMetaLock;
+      if (typeof release === "function") release();
+    })
+    .catch(() => undefined);
+}
+
+async function uploadFolderViaInput(page: Page, relativePath: string, content: string): Promise<void> {
+  await page.getByTestId("upload-folder-input").evaluate(
+    (element: HTMLInputElement, payload) => {
+      const transfer = new DataTransfer();
+      const fileName = payload.relativePath.slice(payload.relativePath.lastIndexOf("/") + 1);
+      transfer.items.add(new File([payload.content], fileName, { type: "text/plain" }));
+      element.files = transfer.files;
+      const uploaded = element.files[0];
+      if (uploaded) Object.defineProperty(uploaded, "webkitRelativePath", { value: payload.relativePath });
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    { relativePath, content },
+  );
+}
+
 test("uploaded folder name survives leaving and reopening even while another tab holds the naming lock", async ({
   page,
   context,
@@ -527,29 +564,10 @@ test("uploaded folder name survives leaving and reopening even while another tab
   // Hold the per-workspace naming Web Lock in a second tab during upload and leave.
   const locker = await context.newPage();
   await locker.goto("/");
-  await locker.evaluate(async (workspaceId) => {
-    await new Promise<void>((acquired) => {
-      void navigator.locks.request(`sprockt:${workspaceId}:meta-name`, () => {
-        acquired();
-        return new Promise<void>((release) => {
-          (globalThis as Record<string, unknown>).releaseMetaLock = release;
-        });
-      });
-    });
-  }, id);
+  await holdMetaNameLock(locker, id);
 
   try {
-    await page.getByTestId("upload-folder-input").evaluate((element: HTMLInputElement) => {
-      const transfer = new DataTransfer();
-      const file = new File(["export const ok = 1;\n"], "index.ts", { type: "text/plain" });
-      transfer.items.add(file);
-      element.files = transfer.files;
-      const uploaded = element.files[0];
-      if (uploaded) {
-        Object.defineProperty(uploaded, "webkitRelativePath", { value: "named-folder/index.ts" });
-      }
-      element.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await uploadFolderViaInput(page, "named-folder/index.ts", "export const ok = 1;\n");
     await expect(page.getByTestId("file-tree")).toContainText("named-folder");
     await expect(page.getByTestId("save-state")).toHaveText("saved");
 
@@ -557,12 +575,7 @@ test("uploaded folder name survives leaving and reopening even while another tab
     await page.goto("/");
     await expect(page.getByTestId("template-blank")).toBeVisible();
   } finally {
-    await locker
-      .evaluate(() => {
-        const release = (globalThis as Record<string, unknown>).releaseMetaLock;
-        if (typeof release === "function") release();
-      })
-      .catch(() => undefined);
+    await releaseMetaNameLock(locker);
     await locker.close();
   }
 

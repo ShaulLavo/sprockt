@@ -8,6 +8,7 @@
 // handed to the handlers, and only then removed from the metadata: a session that detaches
 // first, or a removal that fails, leaves the plan for the next attempt. Tabs wait for the lock
 // rather than skip it, so a tab whose claim gave up is followed by one that can take over.
+import { withWorkspaceMetaLock } from "../workspace/hint";
 import type { WorkspaceSession } from "../workspace/session";
 import { readMetaFile, writeMetaFile, type ImportPlan } from "./metadata";
 
@@ -43,15 +44,17 @@ export function configureAfterImport(options: {
  * attached, then removes it from the metadata. Returns the handlers' runs to wait on.
  */
 async function handOver(session: AttachedSession): Promise<Promise<void>[]> {
-  const meta = await readMetaFile(session.runtime.filesystem);
-  const plan = meta?.pendingImport;
-  // Detached, or no handler yet: the plan stays where it is.
-  if (!meta || !plan || !sessions.has(session) || handlers.size === 0) return [];
-  // Every handler is called before the removal starts.
-  const runs = Array.from(handlers, (handler) => invoke(handler, session as WorkspaceSession, plan));
-  const { pendingImport: _taken, ...rest } = meta;
-  await writeMetaFile(session.runtime.filesystem, rest);
-  return runs;
+  return withWorkspaceMetaLock(session.id, async () => {
+    const meta = await readMetaFile(session.runtime.filesystem);
+    const plan = meta?.pendingImport;
+    // Detached, or no handler yet: the plan stays where it is.
+    if (!meta || !plan || !sessions.has(session) || handlers.size === 0) return [];
+    // Every handler is called before the removal starts.
+    const runs = Array.from(handlers, (handler) => invoke(handler, session as WorkspaceSession, plan));
+    const { pendingImport: _taken, ...rest } = meta;
+    await writeMetaFile(session.runtime.filesystem, rest);
+    return runs;
+  });
 }
 
 /** Calls the handler now; a synchronous throw becomes a rejected run. */

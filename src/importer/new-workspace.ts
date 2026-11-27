@@ -7,6 +7,7 @@
 // IncompleteImport.tsx). Sprockt never deletes a workspace on its own. The one exception is
 // a cancel or failure in the same page: then this call deletes the workspace it created itself,
 // one whose id it reserved and found empty. If that delete is busy or fails, the marker stays.
+import { withWorkspaceMetaLock } from "../workspace/hint";
 import { newWorkspaceId, PROJECT_ROOT, storageName } from "../workspace/paths";
 import {
   INCOMPLETE,
@@ -153,12 +154,12 @@ async function fill(
 ): Promise<string> {
   const { state: _ignored, ...complete } = meta;
   try {
-    await writeMeta(session, { ...complete, state: INCOMPLETE });
+    await writeMeta(id, session, { ...complete, state: INCOMPLETE });
     context.signal?.throwIfAborted();
     await session.files.writeMany(files);
     await session.runtime.filesystem.flush();
     context.signal?.throwIfAborted();
-    await writeMeta(session, complete);
+    await writeMeta(id, session, complete);
   } catch (error) {
     await close(session);
     // A busy or failed delete leaves the marker, and the landing page offers Retry and Delete.
@@ -178,8 +179,8 @@ async function isUntouched(session: WorkspaceWriter): Promise<boolean> {
   return paths.length === 0 && meta === undefined;
 }
 
-function writeMeta(session: WorkspaceWriter, meta: WorkspaceMeta): Promise<void> {
-  return writeMetaFile(session.runtime.filesystem, meta);
+function writeMeta(id: string, session: WorkspaceWriter, meta: WorkspaceMeta): Promise<void> {
+  return withWorkspaceMetaLock(id, () => writeMetaFile(session.runtime.filesystem, meta));
 }
 
 async function close(session: WorkspaceWriter): Promise<void> {
