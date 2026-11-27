@@ -11,6 +11,7 @@ import {
   mergeDerivedWorkspaceName,
   packageJsonName,
   parseWorkspaceMeta,
+  readSavedWorkspaceName,
   serializeWorkspaceMeta,
   type WorkspaceMeta,
 } from "../templates/workspace-meta";
@@ -191,12 +192,25 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
 
     const rawMeta = metaRead.raw;
     const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
+    const savedName = readSavedWorkspaceName(rawMeta);
 
     if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) {
       const lastOpened =
         newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
       saveWorkspaceHint(id, { ...fileMeta, lastOpened });
       return fileMeta.name;
+    }
+
+    // Preserve any non-placeholder saved name on disk even if `workspace.json` lacks timestamps.
+    if (savedName && !savedName.defaultName) {
+      saveWorkspaceHint(id, {
+        name: savedName.name,
+        template: hint?.template ?? "blank",
+        created: hint?.created ?? nowIso,
+        lastOpened: newerTimestamp(hint?.lastOpened, nowIso) ?? nowIso,
+        ...(hint?.source ? { source: hint.source } : {}),
+      });
+      return savedName.name;
     }
 
     if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
@@ -251,9 +265,11 @@ export function adoptUploadedWorkspaceName(
 
     const rawMeta = metaRead.raw;
     const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
+    const savedName = readSavedWorkspaceName(rawMeta);
     const hint = readWorkspaceHint(id);
 
     if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) return undefined;
+    if (savedName && !savedName.defaultName) return undefined;
     if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) return undefined;
 
     const folderName = deriveUploadFolderName(

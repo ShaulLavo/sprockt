@@ -137,6 +137,27 @@ function readWorkspaceSource(record: Readonly<Record<string, unknown>>): Workspa
   return { kind: "github", owner, repo, ref, subdir, ...(commit ? { commit } : {}) };
 }
 
+/**
+ * Reads a saved workspace name from raw `workspace.json` independently of timestamp fields,
+ * so a hand-edited or partial metadata file with a valid `name` is never overwritten.
+ */
+export function readSavedWorkspaceName(
+  raw: string | undefined,
+): { readonly name: string; readonly defaultName: boolean } | undefined {
+  if (!raw) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const record = parsed as Record<string, unknown>;
+  const name = normalizeWorkspaceName(readStringField(record, "name") ?? "");
+  if (!name) return undefined;
+  return { name, defaultName: record.defaultName === true };
+}
+
 export function parseWorkspaceMeta(raw: string): WorkspaceMeta | undefined {
   let parsed: unknown;
   try {

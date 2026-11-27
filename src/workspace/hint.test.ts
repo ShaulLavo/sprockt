@@ -340,4 +340,32 @@ describe("workspace name hydration and reactivity", () => {
     expect(writes).toHaveLength(1);
     expect(workspaceName(id)).toBe("first-upload");
   });
+
+  test("preserves a saved name in workspace.json even when timestamps are missing", async () => {
+    const id = "notimestmp";
+    const partialJson = JSON.stringify({ name: "My Custom Workspace" });
+    let writes = 0;
+
+    const hydrated = await hydrateWorkspaceName(id, {
+      readMeta: async () => partialJson,
+      writeMeta: async () => void (writes += 1),
+      readPackageJson: async () => JSON.stringify({ name: "package-name" }),
+    });
+    expect(hydrated).toBe("My Custom Workspace");
+    expect(workspaceName(id)).toBe("My Custom Workspace");
+    expect(writes).toBe(0);
+
+    const adopted = await adoptUploadedWorkspaceName(
+      id,
+      [{ path: "uploaded-folder/index.ts", data: new Blob(["1"]) }],
+      {
+        readMeta: async () => partialJson,
+        writeMeta: async () => void (writes += 1),
+        readPackageJson: async () => JSON.stringify({ name: "package-name" }),
+      },
+    );
+    expect(adopted).toBeUndefined();
+    expect(workspaceName(id)).toBe("My Custom Workspace");
+    expect(writes).toBe(0);
+  });
 });
