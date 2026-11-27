@@ -181,28 +181,43 @@ test("terminal supports 3-state visibility, paired split tabs, and intact workbe
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
   await expect(page.locator(".wb-terminal-stage")).toBeVisible();
 
-  // Round-trip drag from collapsed: drag up until body opens, return to start (ignoring a
-  // stray secondary pointer moving downward), and release -> stays collapsed.
+  // Round-trip drag from collapsed: drag up until body opens, ignore a secondary pointer
+  // touching/moving/releasing directly on the separator while the primary pointer stays down,
+  // then return the primary pointer to start and release -> stays collapsed.
   await page.getByTestId("wb-term-collapse").click();
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "collapsed");
-  const collapsedSplitter = await page.locator('[data-wb-splitter="terminal"]').boundingBox();
+  const termSplitter = page.locator('[data-wb-splitter="terminal"]');
+  const collapsedSplitter = await termSplitter.boundingBox();
   if (!collapsedSplitter) throw new Error("collapsed terminal splitter not found");
   const cx = collapsedSplitter.x + collapsedSplitter.width / 2;
   const cy = collapsedSplitter.y + collapsedSplitter.height / 2;
   await page.mouse.move(cx, cy);
   await page.mouse.down();
+  await expect(termSplitter).toHaveAttribute("data-dragging", "true");
   await page.mouse.move(cx, cy - 160, { steps: 6 });
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
-  await page.mouse.move(cx, cy, { steps: 6 });
-  await page.evaluate(
-    ([x, y]) => {
-      window.dispatchEvent(
-        new PointerEvent("pointermove", { pointerId: 99, pointerType: "touch", clientX: x, clientY: y }),
-      );
+  await termSplitter.evaluate(
+    (el, [x, y]) => {
+      for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel", "lostpointercapture"]) {
+        el.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            button: 0,
+            pointerId: 99,
+            pointerType: "touch",
+            clientX: x,
+            clientY: y,
+          }),
+        );
+      }
     },
     [cx, cy + 120] as const,
   );
+  await expect(termSplitter).toHaveAttribute("data-dragging", "true");
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
+  await page.mouse.move(cx, cy, { steps: 6 });
   await page.mouse.up();
+  await expect(termSplitter).not.toHaveAttribute("data-dragging", "true");
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "collapsed");
   await expect(page.locator(".wb-terminal-header")).toBeVisible();
   await page.getByTestId("wb-term-collapse").click();
