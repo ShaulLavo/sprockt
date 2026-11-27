@@ -471,7 +471,6 @@ export function Explorer(props: { readonly store: EditorStore }) {
           adapter={waffle.adapter}
           handleRef={handleRef}
           label={copy.title}
-          iconPreset="stroke"
           showFilter={false}
           filterPlaceholder={copy.filterPlaceholder}
           readOnly={!writable}

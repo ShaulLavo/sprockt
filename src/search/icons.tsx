@@ -1,4 +1,4 @@
-// Stroke icons for editor tabs, search, and quick open; file-type icons come from @shaulavo/workbench-icons.
+// UI chrome icons for editor tabs, search, and quick open; file-type icons come from @shaulavo/workbench-icons.
 import type { ReactNode } from "react";
 import { FileTypeIcon } from "@shaulavo/workbench-icons/react";
 
@@ -10,43 +10,10 @@ function Icon(props: { class?: string; children: ReactNode }) {
   );
 }
 
-const TONES: Readonly<Record<string, string>> = {
-  ts: "ts",
-  mts: "ts",
-  cts: "ts",
-  tsx: "ts",
-  js: "js",
-  mjs: "js",
-  cjs: "js",
-  jsx: "js",
-  css: "css",
-  json: "json",
-  jsonc: "json",
-  html: "html",
-  htm: "html",
-  vue: "html",
-  svelte: "html",
-  astro: "html",
-};
-
-/** The file-type colour class for a path: `ft-ts`, `ft-css`, … or `ft-other`. */
-export function fileTone(path: string): string {
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  const dot = name.lastIndexOf(".");
-  return `ft-${(dot > 0 && TONES[name.slice(dot + 1).toLowerCase()]) || "other"}`;
-}
-
-/** A file's icon in a tab or a result row: the stroke glyph from @shaulavo/workbench-icons. */
+/** A file's icon in a tab or a result row from @shaulavo/workbench-icons. */
 export const FileIcon = (props: { path: string }) => {
   const name = props.path.slice(props.path.lastIndexOf("/") + 1);
-  return (
-    <FileTypeIcon
-      entry={{ name, type: "file" }}
-      preset="stroke"
-      sprite
-      className={`ico ft ${fileTone(props.path)}`}
-    />
-  );
+  return <FileTypeIcon entry={{ name, type: "file" }} sprite className="ft" />;
 };
 
 export const CloseIcon = (props: { class?: string }) => (

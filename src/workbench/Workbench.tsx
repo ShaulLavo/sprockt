@@ -550,7 +550,7 @@ function Frame(props: { frame: FrameState; children: ReactNode }) {
       data-terminal={layout.terminalOpen ? "open" : "closed"}
       style={frameStyle(layout, fitted)}
     >
-      <FileIconSprite preset="stroke" />
+      <FileIconSprite />
       <WorkbenchPortalProvider>{props.children}</WorkbenchPortalProvider>
     </main>
   );
