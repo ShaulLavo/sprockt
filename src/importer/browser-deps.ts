@@ -7,7 +7,7 @@ import { replaceRoute } from "./navigation";
 import type { NewWorkspaceDeps } from "./new-workspace";
 
 export const browserWorkspaceDeps: NewWorkspaceDeps = {
-  open: (id) => openWorkspace(id, undefined, { hydrateName: false }),
+  open: (id, signal) => openWorkspace(id, undefined, { signal, hydrateName: false }),
   // The one deletion every workspace goes through (workspace/storage-lifecycle.ts): the IDE's
   // own records of the storage go in the same step, and stay when the storage is busy.
   remove: async (name) => {

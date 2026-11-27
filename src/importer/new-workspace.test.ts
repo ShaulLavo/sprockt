@@ -692,4 +692,35 @@ describe("bulk imports over 1,024 files", () => {
     expect(metered.files.has(`${PROJECT_ROOT}/stale.txt`)).toBe(false);
     projectFiles.dispose();
   });
+
+  test("cancelling Retry while storage open is blocked forwards signal and releases the metadata lock", async () => {
+    const id = "retrybusy";
+    const openStarted = Promise.withResolvers<void>();
+    const waitForAbort = (signal: AbortSignal | undefined): Promise<never> =>
+      new Promise((_resolve, reject) => {
+        openStarted.resolve();
+        signal?.addEventListener("abort", () => reject(signal.reason ?? new Error("aborted")), {
+          once: true,
+        });
+      });
+    const deps: NewWorkspaceDeps = {
+      exists: async () => true,
+      remove: async () => "deleted",
+      open: (_workspaceId, signal) => waitForAbort(signal),
+    };
+
+    const controller = new AbortController();
+    const attempt = createWorkspaceWithFiles({ "index.ts": "1" }, META, deps, {
+      into: id,
+      signal: controller.signal,
+    }).catch((error: unknown) => error);
+
+    await openStarted.promise;
+    controller.abort(new Error("user left"));
+    expect(await attempt).toBeInstanceOf(Error);
+
+    // Subsequent metadata lock acquisition succeeds immediately once the cancelled Retry unwinds.
+    const acquired = await withWorkspaceMetaLock(id, async () => "unlocked");
+    expect(acquired).toBe("unlocked");
+  });
 });

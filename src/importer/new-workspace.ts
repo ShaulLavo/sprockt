@@ -35,7 +35,7 @@ export interface WorkspaceWriter {
 }
 
 export interface NewWorkspaceDeps {
-  readonly open: (id: string) => Promise<WorkspaceWriter>;
+  readonly open: (id: string, signal?: AbortSignal) => Promise<WorkspaceWriter>;
   /** Deletes the storage behind a workspace; Waffle answers "deleted", "missing" or "busy". */
   readonly remove: (storage: string) => Promise<unknown>;
   /** Whether storage for this name already exists. */
@@ -102,7 +102,7 @@ export async function createWorkspaceWithFiles(
   if (options.into) return rewriteIncomplete(options.into, files, meta, deps, options.signal);
   const id = await unusedId(deps);
   // A failed open owns nothing: whatever it left is not ours to delete.
-  const session = await deps.open(id);
+  const session = await deps.open(id, options.signal);
   // Ownership is proven by an empty project (raw listing, so node_modules and .git count) and
   // no metadata yet. Checked even after a cancel, so a workspace someone else created is never
   // deleted.
@@ -127,7 +127,7 @@ async function rewriteIncomplete(
     id,
     async () => {
       signal?.throwIfAborted();
-      const session = await deps.open(id);
+      const session = await deps.open(id, signal);
       const current = await readMetaFile(session.runtime.filesystem).catch(() => undefined);
       if (current?.state !== INCOMPLETE) {
         await close(session);
