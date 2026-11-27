@@ -1,9 +1,20 @@
 // Resize handle between panes backed by `@shaulavo/workbench`'s WAI-ARIA `Splitter`.
+import { useEffect } from "react";
 import type { GlobalPaneGeometry, Space } from "@shaulavo/workbench/core";
 import { Splitter as WorkbenchSplitter } from "@shaulavo/workbench";
 import { useValue } from "../lib/react";
 import type { LayoutStore } from "./layout-store";
-import type { PaneLayout, Splitter as SplitterName, TerminalState } from "./layout";
+import {
+  fitLayout,
+  handleKeyOf,
+  isOpen,
+  keyTo,
+  setOpen,
+  type PaneLayout,
+  type Room,
+  type Splitter as SplitterName,
+  type TerminalState,
+} from "./layout";
 
 export interface SplitterProps {
   readonly splitter: SplitterName;
@@ -55,21 +66,64 @@ function fromGeometry(
   };
 }
 
+function splitterRoom(splitter: SplitterName, layout: PaneLayout, space: Space): Room {
+  if (splitter === "terminal") return { extent: space.height };
+  if (splitter === "preview") {
+    const fitted = fitLayout(layout, space);
+    return { extent: Math.max(1, space.width - fitted.explorer) };
+  }
+  return { extent: space.width };
+}
+
+function isExpanded(layout: PaneLayout, splitter: SplitterName): boolean {
+  if (splitter === "terminal") return layout.terminalState === "open";
+  return isOpen(layout, splitter);
+}
+
 export function Splitter(props: SplitterProps) {
   const layout = useValue(props.store.layout);
+  const { splitter, store, measureSpace } = props;
+
+  // WorkbenchSplitter steps from 0px when a pane is closed/collapsed, so a single 24px arrow step
+  // falls below the drag snap-open threshold and commits closed/hidden. Intercept grow/min/shrink
+  // keys on collapsed or hidden panes so keyboard expansion always opens cleanly.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.getAttribute("data-wb-splitter") !== splitter) return;
+      const current = store.layout();
+      if (isExpanded(current, splitter)) return;
+      const action = handleKeyOf(splitter, event.key);
+      if (action === "grow" || action === "min") {
+        event.preventDefault();
+        event.stopPropagation();
+        const room = splitterRoom(splitter, current, measureSpace());
+        store.set(keyTo(current, splitter, action, room, event.shiftKey));
+        return;
+      }
+      if (action === "shrink" && splitter === "terminal") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (current.terminalState !== "hidden") store.set(setOpen(current, "terminal", false));
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [measureSpace, splitter, store]);
+
   return (
     <WorkbenchSplitter
-      splitter={props.splitter}
+      splitter={splitter}
       label={props.label}
       controls={props.controls}
       geometry={toGeometry(layout)}
       valueNow={props.valueNow}
-      measureSpace={props.measureSpace}
+      measureSpace={measureSpace}
       measurePaneSize={props.measureSize}
-      onPreviewGeometry={(next) => props.store.show(fromGeometry(next, props.store.layout(), props.splitter))}
-      onCommitGeometry={(next) => props.store.set(fromGeometry(next, props.store.layout(), props.splitter))}
+      onPreviewGeometry={(next) => store.show(fromGeometry(next, store.layout(), splitter))}
+      onCommitGeometry={(next) => store.set(fromGeometry(next, store.layout(), splitter))}
       onDraggingChange={props.onDragging}
-      className={`wb-splitter-${props.splitter}`}
+      className={`wb-splitter-${splitter}`}
     />
   );
 }

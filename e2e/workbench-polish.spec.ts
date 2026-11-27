@@ -173,13 +173,30 @@ test("terminal supports 3-state visibility, paired split tabs, and intact workbe
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
   await expect(page.locator(".wb-terminal-stage")).toBeVisible();
 
+  // Keyboard ArrowUp from collapsed opens the terminal instead of hiding the tab bar.
+  await page.getByTestId("wb-term-collapse").click();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "collapsed");
+  await page.locator('[data-wb-splitter="terminal"]').focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
+  await expect(page.locator(".wb-terminal-stage")).toBeVisible();
+
   // State 1 -> 3: sidebar terminal button completely hides terminal, tab bar included (0px).
   await page.getByTestId("toggle-terminal").click();
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "hidden");
   await expect(page.locator("#wb-slot-terminal")).toBeHidden();
   await expect(page.getByTestId("toggle-terminal")).toHaveAttribute("aria-pressed", "false");
 
-  // Sidebar terminal button shows it again.
+  // Keyboard ArrowUp from hidden also opens the terminal cleanly.
+  await page.locator('[data-wb-splitter="terminal"]').focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
+  await expect(page.locator("#wb-slot-terminal")).toBeVisible();
+  await expect(page.locator(".wb-terminal-stage")).toBeVisible();
+
+  // Sidebar terminal button hides and restores it again.
+  await page.getByTestId("toggle-terminal").click();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "hidden");
   await page.getByTestId("toggle-terminal").click();
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
   await expect(page.locator("#wb-slot-terminal")).toBeVisible();
