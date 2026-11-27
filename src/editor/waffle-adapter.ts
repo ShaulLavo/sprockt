@@ -52,18 +52,19 @@ function createReactiveSubscribable<T>(
     getSnapshot,
     subscribe(listener) {
       let initialized = false;
+      let lastObserved!: T;
       let dispose = noop;
       createRoot((cleanup) => {
         dispose = cleanup;
         createEffect(() => {
-          const prev = cached;
-          const hadValue = hasValue;
           const next = getSnapshot();
           if (!initialized) {
+            lastObserved = next;
             initialized = true;
             return;
           }
-          if (hadValue && Object.is(prev, next)) return;
+          if (Object.is(lastObserved, next)) return;
+          lastObserved = next;
           listener();
         });
       });

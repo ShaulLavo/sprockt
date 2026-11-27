@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { createRoot, createSignal } from "../lib/reactive";
+import { batch, createRoot, createSignal } from "../lib/reactive";
 import type { FileChange } from "../files/service";
 import { createEditorStore } from "./store";
 import {
@@ -90,13 +90,24 @@ describe("Sprockt workbench editor adapters", () => {
       const groupAdapter = createSprocktEditorGroupAdapter(store);
 
       let notifications = 0;
+      let secondNotifications = 0;
       const unsub = groupAdapter.groups.subscribe(() => {
         notifications += 1;
       });
-
-      groupAdapter.openDocument("src/a/index.ts", {
-        focus: { shouldFocusEditor: true, origin: "mouse" },
+      const unsubSecond = groupAdapter.groups.subscribe(() => {
+        secondNotifications += 1;
       });
+
+      batch(() => {
+        groupAdapter.openDocument("src/a/index.ts", {
+          focus: { shouldFocusEditor: true, origin: "mouse" },
+        });
+        // Reading getSnapshot() inside a batch before effects flush must not suppress notifications.
+        expect(groupAdapter.groups.getSnapshot().root.kind).toBe("group");
+      });
+      expect(notifications).toBe(1);
+      expect(secondNotifications).toBe(1);
+
       groupAdapter.openDocument("src/b/index.ts", {
         preview: true,
         focus: { shouldFocusEditor: false, origin: "touch" },
@@ -105,7 +116,8 @@ describe("Sprockt workbench editor adapters", () => {
         focus: { shouldFocusEditor: true, origin: "keyboard" },
       });
 
-      expect(notifications).toBeGreaterThan(0);
+      expect(notifications).toBeGreaterThanOrEqual(3);
+      expect(secondNotifications).toBe(notifications);
 
       // Snapshot contract: unchanged reads must return the same reference for useSyncExternalStore.
       const snap1 = groupAdapter.groups.getSnapshot();
@@ -143,6 +155,7 @@ describe("Sprockt workbench editor adapters", () => {
       groupAdapter.closeTabs(SPROCKT_EDITOR_GROUP_ID, ["styles.css"]);
       expect(store.tabs().map((tab) => tab.path)).toEqual(["src/a/index.ts", "src/b/index.ts"]);
       unsub();
+      unsubSecond();
     } finally {
       cleanup?.();
     }
