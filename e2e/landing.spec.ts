@@ -429,9 +429,9 @@ async function verifySystemColorScheme(
     colorScheme: initial,
     viewport: { width: 1440, height: 900 },
   });
-  const page = await context.newPage();
-  const bodyBg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   try {
+    const page = await context.newPage();
+    const bodyBg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     await page.goto("/");
     // Playwright's Firefox drops context colorScheme across the first COOP process swap from
     // about:blank; re-apply inside the isolated process and reload for a true clean first load.
