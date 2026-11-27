@@ -1,6 +1,6 @@
 // grain-gradient: faithful TypeScript port of #4 "Sheet and Biro"'s living hero shader.
 // Renders a soft OKLab tonal ramp and three drifting warped blobs under a stippled dissolve and
-// subtle 24fps film/radio-noise grain. Respects prefers-reduced-motion, phone viewports, tab
+// subtle 12fps film/radio-noise grain. Respects prefers-reduced-motion, phone viewports, tab
 // visibility, offscreen pausing, and falls back to a calm CSS gradient when WebGL is unavailable.
 import {
   buildFragmentSource,
@@ -83,7 +83,7 @@ void main() {
   float m = fx_calm(uv, vec2(u_calmX, u_calmY), 0.35 + 0.4 * u_calm) * u_calm;
   col = mix(col, u_kNear, m);
 
-  float frame = u_grainMotion > 0.5 ? floor(u_time * 24.0) : 0.0;
+  float frame = u_grainMotion > 0.5 ? floor(u_time * 12.0) : 0.0;
   float amp = u_grainAmp * u_grain * (1.0 - 0.6 * smoothstep(0.86, 1.0, col.x)) * (1.0 - 0.5 * smoothstep(0.22, 0.0, col.x));
   col.x += fx_grain(gp, frame) * amp;
 

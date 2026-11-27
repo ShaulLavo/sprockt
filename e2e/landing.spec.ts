@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Browser, Page } from "@playwright/test";
 import { editorText, expect, test } from "./helpers";
 
 const TEMPLATE_IDS = [
@@ -412,6 +412,69 @@ test("theme choice persists in the same tab across landing and workbench in both
   } finally {
     await darkContext.close();
   }
+});
+
+function expectedSchemeBg(scheme: "dark" | "light"): string {
+  return scheme === "dark" ? "rgb(10, 13, 20)" : "rgb(255, 255, 255)";
+}
+
+async function verifySystemColorScheme(
+  browser: Browser,
+  baseURL: string | undefined,
+  initial: "dark" | "light",
+): Promise<void> {
+  const flipped = initial === "dark" ? "light" : "dark";
+  const context = await browser.newContext({
+    baseURL,
+    colorScheme: initial,
+    viewport: { width: 1440, height: 900 },
+  });
+  try {
+    const page = await context.newPage();
+    const bodyBg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    await page.goto("/");
+    // Playwright's Firefox drops context colorScheme across the first COOP process swap from
+    // about:blank; re-apply inside the isolated process and reload for a true clean first load.
+    const matchesInitial = await page.evaluate(
+      (wantDark) => matchMedia("(prefers-color-scheme: dark)").matches === wantDark,
+      initial === "dark",
+    );
+    if (!matchesInitial) {
+      await page.emulateMedia({ colorScheme: initial });
+      await page.reload();
+    }
+    await expect(page.getByTestId("landing-page")).toBeVisible();
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme", /./);
+    await expect(page.getByTestId(`theme-${initial}`)).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId(`theme-${flipped}`)).toHaveAttribute("aria-pressed", "false");
+    await expect.poll(bodyBg).toBe(expectedSchemeBg(initial));
+    expect(await page.evaluate(() => localStorage.getItem("sprockt:theme"))).toBeNull();
+
+    // Live OS color-scheme switch updates both page ground and toggle state without storing an override.
+    await page.emulateMedia({ colorScheme: flipped });
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme", /./);
+    await expect(page.getByTestId(`theme-${flipped}`)).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId(`theme-${initial}`)).toHaveAttribute("aria-pressed", "false");
+    await expect.poll(bodyBg).toBe(expectedSchemeBg(flipped));
+    expect(await page.evaluate(() => localStorage.getItem("sprockt:theme"))).toBeNull();
+
+    // Mobile toggle reflects the active OS preference too (offers switching to the opposite scheme).
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByTestId("phone-theme-toggle")).toHaveAttribute(
+      "aria-label",
+      flipped === "dark" ? "Light theme" : "Dark theme",
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+test("fresh load defaults to the OS color scheme and follows live system preference changes", async ({
+  browser,
+  baseURL,
+}) => {
+  await verifySystemColorScheme(browser, baseURL, "dark");
+  await verifySystemColorScheme(browser, baseURL, "light");
 });
 
 test("desktop nav is dead-centered, showcases are inert, animations have WCAG pause controls, and all logos load eagerly", async ({
