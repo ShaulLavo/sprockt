@@ -4,7 +4,7 @@ import {
   deriveGitHubWorkspaceName,
   deriveUploadFolderName,
   formatRelativeTime,
-  isGenericWorkspaceName,
+  isPlaceholderWorkspaceName,
   mergeDerivedWorkspaceName,
   normalizeWorkspaceName,
   packageJsonName,
@@ -82,10 +82,9 @@ describe("workspace metadata", () => {
       "new-name",
     );
     expect(renamed.meta.name).toBe("new-name");
-    expect(renamed.meta.customName).toBe(true);
+    expect(renamed.meta.defaultName).toBeUndefined();
     expect(JSON.parse(renamed.json)).toMatchObject({
       name: "new-name",
-      customName: true,
       detected: { framework: "vite" },
     });
   });
@@ -123,7 +122,7 @@ describe("workspace metadata", () => {
     expect(zipFilename("///")).toBe("workspace.zip");
   });
 
-  test("falls back to GitHub source when workspace.json lacks a name and distinguishes generic names", () => {
+  test("falls back to GitHub source when workspace.json lacks a name and only flags explicit placeholders", () => {
     const parsed = parseWorkspaceMeta(
       JSON.stringify({
         created: "2026-11-25T18:00:00.000Z",
@@ -132,14 +131,20 @@ describe("workspace metadata", () => {
     );
     expect(parsed?.name).toBe("web");
 
-    const blank = createWorkspaceMeta({ name: "workspace", template: "blank" });
-    expect(isGenericWorkspaceName("abc1234567", blank)).toBe(true);
-    const customBlank = updateWorkspaceMetaName(serializeWorkspaceMeta(blank), "workspace").meta;
-    expect(isGenericWorkspaceName("abc1234567", customBlank)).toBe(false);
+    // Legacy workspace.json without `defaultName` is never treated as a replaceable placeholder.
+    const legacyBlank = createWorkspaceMeta({ name: "workspace", template: "blank" });
+    expect(isPlaceholderWorkspaceName(legacyBlank)).toBe(false);
 
-    const derived = mergeDerivedWorkspaceName(serializeWorkspaceMeta(blank), "cool-app");
+    // Newly seeded blank workspaces mark `defaultName: true`; explicit rename clears it.
+    const seededBlank = createWorkspaceMeta({ name: "workspace", template: "blank", defaultName: true });
+    expect(isPlaceholderWorkspaceName(seededBlank)).toBe(true);
+    const explicitRename = updateWorkspaceMetaName(serializeWorkspaceMeta(seededBlank), "workspace");
+    expect(isPlaceholderWorkspaceName(explicitRename.meta)).toBe(false);
+    expect(JSON.parse(explicitRename.json).defaultName).toBeUndefined();
+
+    const derived = mergeDerivedWorkspaceName(serializeWorkspaceMeta(seededBlank), "cool-app");
     expect(derived.meta.name).toBe("cool-app");
-    expect(derived.meta.customName).toBeUndefined();
-    expect(isGenericWorkspaceName("abc1234567", derived.meta)).toBe(false);
+    expect(isPlaceholderWorkspaceName(derived.meta)).toBe(false);
+    expect(JSON.parse(derived.json).defaultName).toBeUndefined();
   });
 });

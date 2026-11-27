@@ -7,7 +7,7 @@ import { createSignal } from "../lib/reactive";
 import {
   deriveGitHubWorkspaceName,
   deriveUploadFolderName,
-  isGenericWorkspaceName,
+  isPlaceholderWorkspaceName,
   mergeDerivedWorkspaceName,
   packageJsonName,
   parseWorkspaceMeta,
@@ -18,17 +18,31 @@ import {
 export const WORKSPACE_HINT_PREFIX = "sprockt:ws-meta:";
 
 const [hintRevision, setHintRevision] = createSignal(0);
-/** In-memory fallback used only when `localStorage` throws (private mode or full quota). */
+/**
+ * In-memory fallback populated only when `localStorage.setItem` throws (private mode or full
+ * quota). Preferred over stale `localStorage` entries until another write succeeds or storage
+ * changes externally.
+ */
 const fallbackHints = new Map<string, WorkspaceMeta>();
 
 function bumpHints(): void {
   setHintRevision((value) => value + 1);
 }
 
+/** Handles cross-tab `storage` events; exported for unit testing. */
+export function handleHintStorageEvent(key: string | null): void {
+  if (key === null) {
+    fallbackHints.clear();
+    bumpHints();
+    return;
+  }
+  if (!key.startsWith(WORKSPACE_HINT_PREFIX)) return;
+  fallbackHints.delete(key.slice(WORKSPACE_HINT_PREFIX.length));
+  bumpHints();
+}
+
 if (typeof window !== "undefined") {
-  window.addEventListener("storage", (event) => {
-    if (event.key === null || event.key.startsWith(WORKSPACE_HINT_PREFIX)) bumpHints();
-  });
+  window.addEventListener("storage", (event) => handleHintStorageEvent(event.key));
 }
 
 /** The name to show for a workspace: the one it was given, or its id when this browser has none. */
@@ -38,12 +52,13 @@ export function workspaceName(id: string): string {
 }
 
 export function readWorkspaceHint(id: string): WorkspaceMeta | undefined {
+  const fallback = fallbackHints.get(id);
+  if (fallback) return fallback;
   try {
     const raw = localStorage.getItem(WORKSPACE_HINT_PREFIX + id);
-    if (raw) return parseWorkspaceMeta(raw);
-    return fallbackHints.get(id);
+    return raw ? parseWorkspaceMeta(raw) : undefined;
   } catch {
-    return fallbackHints.get(id);
+    return undefined;
   }
 }
 
@@ -59,10 +74,11 @@ export function saveWorkspaceHint(id: string, meta: WorkspaceMeta): void {
 
 /** Whether this browser remembers any workspace, known at once, before storage is read. */
 export function hasWorkspaceHints(): boolean {
+  if (fallbackHints.size > 0) return true;
   try {
     return Object.keys(localStorage).some((key) => key.startsWith(WORKSPACE_HINT_PREFIX));
   } catch {
-    return fallbackHints.size > 0;
+    return false;
   }
 }
 
@@ -120,7 +136,7 @@ async function deriveNameFromWorkspace(
 
 /**
  * Hydrates a workspace's display name from `/.sprockt/workspace.json` -> root `package.json`,
- * updating the reactive hint without ever overwriting an explicit user rename.
+ * updating the reactive hint without ever overwriting an explicit user rename or legacy name.
  */
 export async function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps): Promise<string> {
   const now = deps.now ? deps.now() : new Date();
@@ -129,14 +145,14 @@ export async function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNam
   const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
   const hint = readWorkspaceHint(id);
 
-  if (fileMeta && !isGenericWorkspaceName(id, fileMeta)) {
+  if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) {
     const lastOpened =
       newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
     saveWorkspaceHint(id, { ...fileMeta, lastOpened });
     return fileMeta.name;
   }
 
-  if (hint?.customName) {
+  if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
     saveWorkspaceHint(id, { ...hint, lastOpened: newerTimestamp(hint.lastOpened, nowIso) ?? nowIso });
     return hint.name;
   }
@@ -184,8 +200,8 @@ export async function adoptUploadedWorkspaceName(
   const fileMeta = rawMeta ? parseWorkspaceMeta(rawMeta) : undefined;
   const hint = readWorkspaceHint(id);
 
-  if (fileMeta?.customName || hint?.customName) return undefined;
-  if (fileMeta && !isGenericWorkspaceName(id, fileMeta)) return undefined;
+  if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) return undefined;
+  if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) return undefined;
 
   const folderName = deriveUploadFolderName(
     items.map((item) => ({ path: item.path, hasData: item.data !== undefined })),

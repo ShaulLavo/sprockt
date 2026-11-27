@@ -1,7 +1,8 @@
 // Routes `bun install` downloads of public GitHub Release `.tgz` tarballs through Sprockt's
-// same-origin Worker proxy (`/api/github/release/...`), because GitHub's release-asset CDN
-// redirect lacks CORS/CORP headers under COEP (`require-corp`). All other fetches pass through
-// `bun-wasm`'s `installFetch` unchanged (preserving its Cache Storage tarball cache).
+// same-origin Worker proxy (`/api/github/release/...` and `/api/github/release-latest/...`),
+// because GitHub's release-asset CDN redirect lacks CORS/CORP headers under COEP (`require-corp`).
+// All other fetches pass through `bun-wasm`'s `installFetch` unchanged (preserving its Cache
+// Storage tarball cache).
 import type { NetFetch } from "waffle/browser/net/helper";
 import { installFetch } from "../../node_modules/bun-wasm/web/src/net/install-cache.ts";
 import {
@@ -15,12 +16,20 @@ import {
 export const DEFAULT_GITHUB_PROXY_PREFIX = "/api/github";
 const INSTALL_TARBALL_ACCEPT = "application/vnd.bun.install-tarball";
 
-export interface GitHubReleaseTarball {
-  readonly owner: string;
-  readonly repo: string;
-  readonly tag: string;
-  readonly asset: string;
-}
+export type GitHubReleaseTarball =
+  | {
+      readonly kind: "tag";
+      readonly owner: string;
+      readonly repo: string;
+      readonly tag: string;
+      readonly asset: string;
+    }
+  | {
+      readonly kind: "latest";
+      readonly owner: string;
+      readonly repo: string;
+      readonly asset: string;
+    };
 
 function decodeSegments(pathname: string): string[] | undefined {
   try {
@@ -34,8 +43,9 @@ function decodeSegments(pathname: string): string[] | undefined {
 }
 
 /**
- * Parses a public GitHub Release `.tgz` URL (`https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>.tgz`),
- * returning `undefined` for any other host, query string, credentials, or invalid path component.
+ * Parses a public GitHub Release `.tgz` URL (`.../releases/download/<tag>/<asset>.tgz` or
+ * `.../releases/latest/download/<asset>.tgz`), returning `undefined` for any other host, query
+ * string, credentials, or invalid path component.
  */
 export function parseGitHubReleaseTarballUrl(input: string): GitHubReleaseTarball | undefined {
   let url: URL;
@@ -56,14 +66,17 @@ export function parseGitHubReleaseTarballUrl(input: string): GitHubReleaseTarbal
   }
   const segments = decodeSegments(url.pathname);
   if (!segments || segments.length < 6) return undefined;
-  const [owner = "", repo = "", releases, download, ...rest] = segments;
-  if (releases !== "releases" || download !== "download") return undefined;
+  const [owner = "", repo = "", releases, fourth, ...rest] = segments;
+  if (releases !== "releases" || !isOwnerName(owner) || !isRepoName(repo)) return undefined;
+  if (fourth === "latest" && rest.length === 2 && rest[0] === "download") {
+    const asset = rest[1] ?? "";
+    return isReleaseAssetName(asset) ? { kind: "latest", owner, repo, asset } : undefined;
+  }
+  if (fourth !== "download" || rest.length < 2) return undefined;
   const asset = rest.at(-1) ?? "";
   const tag = rest.slice(0, -1).join("/");
-  if (!isOwnerName(owner) || !isRepoName(repo) || !isRefName(tag) || !isReleaseAssetName(asset)) {
-    return undefined;
-  }
-  return { owner, repo, tag, asset };
+  if (!isRefName(tag) || !isReleaseAssetName(asset)) return undefined;
+  return { kind: "tag", owner, repo, tag, asset };
 }
 
 export interface RewriteConfig {
@@ -91,7 +104,11 @@ export function rewriteGitHubReleaseTarballUrl(
   if (!release) return undefined;
   const origin = config.origin.replace(/\/+$/, "");
   const prefix = (config.prefix ?? DEFAULT_GITHUB_PROXY_PREFIX).replace(/\/+$/, "");
-  return `${origin}${prefix}/release/${encodeURIComponent(release.owner)}/${encodeURIComponent(release.repo)}/${encodeRefPath(release.tag)}/${encodeURIComponent(release.asset)}`;
+  const owner = encodeURIComponent(release.owner);
+  const repo = encodeURIComponent(release.repo);
+  const asset = encodeURIComponent(release.asset);
+  if (release.kind === "latest") return `${origin}${prefix}/release-latest/${owner}/${repo}/${asset}`;
+  return `${origin}${prefix}/release/${owner}/${repo}/${encodeRefPath(release.tag)}/${asset}`;
 }
 
 export interface RuntimeFetchOptions {

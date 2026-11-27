@@ -455,6 +455,30 @@ describe("GitHub proxy: release tarballs", () => {
     expect(calls).toHaveLength(3);
   });
 
+  test("proxies /releases/latest/download/<asset>.tgz across the tag and CDN redirects", async () => {
+    const body = new Uint8Array([0x1f, 0x8b, 3, 2, 1]);
+    const { calls, fetch } = upstream((url) => {
+      if (url.endsWith("/releases/latest/download/demo.tgz")) {
+        return redirect("https://github.com/acme/demo/releases/download/v2.0.0/demo.tgz");
+      }
+      if (url.startsWith("https://github.com/")) return redirect(ASSET_URL);
+      return new Response(body, { headers: { "content-length": "5" } });
+    });
+    const response = await createGitHubProxy({ fetch })(
+      get("/api/github/release-latest/acme/demo/demo.tgz"),
+      { GITHUB_TOKEN: "server-token" },
+    );
+    expect(response.status).toBe(200);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(body);
+    expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://github.com/acme/demo/releases/latest/download/demo.tgz",
+      "https://github.com/acme/demo/releases/download/v2.0.0/demo.tgz",
+      ASSET_URL,
+    ]);
+    for (const call of calls) expect(auth(call)).toBeNull();
+  });
+
   test("supports tags with slashes and HEAD requests", async () => {
     const { calls, fetch } = upstream((url) =>
       url.startsWith("https://github.com/")
@@ -600,6 +624,10 @@ describe("GitHub proxy: refuses everything else", () => {
     ["/api/github/release/acme/demo/v1/..%2Fsecret.tgz", 400],
     ["/api/github/release/acme/demo/..%2Fetc/pkg.tgz", 400],
     ["/api/github/release/-bad/demo/v1/pkg.tgz", 400],
+    ["/api/github/release-latest/acme/demo", 404],
+    ["/api/github/release-latest/acme/demo/v1/pkg.tgz", 404],
+    ["/api/github/release-latest/acme/demo/not.zip", 400],
+    ["/api/github/release-latest/acme/demo/..%2Fpkg.tgz", 400],
     ["/api/github/repo/acme/demo/extra", 404],
     ["/api/github/refs/acme/demo", 404],
     ["/api/github/refs/acme/demo/a/b", 404],

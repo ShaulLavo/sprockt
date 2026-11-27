@@ -12,7 +12,6 @@ export { INCOMPLETE, WORKSPACE_META_DIR, WORKSPACE_META_PATH };
 
 const MAX_NAME_LENGTH = 64;
 const BLANK_DEFAULT_NAME = "workspace";
-const SHARED_DEFAULT_NAME = "Shared workspace";
 const metaTextDecoder = new TextDecoder();
 
 export type WorkspaceState = typeof INCOMPLETE;
@@ -85,27 +84,31 @@ export function zipFilename(name: string): string {
 }
 
 /**
- * Whether `meta.name` is an auto-assigned generic placeholder (raw id, blank default, or generic
- * shared name) rather than a real project name or an explicit user rename.
+ * Whether `meta.name` is a Sprockt-assigned placeholder that may be replaced by a real project name.
+ * Legacy workspaces without `defaultName` are never treated as placeholders, so pre-existing
+ * explicit renames (even to `"workspace"` or `"Shared workspace"`) are always preserved.
  */
-export function isGenericWorkspaceName(id: string, meta: WorkspaceMeta): boolean {
-  if (meta.customName) return false;
-  if (meta.name === id) return true;
-  if (meta.template === "blank" && meta.name === BLANK_DEFAULT_NAME) return true;
-  return meta.source?.kind === "share" && meta.name === SHARED_DEFAULT_NAME;
+export function isPlaceholderWorkspaceName(meta: WorkspaceMeta): boolean {
+  return meta.defaultName === true;
 }
 
 export function createWorkspaceMeta(input: {
   readonly name: string;
   readonly template: string;
+  readonly defaultName?: boolean;
   readonly now?: Date;
   readonly state?: WorkspaceState;
 }): WorkspaceMeta {
   const timestamp = (input.now ?? new Date()).toISOString();
   const name = normalizeWorkspaceName(input.name) ?? BLANK_DEFAULT_NAME;
-  return input.state
-    ? { name, template: input.template, created: timestamp, lastOpened: timestamp, state: input.state }
-    : { name, template: input.template, created: timestamp, lastOpened: timestamp };
+  return {
+    name,
+    template: input.template,
+    created: timestamp,
+    lastOpened: timestamp,
+    ...(input.defaultName ? { defaultName: true } : {}),
+    ...(input.state ? { state: input.state } : {}),
+  };
 }
 
 function readStringField(record: Readonly<Record<string, unknown>>, key: string): string | undefined {
@@ -153,13 +156,13 @@ export function parseWorkspaceMeta(raw: string): WorkspaceMeta | undefined {
   const lastOpened = readStringField(record, "lastOpened") ?? created;
   if (!name || !created || !lastOpened) return undefined;
   const state = readStateField(record);
-  const customName = record.customName === true ? true : undefined;
+  const defaultName = record.defaultName === true ? true : undefined;
   return {
     name,
     template,
     created,
     lastOpened,
-    ...(customName ? { customName } : {}),
+    ...(defaultName ? { defaultName } : {}),
     ...(state ? { state } : {}),
     ...(source ? { source } : {}),
   };
@@ -174,7 +177,8 @@ function mergeMetaJson(
   try {
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const merged = { ...(parsed as Record<string, unknown>), ...fields };
+      const merged: Record<string, unknown> = { ...(parsed as Record<string, unknown>), ...fields };
+      delete merged.defaultName;
       return `${JSON.stringify(merged, null, 2)}\n`;
     }
   } catch {
@@ -194,13 +198,14 @@ export function updateWorkspaceMetaName(
 } {
   const existing = raw ? parseWorkspaceMeta(raw) : undefined;
   const timestamp = now.toISOString();
-  const meta: WorkspaceMeta = existing
-    ? { ...existing, name: nextName, customName: true }
-    : { name: nextName, customName: true, template: "blank", created: timestamp, lastOpened: timestamp };
-  return { json: mergeMetaJson(raw, { name: nextName, customName: true }, meta), meta };
+  const base = existing
+    ? stripDefaultName(existing)
+    : { name: nextName, template: "blank", created: timestamp, lastOpened: timestamp };
+  const meta: WorkspaceMeta = { ...base, name: nextName };
+  return { json: mergeMetaJson(raw, { name: nextName }, meta), meta };
 }
 
-/** Updates an auto-derived workspace name without marking it as an explicit user rename. */
+/** Updates an auto-derived workspace name and clears any placeholder flag. */
 export function mergeDerivedWorkspaceName(
   raw: string | undefined,
   derivedName: string,
@@ -211,10 +216,16 @@ export function mergeDerivedWorkspaceName(
 } {
   const existing = raw ? parseWorkspaceMeta(raw) : undefined;
   const timestamp = now.toISOString();
-  const meta: WorkspaceMeta = existing
-    ? { ...existing, name: derivedName, lastOpened: timestamp }
+  const base = existing
+    ? stripDefaultName(existing)
     : { name: derivedName, template: "blank", created: timestamp, lastOpened: timestamp };
+  const meta: WorkspaceMeta = { ...base, name: derivedName, lastOpened: timestamp };
   return { json: mergeMetaJson(raw, { name: derivedName }, meta), meta };
+}
+
+function stripDefaultName(meta: WorkspaceMeta): WorkspaceMeta {
+  const { defaultName: _cleared, ...rest } = meta;
+  return rest;
 }
 
 export function serializeWorkspaceMeta(meta: WorkspaceMeta): string {

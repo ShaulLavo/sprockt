@@ -62,8 +62,8 @@ export const INCOMPLETE = "importing";
 
 export interface WorkspaceMeta {
   readonly name: string;
-  /** True when the visitor explicitly renamed this workspace; auto-hydration never overwrites it. */
-  readonly customName?: boolean;
+  /** True only when Sprockt auto-assigned a generic placeholder name (e.g. blank/shared fallback). */
+  readonly defaultName?: boolean;
   /** The template the workspace started from, when it did. */
   readonly template?: string;
   readonly source?: WorkspaceSource;

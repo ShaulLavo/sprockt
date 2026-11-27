@@ -7,6 +7,7 @@
  *   GET <prefix>/refs/<owner>/<repo>/<segment>              -> branch and tag names starting with <segment>
  *   GET <prefix>/archive/<owner>/<repo>/<ref>               -> codeload tar.gz, streamed through
  *   GET <prefix>/release/<owner>/<repo>/<tag>/<asset>.tgz   -> public GitHub Release .tgz, streamed through
+ *   GET <prefix>/release-latest/<owner>/<repo>/<asset>.tgz  -> public GitHub latest Release .tgz, streamed through
  *
  * Nothing else is proxied: names are validated, upstream URLs are built from
  * fixed templates, and every redirect hop must stay on the route's own HTTPS
@@ -116,6 +117,9 @@ export function createGitHubProxy(options: GitHubProxyOptions = {}) {
       const asset = rest.at(-1) ?? "";
       const tag = rest.slice(0, -1).join("/");
       return releaseAsset(context, owner, repo, tag, asset);
+    }
+    if (route === "release-latest" && rest.length === 1) {
+      return releaseLatestAsset(context, owner, repo, rest[0] ?? "");
     }
     const isApiRoute = (route === "repo" && rest.length === 0) || (route === "refs" && rest.length === 1);
     if (!isApiRoute) return errorResponse(404, "not-found", "No such route.");
@@ -327,14 +331,36 @@ async function releaseAsset(
     return errorResponse(400, "invalid-source", `"${asset}" is not a valid .tgz release asset.`);
   }
   const url = `${GITHUB_ORIGIN}/${owner}/${repo}/releases/download/${encodeRefPath(tag)}/${encodeURIComponent(asset)}`;
+  return streamReleaseAsset(context, `${owner}/${repo}`, asset, tag, url);
+}
+
+async function releaseLatestAsset(
+  context: UpstreamContext,
+  owner: string,
+  repo: string,
+  asset: string,
+): Promise<Response> {
+  if (!isReleaseAssetName(asset)) {
+    return errorResponse(400, "invalid-source", `"${asset}" is not a valid .tgz release asset.`);
+  }
+  const url = `${GITHUB_ORIGIN}/${owner}/${repo}/releases/latest/download/${encodeURIComponent(asset)}`;
+  return streamReleaseAsset(context, `${owner}/${repo}`, asset, "latest", url);
+}
+
+async function streamReleaseAsset(
+  context: UpstreamContext,
+  name: string,
+  asset: string,
+  label: string,
+  url: string,
+): Promise<Response> {
   const response = await fetchReleaseUpstream(context, url);
-  const name = `${owner}/${repo}`;
   if (!response) return errorResponse(502, "upstream", "GitHub redirected somewhere unexpected.");
   if (response.status === 404) {
     return errorResponse(
       404,
       "not-found",
-      `${name} has no release asset "${asset}" on "${tag}", or it is private.`,
+      `${name} has no release asset "${asset}" on "${label}", or it is private.`,
     );
   }
   if (!response.ok || !response.body) return upstreamError(response, name);
@@ -373,11 +399,15 @@ function parseUrl(input: string, base?: URL): URL | undefined {
 function isAllowedGitHubReleasePath(pathname: string): boolean {
   const segments = routeSegments(pathname);
   if (!segments || segments.length < 6) return false;
-  const [owner = "", repo = "", releases, download, ...rest] = segments;
-  if (releases !== "releases" || download !== "download") return false;
+  const [owner = "", repo = "", releases, fourth, ...rest] = segments;
+  if (releases !== "releases" || !isOwnerName(owner) || !isRepoName(repo)) return false;
+  if (fourth === "latest" && rest.length === 2 && rest[0] === "download") {
+    return isReleaseAssetName(rest[1] ?? "");
+  }
+  if (fourth !== "download" || rest.length < 2) return false;
   const asset = rest.at(-1) ?? "";
   const tag = rest.slice(0, -1).join("/");
-  return isOwnerName(owner) && isRepoName(repo) && isRefName(tag) && isReleaseAssetName(asset);
+  return isRefName(tag) && isReleaseAssetName(asset);
 }
 
 function isAllowedReleaseAssetPath(pathname: string): boolean {

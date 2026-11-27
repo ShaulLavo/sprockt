@@ -16,16 +16,18 @@ async function openShare(fragment: string, signal: AbortSignal): Promise<string 
   if (!restored.ok) return COPY.errors.shareLinkInvalid;
   signal.throwIfAborted();
   const created = new Date().toISOString();
-  const name =
+  const derivedName =
     packageJsonName(restored.files["package.json"]) ??
-    (restored.template !== BLANK_TEMPLATE ? templateDefaultName(restored.template) : undefined) ??
-    COPY.share.sharedName;
+    (restored.template !== BLANK_TEMPLATE ? templateDefaultName(restored.template) : undefined);
+  const name = derivedName ?? COPY.share.sharedName;
+  const defaultName = derivedName === undefined ? true : undefined;
   const source = { kind: "share" as const, template: restored.template };
   const template = restored.template === BLANK_TEMPLATE ? "blank" : restored.template;
   const id = await createWorkspaceWithFiles(
     restored.files,
     {
       name,
+      ...(defaultName ? { defaultName } : {}),
       created,
       lastOpened: created,
       source,
@@ -34,7 +36,14 @@ async function openShare(fragment: string, signal: AbortSignal): Promise<string 
     browserWorkspaceDeps,
     { signal },
   );
-  saveWorkspaceHint(id, { name, template, created, lastOpened: created, source });
+  saveWorkspaceHint(id, {
+    name,
+    ...(defaultName ? { defaultName } : {}),
+    template,
+    created,
+    lastOpened: created,
+    source,
+  });
   openUnlessCancelled(id, signal);
   return undefined;
 }
