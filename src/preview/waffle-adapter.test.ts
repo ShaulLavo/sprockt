@@ -104,7 +104,11 @@ describe("createWafflePreviewAdapter", () => {
     expect(fakeFrame.src).toBe("https://sprockt.test/__preview/ws1/3000/about#team");
     controller.reload();
     expect(fakeFrame.src).toBe("https://sprockt.test/__preview/ws1/3000/about");
-    expect(events.at(-1)).toEqual({ type: "navigate", location: { port: 3000, path: "/about" } });
+    expect(events.at(-1)).toEqual({
+      type: "navigate",
+      location: { port: 3000, path: "/about" },
+      replace: true,
+    });
 
     // onFrameLoad sends hello; matching hello ack marks bridged and routes navigate/reload via postMessage.
     controller.onFrameLoad();

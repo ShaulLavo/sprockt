@@ -12,6 +12,7 @@ import type { TerminalThemeInput } from "@shaulavo/workbench-terminal";
 import { parseCssColor, type RgbColor } from "@shaulavo/workbench-tokens";
 import type { Terminal } from "ghostty-webgpu";
 import { createEffect, createRoot, type Accessor } from "../lib/reactive";
+import { PROJECT_ROOT, projectRelative } from "../workspace/paths";
 import type { WorkspaceSession } from "../workspace/session";
 import type { SessionState, TerminalHandle, TerminalSize } from "./session";
 
@@ -193,6 +194,23 @@ function clearTerminal(terminal: Terminal, attachment: TerminalAttachment | null
   terminal.focus();
 }
 
+/** Normalizes a terminal file link candidate (`./foo`, `/workspace/foo`, `foo`) to a project-relative path. */
+export function normalizeTerminalLinkPath(raw: string): string | undefined {
+  let path = raw;
+  if (path.startsWith(`${PROJECT_ROOT}/`)) {
+    const rel = projectRelative(path);
+    if (!rel) return undefined;
+    path = rel;
+  } else if (path.startsWith("/")) {
+    return undefined;
+  }
+  while (path.startsWith("./")) path = path.slice(2);
+  if (!path || path.endsWith("/") || path.includes("\0")) return undefined;
+  const badSegment = path.split("/").find((seg) => seg === "" || seg === "." || seg === "..");
+  if (badSegment !== undefined) return undefined;
+  return path;
+}
+
 export function createWaffleTerminalBridge(
   workspace: WorkspaceSession,
   onOpenFile?: (path: string, location?: { readonly line?: number; readonly column?: number }) => void,
@@ -240,7 +258,9 @@ export function createWaffleTerminalBridge(
       terminals.toggleSplit();
     },
     async resolveFileLink(rawPath) {
-      return (await workspace.files.size(rawPath)) !== undefined ? rawPath : null;
+      const normalized = normalizeTerminalLinkPath(rawPath);
+      if (!normalized) return null;
+      return (await workspace.files.size(normalized)) !== undefined ? normalized : null;
     },
     openFileLink(resolvedPath, location) {
       onOpenFile?.(resolvedPath, location);

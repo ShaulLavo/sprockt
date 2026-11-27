@@ -150,10 +150,11 @@ export function createWafflePreviewAdapter(preview: PreviewTransport): WafflePre
           frame.contentWindow?.postMessage(frameCommand({ command: "reload" }), new URL(href).origin);
           return;
         }
-        // Bridgeless reload strips any #fragment so reassigning frame.src performs a real reload.
+        // Bridgeless reload strips any #fragment so reassigning frame.src performs a real reload,
+        // replacing the current history entry in place so Back returns to the previous page.
         const target = withoutFragment(currentPath);
         currentPath = target;
-        onEvent({ type: "navigate", location: { port, path: target } });
+        onEvent({ type: "navigate", location: { port, path: target }, replace: true });
         frame.src = preview.frameUrl(port, target);
       },
       back() {},

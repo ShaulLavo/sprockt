@@ -1,6 +1,6 @@
 // Preview pane: wraps @shaulavo/workbench-preview's PreviewPane over Sprockt's Waffle
 // PreviewTransport and dev-server lifecycle.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PreviewPane as WorkbenchPreviewPane, type PreviewViewportPreset } from "@shaulavo/workbench-preview";
 import "@shaulavo/workbench-preview/preview.css";
 import { onCleanup } from "../lib/reactive";
@@ -62,8 +62,6 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
   const adapter = useMemo(() => createWafflePreviewAdapter(preview), [preview]);
   const [activePort, setActivePort] = useState<number>();
   const [noScript, setNoScript] = useState(false);
-  const [serverEpoch, setServerEpoch] = useState(0);
-  const hadPortRef = useRef(false);
 
   useEffect(() => () => adapter.dispose(), [adapter]);
 
@@ -81,16 +79,6 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
     );
   }, [workspace, devServer, status, owned, activePort]);
   useEffect(() => () => workspace.status.set(STATUS_SLOT.devServer, undefined), [workspace]);
-
-  function handleActivePortChange(nextPort: number | undefined): void {
-    setActivePort(nextPort);
-    if (nextPort === undefined && hadPortRef.current) {
-      hadPortRef.current = false;
-      setServerEpoch((epoch) => epoch + 1);
-      return;
-    }
-    if (nextPort !== undefined) hadPortRef.current = true;
-  }
 
   async function toggleDevServer(): Promise<void> {
     if (devServer.status() !== "stopped") return devServer.stop();
@@ -112,7 +100,6 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
 
   return (
     <WorkbenchPreviewPane
-      key={serverEpoch}
       adapter={adapter}
       className="pane preview-pane"
       sandbox={null}
@@ -127,7 +114,7 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
       renderViewportIcon={viewportIcon}
       openInTabLabel={ui.openInTab}
       onOpenInTab={(url) => void window.open(url, "_blank", "noopener")}
-      onActivePortChange={handleActivePortChange}
+      onActivePortChange={setActivePort}
       toolbarScrollRef={fadeScroller}
       toolbarTrailing={
         <button
