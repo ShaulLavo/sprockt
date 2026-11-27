@@ -572,4 +572,31 @@ describe("bulk imports over 1,024 files", () => {
     const metaBytes = metered.files.get(WORKSPACE_META_PATH);
     expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
   });
+
+  test("cancellation during open still writes the incomplete marker if rollback is busy", async () => {
+    const metered = meteredProjectFilesystem();
+    const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
+    const controller = new AbortController();
+    const deps: NewWorkspaceDeps = {
+      newId: () => "busycncl",
+      exists: async () => false,
+      remove: async () => "busy",
+      open: async () => {
+        // User leaves while storage is opening.
+        controller.abort(new Error("left during open"));
+        return {
+          files: projectFiles,
+          runtime: { filesystem: metered.filesystem },
+          dispose: async () => projectFiles.dispose(),
+        };
+      },
+    };
+
+    const outcome = await createWorkspaceWithFiles({ "index.ts": "1" }, META, deps, {
+      signal: controller.signal,
+    }).catch((error: unknown) => error);
+    expect(outcome).toBeInstanceOf(Error);
+    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
+    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
+  });
 });

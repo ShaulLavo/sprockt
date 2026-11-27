@@ -24,4 +24,4 @@ The scenario validates inline repo error handling on `/`, creates a marker file 
 ## Gotchas
 
 - Unauthenticated GitHub API requests share a 60 req/hr per-IP limit across lanes, so automated verification uses `/s#share=...` round-trips and mocked/local validation by default rather than hammering live GitHub endpoints on every run.
-- When testing live `/github/honojs/starter` against a deployed Worker or Mesh preview, verify that `/api/github/*` proxy routes are mounted (plain `vite preview` serves static files only and does not run the Cloudflare Worker).
+- `vite dev`, `vite preview`, and `scripts/serve-builds.ts` mount `/api/github/*` via `worker/github-proxy.ts`, matching the Cloudflare Worker (including `/api/github/release/...` for tagged `.tgz` assets). Static-only Mesh previews without the Cloudflare Worker do not serve `/api/github/*`.

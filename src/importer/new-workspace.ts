@@ -154,7 +154,9 @@ async function fill(
 ): Promise<string> {
   const { state: _ignored, ...complete } = meta;
   try {
-    await writeMeta(id, session, { ...complete, state: INCOMPLETE }, context.signal);
+    // Always write the INCOMPLETE marker before checking cancellation so a busy rollback still
+    // leaves the workspace recognizable as an unfinished import (with Retry/Delete).
+    await writeMeta(id, session, { ...complete, state: INCOMPLETE });
     context.signal?.throwIfAborted();
     await session.files.writeMany(files);
     await session.runtime.filesystem.flush();
