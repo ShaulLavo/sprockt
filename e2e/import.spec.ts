@@ -333,9 +333,10 @@ test("imports a repository with 1,500 files without exhausting Waffle's filesyst
   });
   await page.goto("/github/acme/large-repo");
   await expectWorkspace(page);
-  await expect(page.getByTestId("file-tree")).toContainText("package.json");
+  await expect(page.getByTestId("file-tree")).toContainText("packages");
   const files = await page.evaluate(() => globalThis.sprockt?.workspace?.files.list());
   expect(files).toHaveLength(1500);
+  expect(files).toContain("package.json");
   expect(files).toContain("packages/pkg-0/file-0.ts");
   expect(files).toContain("packages/pkg-29/file-1497.ts");
 });
