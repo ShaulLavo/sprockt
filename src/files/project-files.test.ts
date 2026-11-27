@@ -823,3 +823,112 @@ test("exists detects occupied paths including Unix sockets omitted by readdir", 
   expect(await files.exists("dest/sock.txt")).toBe(true);
   expect(await files.exists("dest/missing.txt")).toBe(false);
 });
+
+function meteredFilesystem(filesystem: ProjectFilesystem, quota = 1024) {
+  let inFlight = 0;
+  let peak = 0;
+  let calls = 0;
+
+  async function track<T>(work: () => Promise<T>): Promise<T> {
+    calls += 1;
+    inFlight += 1;
+    if (inFlight > peak) peak = inFlight;
+    if (inFlight > quota) {
+      inFlight -= 1;
+      throw new Error("filesystem outstanding request quota exhausted");
+    }
+    try {
+      await Promise.resolve();
+      return await work();
+    } finally {
+      inFlight -= 1;
+    }
+  }
+
+  const wrapped: ProjectFilesystem = {
+    mkdirp: (path) => track(() => filesystem.mkdirp(path)),
+    writeFile: (path, content, mode) => track(() => filesystem.writeFile(path, content, mode)),
+    readFile: (path) => track(() => filesystem.readFile(path)),
+    listFiles: (path) => track(() => filesystem.listFiles(path)),
+    remove: (path) => track(() => filesystem.remove(path)),
+    move: (from, to) => track(() => filesystem.move(from, to)),
+    flush: () => track(() => filesystem.flush()),
+    resolvePath: (path) => track(() => filesystem.resolvePath(path)),
+    lookup: (path) => track(() => filesystem.lookup(path)),
+  };
+
+  return {
+    filesystem: wrapped,
+    get peak() {
+      return peak;
+    },
+    get calls() {
+      return calls;
+    },
+    resetPeak() {
+      peak = 0;
+    },
+  };
+}
+
+function bulkEntries(count: number, prefix = "v1"): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (let index = 0; index < count; index += 1) {
+    const path = index < 300 ? `top-${index}.txt` : `dir-${Math.floor((index - 300) / 20)}/file-${index}.txt`;
+    files[path] = `${prefix}:${index}`;
+  }
+  return files;
+}
+
+test("writeMany of 1,500 files bounds concurrent filesystem RPCs on both fresh and existing trees", async () => {
+  const memory = memoryFilesystem();
+  const metered = meteredFilesystem(memory.filesystem);
+  const service = createProjectFiles(metered.filesystem, noWatch);
+
+  await service.writeMany(bulkEntries(1500, "v1"));
+  expect(memory.files.size).toBe(1500);
+  expect(memory.text("/workspace/top-0.txt")).toBe("v1:0");
+  expect(memory.text("/workspace/dir-59/file-1499.txt")).toBe("v1:1499");
+  expect(metered.peak).toBeLessThanOrEqual(8);
+  expect(metered.calls).toBeGreaterThan(1500);
+
+  // Second pass over existing directories exercises every inspector lookup too.
+  await memory.finishFlushes();
+  metered.resetPeak();
+  await service.writeMany(bulkEntries(1500, "v2"));
+  expect(memory.files.size).toBe(1500);
+  expect(memory.text("/workspace/top-0.txt")).toBe("v2:0");
+  expect(memory.text("/workspace/dir-59/file-1499.txt")).toBe("v2:1499");
+  expect(metered.peak).toBeLessThanOrEqual(8);
+});
+
+test("writeMany of 1,500 files still rejects atomically with bounded RPCs when the last path escapes", async () => {
+  const memory = memoryFilesystem({
+    links: { "/workspace/out": "/etc" },
+    directories: ["/etc"],
+  });
+  const metered = meteredFilesystem(memory.filesystem);
+  const service = createProjectFiles(metered.filesystem, noWatch);
+  const files = { ...bulkEntries(1500), "out/escaped.txt": "bad" };
+
+  await expect(service.writeMany(files)).rejects.toBeInstanceOf(ProjectPathError);
+  expect(memory.files.size).toBe(0);
+  expect(metered.peak).toBeLessThanOrEqual(8);
+});
+
+test("upload of 1,500 files bounds concurrent filesystem RPCs", async () => {
+  const memory = memoryFilesystem();
+  const metered = meteredFilesystem(memory.filesystem);
+  const service = createProjectFiles(metered.filesystem, noWatch);
+  const items = Object.entries(bulkEntries(1500)).map(([path, text]) => ({
+    path,
+    data: new Blob([text]),
+  }));
+
+  const result = await service.upload(items, "");
+  expect(result.written).toHaveLength(1500);
+  expect(result.skipped).toBe(0);
+  expect(memory.files.size).toBe(1500);
+  expect(memory.text("/workspace/dir-59/file-1499.txt")).toBe("v1:1499");
+  expect(metered.peak).toBeLessThanOrEqual(8);
+});

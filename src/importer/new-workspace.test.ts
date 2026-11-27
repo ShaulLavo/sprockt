@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createProjectFiles, type ProjectFilesystem, type ResolvedEntry } from "../files/project-files";
 import { PROJECT_ROOT } from "../workspace/paths";
 import { readIncomplete, retryPath, type OpenIdle } from "./incomplete";
 import { INCOMPLETE, parseMeta, serializeMeta, WORKSPACE_META_PATH, type WorkspaceMeta } from "./metadata";
@@ -272,5 +273,172 @@ describe("finding unfinished workspaces", () => {
       subdir: "apps/web",
     });
     expect(retryPath("s", { ...META, source: { kind: "share", template: "blank" } })).toBeUndefined();
+  });
+});
+
+function meteredProjectFilesystem(initial: Readonly<Record<string, string>> = {}, quota = 1024) {
+  const encoder = new TextEncoder();
+  const files = new Map<string, Uint8Array>(
+    Object.entries(initial).map(([path, text]) => [path, encoder.encode(text)]),
+  );
+  const directories = new Set<string>(["/", PROJECT_ROOT]);
+  for (const path of files.keys()) {
+    const parts = path.split("/").filter(Boolean);
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      directories.add(`/${parts.slice(0, index + 1).join("/")}`);
+    }
+  }
+  let inFlight = 0;
+  let peak = 0;
+
+  async function track<T>(work: () => T | Promise<T>): Promise<T> {
+    inFlight += 1;
+    if (inFlight > peak) peak = inFlight;
+    if (inFlight > quota) {
+      inFlight -= 1;
+      throw new Error("filesystem outstanding request quota exhausted");
+    }
+    try {
+      await Promise.resolve();
+      return await work();
+    } finally {
+      inFlight -= 1;
+    }
+  }
+
+  const filesystem: ProjectFilesystem = {
+    mkdirp: (path) =>
+      track(() => {
+        const parts = path.split("/").filter(Boolean);
+        for (let index = 0; index < parts.length; index += 1) {
+          directories.add(`/${parts.slice(0, index + 1).join("/")}`);
+        }
+      }),
+    writeFile: (path, content) =>
+      track(() => {
+        files.set(path, typeof content === "string" ? encoder.encode(content) : content);
+      }),
+    readFile: (path) => track(() => files.get(path)),
+    listFiles: (path) => track(() => Array.from(files.keys()).filter((file) => file.startsWith(`${path}/`))),
+    remove: (path) => track(() => files.delete(path)),
+    move: () => track(() => undefined),
+    flush: () => track(() => undefined),
+    lookup: (path) =>
+      track(() => {
+        if (files.has(path)) return { kind: "file" };
+        return directories.has(path) ? { kind: "dir", children: new Map() } : undefined;
+      }),
+    resolvePath: (path): Promise<ResolvedEntry | undefined> =>
+      track(() => {
+        if (files.has(path)) return { path, kind: "file" };
+        if (directories.has(path)) return { path, kind: "dir" };
+        const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+        if (parent === "/" || directories.has(parent)) return undefined;
+        throw Object.assign(new Error("filesystem errno 44"), { errno: 44 });
+      }),
+  };
+
+  return {
+    filesystem,
+    files,
+    get peak() {
+      return peak;
+    },
+  };
+}
+
+function numberedFiles(count: number, prefix: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (let index = 0; index < count; index += 1) {
+    files[`pkg-${Math.floor(index / 25)}/${prefix}-${index}.ts`] = `export const n = ${index};\n`;
+  }
+  return files;
+}
+
+describe("bulk imports over 1,024 files", () => {
+  test("imports 1,500 files through real ProjectFiles with bounded concurrent RPCs", async () => {
+    const metered = meteredProjectFilesystem();
+    const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
+    const deps: NewWorkspaceDeps = {
+      newId: () => "large",
+      exists: async () => false,
+      remove: async () => "deleted",
+      open: async () => ({
+        files: projectFiles,
+        runtime: { filesystem: metered.filesystem },
+        dispose: async () => projectFiles.dispose(),
+      }),
+    };
+
+    const id = await createWorkspaceWithFiles(numberedFiles(1500, "file"), META, deps);
+    expect(id).toBe("large");
+    expect(metered.peak).toBeLessThanOrEqual(8);
+    expect(metered.files.has(`${PROJECT_ROOT}/pkg-0/file-0.ts`)).toBe(true);
+    expect(metered.files.has(`${PROJECT_ROOT}/pkg-59/file-1499.ts`)).toBe(true);
+    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
+    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBeUndefined();
+  });
+
+  test("Retry cleans up 1,500 stale files and writes 1,500 new files with bounded concurrent RPCs", async () => {
+    const stale: Record<string, string> = {
+      [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
+    };
+    for (let index = 0; index < 1500; index += 1) {
+      stale[`${PROJECT_ROOT}/old-${Math.floor(index / 25)}/stale-${index}.ts`] = "old";
+    }
+    const metered = meteredProjectFilesystem(stale);
+    const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
+    const deps: NewWorkspaceDeps = {
+      exists: async () => true,
+      remove: async () => "deleted",
+      open: async () => ({
+        files: projectFiles,
+        runtime: { filesystem: metered.filesystem },
+        dispose: async () => projectFiles.dispose(),
+      }),
+    };
+
+    const id = await createWorkspaceWithFiles(numberedFiles(1500, "fresh"), META, deps, { into: "cut" });
+    expect(id).toBe("cut");
+    expect(metered.peak).toBeLessThanOrEqual(8);
+    expect(metered.files.has(`${PROJECT_ROOT}/old-0/stale-0.ts`)).toBe(false);
+    expect(metered.files.has(`${PROJECT_ROOT}/old-59/stale-1499.ts`)).toBe(false);
+    expect(metered.files.has(`${PROJECT_ROOT}/pkg-0/fresh-0.ts`)).toBe(true);
+    expect(metered.files.has(`${PROJECT_ROOT}/pkg-59/fresh-1499.ts`)).toBe(true);
+    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
+    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBeUndefined();
+  });
+
+  test("Retry closes the session and keeps the marker if stale cleanup fails", async () => {
+    let closed = false;
+    const stale: Record<string, string> = {
+      [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
+      [`${PROJECT_ROOT}/stale.txt`]: "old",
+    };
+    const metered = meteredProjectFilesystem(stale);
+    const failingFs = {
+      ...metered.filesystem,
+      remove: async () => {
+        throw new Error("remove failed");
+      },
+    };
+    const deps: NewWorkspaceDeps = {
+      exists: async () => true,
+      remove: async () => "deleted",
+      open: async () => ({
+        files: { writeMany: async () => undefined },
+        runtime: { filesystem: failingFs },
+        dispose: async () => {
+          closed = true;
+        },
+      }),
+    };
+
+    await expect(createWorkspaceWithFiles({ "a.txt": "a" }, META, deps, { into: "cut" })).rejects.toThrow(
+      "remove failed",
+    );
+    expect(closed).toBe(true);
+    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
+    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
   });
 });

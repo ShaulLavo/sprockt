@@ -306,6 +306,31 @@ test("Retry re-imports the recorded source into the same workspace", async ({ pa
   expect(await workspaceMeta(page)).not.toHaveProperty("state");
 });
 
+test("imports a repository with 1,500 files without exhausting Waffle's filesystem request quota", async ({
+  page,
+}) => {
+  const largeRepo: Record<string, string> = {
+    "package.json": JSON.stringify({ name: "large-repo" }),
+    "README.md": "# Large Repo\n",
+  };
+  for (let index = 0; index < 1498; index += 1) {
+    largeRepo[`packages/pkg-${Math.floor(index / 50)}/file-${index}.ts`] = `export const id = ${index};\n`;
+  }
+  await mockGitHub(page, {
+    "/repo/acme/large-repo": {
+      json: { owner: "acme", repo: "large-repo", defaultBranch: "main", sizeKiB: 512 },
+    },
+    "/archive/acme/large-repo/main": { body: archive(largeRepo) },
+  });
+  await page.goto("/github/acme/large-repo");
+  await expectWorkspace(page);
+  await expect(page.getByTestId("file-tree")).toContainText("package.json");
+  const files = await page.evaluate(() => globalThis.sprockt?.workspace?.files.list());
+  expect(files).toHaveLength(1500);
+  expect(files).toContain("packages/pkg-0/file-0.ts");
+  expect(files).toContain("packages/pkg-29/file-1497.ts");
+});
+
 /** Whether GitHub answers from this machine; the real-repository test needs it. */
 async function githubReachable(): Promise<boolean> {
   try {
