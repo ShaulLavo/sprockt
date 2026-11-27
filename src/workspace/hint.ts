@@ -18,6 +18,7 @@ import {
 } from "../templates/workspace-meta";
 
 export const WORKSPACE_HINT_PREFIX = "sprockt:ws-meta:";
+export const WORKSPACE_PENDING_NAME_PREFIX = "sprockt:ws-pending-name:";
 
 const [hintRevision, setHintRevision] = createSignal(0);
 /**
@@ -26,6 +27,7 @@ const [hintRevision, setHintRevision] = createSignal(0);
  * changes externally.
  */
 const fallbackHints = new Map<string, WorkspaceMeta>();
+const fallbackPendingNames = new Map<string, string>();
 /** Per-workspace in-process lock tail so concurrent callers serialize even without Web Locks. */
 const nameLockQueues = new Map<string, Promise<unknown>>();
 
@@ -33,11 +35,47 @@ function bumpHints(): void {
   setHintRevision((value) => value + 1);
 }
 
+function readPendingWorkspaceName(id: string): string | undefined {
+  const fallback = fallbackPendingNames.get(id);
+  if (fallback) return fallback;
+  try {
+    const raw = localStorage.getItem(WORKSPACE_PENDING_NAME_PREFIX + id)?.trim();
+    return raw || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function savePendingWorkspaceName(id: string, name: string): void {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  try {
+    localStorage.setItem(WORKSPACE_PENDING_NAME_PREFIX + id, trimmed);
+    fallbackPendingNames.delete(id);
+  } catch {
+    fallbackPendingNames.set(id, trimmed);
+  }
+}
+
+function clearPendingWorkspaceName(id: string): void {
+  fallbackPendingNames.delete(id);
+  try {
+    localStorage.removeItem(WORKSPACE_PENDING_NAME_PREFIX + id);
+  } catch {
+    // Ignore private-mode refusals.
+  }
+}
+
 /** Handles cross-tab `storage` events; exported for unit testing. */
 export function handleHintStorageEvent(key: string | null): void {
   if (key === null) {
     fallbackHints.clear();
+    fallbackPendingNames.clear();
     bumpHints();
+    return;
+  }
+  if (key.startsWith(WORKSPACE_PENDING_NAME_PREFIX)) {
+    fallbackPendingNames.delete(key.slice(WORKSPACE_PENDING_NAME_PREFIX.length));
     return;
   }
   if (!key.startsWith(WORKSPACE_HINT_PREFIX)) return;
@@ -67,6 +105,7 @@ export function readWorkspaceHint(id: string): WorkspaceMeta | undefined {
 }
 
 export function saveWorkspaceHint(id: string, meta: WorkspaceMeta): void {
+  if (!isPlaceholderWorkspaceName(meta)) clearPendingWorkspaceName(id);
   try {
     localStorage.setItem(WORKSPACE_HINT_PREFIX + id, serializeWorkspaceMeta(meta));
     fallbackHints.delete(id);
@@ -87,6 +126,7 @@ export function hasWorkspaceHints(): boolean {
 }
 
 export function removeWorkspaceHint(id: string): void {
+  clearPendingWorkspaceName(id);
   fallbackHints.delete(id);
   try {
     localStorage.removeItem(WORKSPACE_HINT_PREFIX + id);
@@ -165,11 +205,12 @@ export function mergeStoredWorkspaceMeta(
   hint: WorkspaceMeta | undefined,
 ): WorkspaceMeta {
   const lastOpened = newerTimestamp(diskMeta.lastOpened, hint?.lastOpened) ?? diskMeta.lastOpened;
-  if (isPlaceholderWorkspaceName(diskMeta) && hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
-    const { defaultName: _placeholder, ...rest } = diskMeta;
-    return { ...rest, name: hint.name, lastOpened };
-  }
-  return { ...diskMeta, lastOpened };
+  if (!isPlaceholderWorkspaceName(diskMeta)) return { ...diskMeta, lastOpened };
+  const candidate =
+    hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id ? hint.name : readPendingWorkspaceName(id);
+  if (!candidate) return { ...diskMeta, lastOpened };
+  const { defaultName: _placeholder, ...rest } = diskMeta;
+  return { ...rest, name: candidate, lastOpened };
 }
 
 type MetaRead = { readonly ok: true; readonly raw: string | undefined } | { readonly ok: false };
@@ -213,12 +254,15 @@ async function persistDerivedMeta(
 }
 
 async function deriveNameFromWorkspace(
+  id: string,
   partial: PartialWorkspaceMeta | undefined,
   deps: HydrateWorkspaceNameDeps,
 ): Promise<string | undefined> {
   if (partial?.source?.kind === "github") {
     return deriveGitHubWorkspaceName(partial.source.repo, partial.source.subdir);
   }
+  const pending = readPendingWorkspaceName(id);
+  if (pending) return pending;
   return packageJsonName(await deps.readPackageJson().catch(() => undefined));
 }
 
@@ -285,7 +329,7 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
         return hint.name;
       }
 
-      const derived = await deriveNameFromWorkspace(partial, deps);
+      const derived = await deriveNameFromWorkspace(id, partial, deps);
       const latestHint = readWorkspaceHint(id);
       if (deps.signal?.aborted) return latestHint?.name ?? id;
       if (latestHint && !isPlaceholderWorkspaceName(latestHint) && latestHint.name !== id) {
@@ -326,13 +370,23 @@ async function uploadedPackageJsonName(items: readonly UploadedNameItem[]): Prom
 /**
  * Adopts a project name from a root folder upload or uploaded root `package.json` when the
  * workspace still has no real name (never overwrites an explicit rename, named project, or
- * unreadable metadata file). Serialized per workspace so concurrent uploads never race.
+ * unreadable metadata file). Records a folder-name candidate synchronously before acquiring the
+ * workspace lock so leaving while another tab holds the lock never drops the uploaded folder name.
  */
 export function adoptUploadedWorkspaceName(
   id: string,
   items: readonly UploadedNameItem[],
   deps: HydrateWorkspaceNameDeps,
 ): Promise<string | undefined> {
+  if (deps.signal?.aborted) return Promise.resolve(undefined);
+  const folderName = deriveUploadFolderName(
+    items.map((item) => ({ path: item.path, hasData: item.data !== undefined })),
+  );
+  const currentHint = readWorkspaceHint(id);
+  const hasRealHint = currentHint && !isPlaceholderWorkspaceName(currentHint) && currentHint.name !== id;
+  if (!hasRealHint && folderName && !readPendingWorkspaceName(id)) {
+    savePendingWorkspaceName(id, folderName);
+  }
   return withWorkspaceNameLock(
     id,
     async () => {
@@ -345,13 +399,19 @@ export function adoptUploadedWorkspaceName(
       const partial = parsePartialWorkspaceMeta(rawMeta);
       const hint = readWorkspaceHint(id);
 
-      if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) return undefined;
-      if (partial?.name && !partial.defaultName) return undefined;
-      if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) return undefined;
+      if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) {
+        clearPendingWorkspaceName(id);
+        return undefined;
+      }
+      if (partial?.name && !partial.defaultName) {
+        clearPendingWorkspaceName(id);
+        return undefined;
+      }
+      if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
+        clearPendingWorkspaceName(id);
+        return undefined;
+      }
 
-      const folderName = deriveUploadFolderName(
-        items.map((item) => ({ path: item.path, hasData: item.data !== undefined })),
-      );
       const derived =
         folderName ??
         (await uploadedPackageJsonName(items)) ??
@@ -359,6 +419,7 @@ export function adoptUploadedWorkspaceName(
       if (!derived || deps.signal?.aborted) return undefined;
       const latestHint = readWorkspaceHint(id);
       if (latestHint && !isPlaceholderWorkspaceName(latestHint) && latestHint.name !== id) {
+        clearPendingWorkspaceName(id);
         return undefined;
       }
 

@@ -497,3 +497,62 @@ test("bun install fetches public GitHub Release .tgz dependencies through the sa
   expect(proxiedPaths).toContain("/api/github/release/acme/release-demo/v1.0.0/release-demo-1.0.0.tgz");
   expect(proxyUpstreamCalls).toEqual([releaseUrl, cdnUrl]);
 });
+
+test("uploaded folder name survives leaving and reopening even while another tab holds the naming lock", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/");
+  await page.getByTestId("template-blank").click();
+  const id = await expectWorkspace(page);
+  await expect(page.getByTestId("workspace-name")).toHaveText("workspace");
+
+  // Hold the per-workspace naming Web Lock in a second tab during upload and leave.
+  const locker = await context.newPage();
+  await locker.goto("/");
+  await locker.evaluate(async (workspaceId) => {
+    await new Promise<void>((acquired) => {
+      void navigator.locks.request(`sprockt:${workspaceId}:meta-name`, () => {
+        acquired();
+        return new Promise<void>((release) => {
+          (globalThis as Record<string, unknown>).releaseMetaLock = release;
+        });
+      });
+    });
+  }, id);
+
+  try {
+    await page.getByTestId("upload-folder-input").evaluate((element: HTMLInputElement) => {
+      const transfer = new DataTransfer();
+      const file = new File(["export const ok = 1;\n"], "index.ts", { type: "text/plain" });
+      transfer.items.add(file);
+      element.files = transfer.files;
+      const uploaded = element.files[0];
+      if (uploaded) {
+        Object.defineProperty(uploaded, "webkitRelativePath", { value: "named-folder/index.ts" });
+      }
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await expect(page.getByTestId("file-tree")).toContainText("named-folder");
+    await expect(page.getByTestId("save-state")).toHaveText("saved");
+
+    // Leave the workspace while the lock is still held.
+    await page.goto("/");
+    await expect(page.getByTestId("template-blank")).toBeVisible();
+  } finally {
+    await locker
+      .evaluate(() => {
+        const release = (globalThis as Record<string, unknown>).releaseMetaLock;
+        if (typeof release === "function") release();
+      })
+      .catch(() => undefined);
+    await locker.close();
+  }
+
+  // Reopen once the lock is released: the uploaded folder name is applied and persisted.
+  await page.goto(`/w/${id}`);
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+  await expect(page.getByTestId("workspace-name")).toHaveText("named-folder");
+  await expect(page.getByTestId("explorer-workspace-name")).toHaveText("named-folder");
+  await expect.poll(() => workspaceMeta(page)).toMatchObject({ name: "named-folder" });
+});

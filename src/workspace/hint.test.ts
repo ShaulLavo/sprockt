@@ -535,4 +535,116 @@ describe("workspace name hydration and reactivity", () => {
     expect(writes).toBe(0);
     expect(workspaceName(id)).toBe("explicit-name");
   });
+
+  test("preserves an uploaded folder name across leave and reopen even when the naming lock was held", async () => {
+    const id = "pendlock01";
+    let storedMeta = serializeWorkspaceMeta(
+      createWorkspaceMeta({ name: "workspace", template: "blank", defaultName: true }),
+    );
+    saveWorkspaceHint(id, createWorkspaceMeta({ name: "workspace", template: "blank", defaultName: true }));
+
+    const lockGate = Promise.withResolvers<void>();
+    const holder = hydrateWorkspaceName(id, {
+      readMeta: async () => {
+        await lockGate.promise;
+        return storedMeta;
+      },
+      readPackageJson: async () => undefined,
+    });
+
+    const sessionController = new AbortController();
+    const deps = {
+      readMeta: async () => storedMeta,
+      writeMeta: async (json: string) => void (storedMeta = json),
+      readPackageJson: async () => undefined,
+    };
+
+    // Upload runs while another operation holds the naming lock, then user leaves immediately.
+    const uploadAdoption = adoptUploadedWorkspaceName(
+      id,
+      [{ path: "named-folder/index.ts", data: new Blob(["1"]) }],
+      { ...deps, signal: sessionController.signal },
+    );
+    sessionController.abort();
+    await expect(uploadAdoption).rejects.toThrow();
+
+    // Release the lock and reopen the workspace directly: the pending folder name is applied under the lock.
+    lockGate.resolve();
+    await holder;
+
+    const reopened = await hydrateWorkspaceName(id, deps);
+    expect(reopened).toBe("named-folder");
+    expect(workspaceName(id)).toBe("named-folder");
+    expect(JSON.parse(storedMeta)).toMatchObject({ name: "named-folder" });
+    expect(JSON.parse(storedMeta).defaultName).toBeUndefined();
+  });
+
+  test("does not apply a pending uploaded folder name if the workspace was renamed or already named on disk", async () => {
+    // Case 1: User leaves while lock is held and explicitly renames on landing page.
+    const renamedId = "pendrenm01";
+    const blankMeta = serializeWorkspaceMeta(
+      createWorkspaceMeta({ name: "workspace", template: "blank", defaultName: true }),
+    );
+    const gate1 = Promise.withResolvers<void>();
+    const holder1 = hydrateWorkspaceName(renamedId, {
+      readMeta: async () => {
+        await gate1.promise;
+        return blankMeta;
+      },
+      readPackageJson: async () => undefined,
+    });
+    const controller1 = new AbortController();
+    const upload1 = adoptUploadedWorkspaceName(
+      renamedId,
+      [{ path: "named-folder/index.ts", data: new Blob(["1"]) }],
+      {
+        readMeta: async () => blankMeta,
+        readPackageJson: async () => undefined,
+        signal: controller1.signal,
+      },
+    );
+    controller1.abort();
+    await expect(upload1).rejects.toThrow();
+    const explicit = updateWorkspaceMetaName(blankMeta, "explicit-name");
+    saveWorkspaceHint(renamedId, explicit.meta);
+    gate1.resolve();
+    await holder1;
+
+    const afterRename = await hydrateWorkspaceName(renamedId, {
+      readMeta: async () => explicit.json,
+      readPackageJson: async () => undefined,
+    });
+    expect(afterRename).toBe("explicit-name");
+    expect(workspaceName(renamedId)).toBe("explicit-name");
+
+    // Case 2: Hint was missing while lock was held, but disk already had a real name.
+    const diskNamedId = "penddisk01";
+    const diskNamedJson = serializeWorkspaceMeta(
+      createWorkspaceMeta({ name: "existing-project", template: "blank" }),
+    );
+    const gate2 = Promise.withResolvers<void>();
+    const holder2 = hydrateWorkspaceName(diskNamedId, {
+      readMeta: async () => {
+        await gate2.promise;
+        return diskNamedJson;
+      },
+      readPackageJson: async () => undefined,
+    });
+    const controller2 = new AbortController();
+    const upload2 = adoptUploadedWorkspaceName(
+      diskNamedId,
+      [{ path: "named-folder/index.ts", data: new Blob(["1"]) }],
+      {
+        readMeta: async () => diskNamedJson,
+        readPackageJson: async () => undefined,
+        signal: controller2.signal,
+      },
+    );
+    controller2.abort();
+    await expect(upload2).rejects.toThrow();
+    gate2.resolve();
+    await holder2;
+
+    expect(workspaceName(diskNamedId)).toBe("existing-project");
+  });
 });
