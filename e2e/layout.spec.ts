@@ -228,8 +228,8 @@ test("closing a terminal while its startup command runs raises no page error", a
     const id = terminals?.create({ title: "brief", run: "echo never" });
     if (id) terminals?.close(id);
   });
-  await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
-  await page.getByTestId("terminal-tab").click();
+  await expect(page.locator('[data-wb-term-session] [role="tab"]')).toHaveCount(1);
+  await page.locator('[data-wb-term-session] [role="tab"]').click();
   await runInTerminal(page, "echo still-fine");
   await expect.poll(() => terminalText(page)).toMatch(/^still-fine$/m);
   expect(pageErrors.filter((error) => error.startsWith("pageerror"))).toEqual([]);
@@ -338,17 +338,17 @@ test.describe("on a phone", () => {
     await switcher.getByRole("button", { name: "Terminal" }).click();
     await runInTerminal(page, "echo first-ready");
     await expect.poll(() => terminalText(page)).toMatch(/^first-ready$/m);
-    await page.getByTestId("new-terminal").click();
+    await page.getByTestId("wb-term-new").click();
     await expect(page.getByTestId("terminal-state")).toHaveText("ready");
 
-    const ctrl = page.getByRole("button", { name: "ctrl", exact: true });
+    const ctrl = page.getByRole("button", { name: "Ctrl", exact: true });
     await ctrl.click();
     await expect(ctrl).toHaveAttribute("aria-pressed", "true");
-    await page.getByTestId("terminal-tab").first().click();
+    await page.locator('[data-wb-term-session] [role="tab"]').first().click();
     await expect(ctrl).toHaveAttribute("aria-pressed", "false");
 
     // Back in the second shell, a letter is a letter: no leftover Ctrl+E.
-    await page.getByTestId("terminal-tab").nth(1).click();
+    await page.locator('[data-wb-term-session] [role="tab"]').nth(1).click();
     await runInTerminal(page, "echo second-ok");
     await expect.poll(() => terminalText(page)).toMatch(/^second-ok$/m);
 
@@ -393,20 +393,20 @@ test("two terminal tabs run separate shells", async ({ page }) => {
   await runInTerminal(page, "export MARK=first; echo first-tab-ready");
   await expect.poll(() => terminalText(page)).toMatch(/^first-tab-ready$/m);
 
-  await page.getByTestId("new-terminal").click();
-  await expect(page.getByTestId("terminal-tab")).toHaveCount(2);
+  await page.getByTestId("wb-term-new").click();
+  await expect(page.locator('[data-wb-term-session] [role="tab"]')).toHaveCount(2);
   await runInTerminal(page, "echo second-tab:$MARK:");
   // The second shell never saw the first one's variable.
   await expect.poll(() => terminalText(page)).toMatch(/^second-tab::$/m);
 
-  await page.getByTestId("terminal-tab").first().click();
+  await page.locator('[data-wb-term-session] [role="tab"]').first().click();
   await runInTerminal(page, "echo first-tab:$MARK");
   await expect.poll(() => terminalText(page)).toMatch(/^first-tab:first$/m);
   expect(await terminalText(page)).not.toContain("second-tab");
 
   // Closing a tab leaves the other shell running.
   await page.getByRole("button", { name: "Close bash 2" }).click();
-  await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
+  await expect(page.locator('[data-wb-term-session] [role="tab"]')).toHaveCount(1);
   await runInTerminal(page, "echo still-here");
   await expect.poll(() => terminalText(page)).toMatch(/^still-here$/m);
 });

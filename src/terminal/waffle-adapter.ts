@@ -1,0 +1,343 @@
+// Adapts Sprockt's Waffle + bash-web TerminalStore and CSS light-dark() tokens onto
+// @shaulavo/workbench-core's TerminalAdapter and @shaulavo/workbench-terminal's TerminalThemeInput.
+import { BrowserSession } from "bash-web/session";
+import type {
+  Subscribable,
+  TerminalAdapter,
+  TerminalAttachment,
+  TerminalSessionInfo,
+  TerminalSessionStatus,
+} from "@shaulavo/workbench-core";
+import type { TerminalThemeInput } from "@shaulavo/workbench-terminal";
+import { parseCssColor, type RgbColor } from "@shaulavo/workbench-tokens";
+import type { Terminal } from "ghostty-webgpu";
+import { createEffect, createRoot, type Accessor } from "../lib/reactive";
+import type { WorkspaceSession } from "../workspace/session";
+import type { SessionState, TerminalHandle, TerminalSize } from "./session";
+
+const ANSI_TOKENS = [
+  "--ansi-black",
+  "--ansi-red",
+  "--ansi-green",
+  "--ansi-yellow",
+  "--ansi-blue",
+  "--ansi-magenta",
+  "--ansi-cyan",
+  "--ansi-white",
+  "--ansi-bright-black",
+  "--ansi-bright-red",
+  "--ansi-bright-green",
+  "--ansi-bright-yellow",
+  "--ansi-bright-blue",
+  "--ansi-bright-magenta",
+  "--ansi-bright-cyan",
+  "--ansi-bright-white",
+] as const;
+
+const FONT_FAMILY =
+  '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+const FALLBACK_BLACK: RgbColor = { r: 0, g: 0, b: 0 };
+
+function createReactiveSubscribable<T>(
+  read: () => T,
+  equals: (a: T, b: T) => boolean = Object.is,
+): Subscribable<T> {
+  let snapshot = read();
+  const listeners = new Set<() => void>();
+  let stopEffect: (() => void) | undefined;
+
+  function ensureRunning(): void {
+    if (stopEffect) return;
+    stopEffect = createRoot((dispose) => {
+      createEffect(() => {
+        const next = read();
+        if (equals(snapshot, next)) return;
+        snapshot = next;
+        for (const listener of listeners) listener();
+      });
+      return dispose;
+    });
+  }
+
+  return {
+    getSnapshot() {
+      const next = read();
+      if (!equals(snapshot, next)) snapshot = next;
+      return snapshot;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      ensureRunning();
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0 && stopEffect) {
+          stopEffect();
+          stopEffect = undefined;
+        }
+      };
+    },
+  };
+}
+
+function mapSessionStatus(state: SessionState): TerminalSessionStatus {
+  return state;
+}
+
+function sameSessions(a: readonly TerminalSessionInfo[], b: readonly TerminalSessionInfo[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i];
+    const right = b[i];
+    if (!left || !right) return false;
+    if (left.id !== right.id || left.title !== right.title || left.status !== right.status) return false;
+  }
+  return true;
+}
+
+/**
+ * Resolves Sprockt's terminal CSS tokens via a hidden probe on `<body>`/`<html>` rather than
+ * inside the terminal host, because a hidden mobile pane (`display: none`) skips style
+ * recalculation in WebKit/Safari and would otherwise return stale `light-dark()` colors.
+ */
+export function readSprocktTerminalTheme(scheme: "light" | "dark"): TerminalThemeInput {
+  const probe = document.createElement("span");
+  probe.style.cssText =
+    "position:fixed;visibility:hidden;pointer-events:none;width:0;height:0;overflow:hidden;";
+  probe.style.colorScheme = scheme;
+  (document.body ?? document.documentElement).append(probe);
+  const style = getComputedStyle(probe);
+  const read = (token: string): RgbColor => {
+    probe.style.color = `var(${token})`;
+    return parseCssColor(style.color) ?? FALLBACK_BLACK;
+  };
+  const background = read("--term-bg");
+  const theme: TerminalThemeInput = {
+    colorScheme: scheme,
+    background,
+    foreground: read("--ansi-fg"),
+    cursor: read("--term-cursor"),
+    cursorAccent: background,
+    selectionBackground: read("--bg-selection"),
+    selectionForeground: read("--fg"),
+    ansi: ANSI_TOKENS.map(read),
+    backgroundOpacity: 1,
+    fontFamily: FONT_FAMILY,
+    lineHeight: 1.15,
+  };
+  probe.remove();
+  return theme;
+}
+
+export function createSprocktTerminalThemeSubscribable(
+  scheme: Accessor<"light" | "dark">,
+): Subscribable<TerminalThemeInput> {
+  let lastScheme = scheme();
+  let cached = readSprocktTerminalTheme(lastScheme);
+  const listeners = new Set<() => void>();
+  let stopEffect: (() => void) | undefined;
+
+  function refresh(): void {
+    const nextScheme = scheme();
+    if (nextScheme === lastScheme) return;
+    lastScheme = nextScheme;
+    cached = readSprocktTerminalTheme(nextScheme);
+    for (const listener of listeners) listener();
+  }
+
+  return {
+    getSnapshot() {
+      const currentScheme = scheme();
+      if (currentScheme !== lastScheme) {
+        lastScheme = currentScheme;
+        cached = readSprocktTerminalTheme(currentScheme);
+      }
+      return cached;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      if (!stopEffect) {
+        stopEffect = createRoot((dispose) => {
+          createEffect(() => {
+            scheme();
+            refresh();
+          });
+          return dispose;
+        });
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0 && stopEffect) {
+          stopEffect();
+          stopEffect = undefined;
+        }
+      };
+    },
+  };
+}
+
+interface AttachedSessionRecord {
+  readonly browserSession: BrowserSession;
+  readonly getToldSize: () => TerminalSize;
+}
+
+export interface WaffleTerminalBridge {
+  readonly adapter: TerminalAdapter;
+  bindTerminalHandle(sessionId: string, terminal: Terminal): void;
+  clearTerminal(terminal: Terminal, attachment: TerminalAttachment | null): void;
+}
+
+function clearTerminal(terminal: Terminal, attachment: TerminalAttachment | null): void {
+  terminal.clearSelection();
+  terminal.write("\x1b[3J\x1b[2J\x1b[H");
+  attachment?.write("\x0c");
+  terminal.focus();
+}
+
+export function createWaffleTerminalBridge(
+  workspace: WorkspaceSession,
+  onOpenFile?: (path: string, location?: { readonly line?: number; readonly column?: number }) => void,
+): WaffleTerminalBridge {
+  const { terminals } = workspace;
+  const attached = new Map<string, AttachedSessionRecord>();
+
+  const sessions = createReactiveSubscribable<readonly TerminalSessionInfo[]>(() => {
+    const { tabs } = terminals.tabs();
+    return tabs.map((tab) => ({
+      id: tab.id,
+      title: tab.title,
+      status: mapSessionStatus(terminals.stateOf(tab.id)),
+    }));
+  }, sameSessions);
+
+  const activeId = createReactiveSubscribable<string | undefined>(() => terminals.tabs().active);
+  const splitId = createReactiveSubscribable<string | undefined>(() => terminals.tabs().split);
+
+  function runStartupCommand(sessionId: string, browserSession: BrowserSession): void {
+    if (terminals.stateOf(sessionId) !== "ready") return;
+    const command = terminals.takeCommand(sessionId);
+    if (command) {
+      void browserSession.submit(command).catch(() => {});
+    }
+  }
+
+  const adapter: TerminalAdapter = {
+    sessions,
+    activeId,
+    splitId,
+    async createSession(options) {
+      return terminals.create(options?.title ? { title: options.title } : undefined);
+    },
+    async closeSession(id) {
+      terminals.close(id);
+    },
+    selectSession(id) {
+      terminals.select(id);
+    },
+    renameSession(id, title) {
+      terminals.rename(id, title);
+    },
+    toggleSplit() {
+      terminals.toggleSplit();
+    },
+    async resolveFileLink(rawPath) {
+      return (await workspace.files.size(rawPath)) !== undefined ? rawPath : null;
+    },
+    openFileLink(resolvedPath, location) {
+      onOpenFile?.(resolvedPath, location);
+    },
+    async attach(sessionId, { initialSize, signal, onEvent }) {
+      let told: TerminalSize = { columns: initialSize.cols, rows: initialSize.rows };
+      let liveSession: BrowserSession | undefined;
+
+      const browserSession = await BrowserSession.create({
+        runtime: workspace.runtime,
+        wasmUrl: workspace.shell.wasmUrl,
+        workerUrl: workspace.shell.workerUrl,
+        cwd: workspace.shell.cwd,
+        env: { ...workspace.shell.env },
+        cols: initialSize.cols,
+        rows: initialSize.rows,
+        signal,
+        onOutput: (bytes) => {
+          onEvent({ type: "output", data: bytes });
+        },
+        onState: (state, detail) => {
+          if (signal.aborted) return;
+          terminals.setState(sessionId, state);
+          if (state === "failed" && detail) {
+            onEvent({ type: "error", message: detail });
+          }
+          if (liveSession) runStartupCommand(sessionId, liveSession);
+        },
+      });
+      if (signal.aborted) {
+        void browserSession.dispose().catch(() => {});
+        return { write: () => {}, resize: () => {}, detach: () => {} };
+      }
+
+      liveSession = browserSession;
+      attached.set(sessionId, { browserSession, getToldSize: () => told });
+      runStartupCommand(sessionId, browserSession);
+
+      // bash-web has no historical replay stream; open ReplayGate immediately after creation.
+      onEvent({ type: "ready" });
+      onEvent({ type: "replay-complete" });
+
+      let disposed = false;
+      const disposeSession = (): void => {
+        if (disposed) return;
+        disposed = true;
+        attached.delete(sessionId);
+        terminals.attach(sessionId, undefined);
+        void browserSession.dispose().catch(() => {});
+      };
+
+      const attachment: TerminalAttachment = {
+        write(data) {
+          browserSession.input(data);
+        },
+        writeBytes(bytes) {
+          browserSession.input(bytes);
+        },
+        resize(cols, rows) {
+          if (cols === told.columns && rows === told.rows) return;
+          told = { columns: cols, rows };
+          browserSession.resize(cols, rows);
+        },
+        markRendered() {
+          browserSession.markRendered();
+        },
+        detach: disposeSession,
+      };
+      return attachment;
+    },
+  };
+
+  function bindTerminalHandle(sessionId: string, terminal: Terminal): void {
+    const record = attached.get(sessionId);
+    if (!record) return;
+    const { browserSession, getToldSize } = record;
+    let disposal: Promise<void> | undefined;
+    const handle: TerminalHandle = {
+      lines: () => terminal.visibleLines().map((line) => line.trimEnd()),
+      size: () => {
+        const { columns, rows } = terminal.geometry();
+        return { screen: { columns, rows }, shell: getToldSize() };
+      },
+      focus: () => terminal.focus(),
+      submit: (command) => browserSession.submit(command),
+      input: (data) => browserSession.input(data),
+      clear() {
+        terminal.clearSelection();
+        terminal.write("\x1b[3J\x1b[2J\x1b[H");
+        browserSession.input("\x0c");
+      },
+      getSelection: () => terminal.getSelection(),
+      paste: (text) => void terminal.paste(text),
+      dispose: () => (disposal ??= browserSession.dispose().catch(() => {})),
+    };
+    terminals.attach(sessionId, handle);
+  }
+
+  return { adapter, bindTerminalHandle, clearTerminal };
+}

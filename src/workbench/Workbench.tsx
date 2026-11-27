@@ -291,7 +291,8 @@ function createPanes(session: WorkspaceSession, frame: FrameState): PaneScope {
       !event.shiftKey &&
       (key === "b" || key === "j");
     const inTerminal =
-      event.target instanceof Element && event.target.closest(".term-view, [data-slot='terminal']") !== null;
+      event.target instanceof Element &&
+      event.target.closest(".wb-terminal-view, [data-slot='terminal']") !== null;
     if (isShellCtrlChord && inTerminal) return;
     handleWorkbenchKey(event);
   };

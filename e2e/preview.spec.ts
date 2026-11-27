@@ -61,8 +61,8 @@ Bun.serve({
 });
 `;
 
-const frame = (page: Page) => page.frameLocator("[data-testid=preview-frame]");
-const urlBar = (page: Page) => page.getByTestId("preview-url");
+const frame = (page: Page) => page.frameLocator("[data-testid=wb-preview-iframe]");
+const urlBar = (page: Page) => page.getByTestId("wb-preview-url-input");
 
 async function navigate(page: Page, path: string): Promise<void> {
   await urlBar(page).fill(path);
@@ -83,14 +83,14 @@ test.beforeEach(({ browserName }) => {
 test("a server started in the terminal shows in the preview, and the toolbar drives it", async ({ page }) => {
   await newWorkspace(page);
   await expect(page.getByTestId("preview-empty")).toBeVisible();
-  await expect(page.getByTestId("preview-port")).toHaveCount(0);
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveCount(0);
   await writeFile(page, "server.ts", SERVER);
   await runInTerminal(page, "bun server.ts");
 
-  await expect(page.getByTestId("preview-port")).toHaveValue("3000");
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("3000");
   // The port prints the same way in the picker and in the title bar's pill. A server started in
   // the terminal is stopped there, so the pill has no stop button for it.
-  await expect(page.getByTestId("preview-port").locator("option:checked")).toHaveText(":3000");
+  await expect(page.getByTestId("wb-preview-port-select").locator("option:checked")).toHaveText(":3000");
   await expect(page.getByTestId("dev-server")).toHaveText(":3000");
   await expect(page.getByTestId("dev-server").getByRole("button")).toHaveCount(1);
   await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
@@ -130,7 +130,7 @@ test("typed paths and the server's redirects stay on the server they belong to",
   // another port's mount, another workspace's, or the IDE.
   await navigate(page, "/../5174/about");
   await expect(urlBar(page)).toHaveValue("/5174/about");
-  await expect(page.getByTestId("preview-port")).toHaveValue("3000");
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("3000");
   expect(await framePath()).toBe(`${mount}/5174/about`);
   await navigate(page, "/%2e%2e/%2e%2e/%2e%2e/about");
   await expect(frame(page).getByRole("heading")).toHaveText("About page");
@@ -153,7 +153,7 @@ test("typed paths and the server's redirects stay on the server they belong to",
   // A redirect aimed at another port's mount ends on this server.
   await navigate(page, "/to-other-port");
   await expect(urlBar(page)).toHaveValue("/5174/about");
-  await expect(page.getByTestId("preview-port")).toHaveValue("3000");
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("3000");
   expect(await framePath()).toBe(`${mount}/5174/about`);
 
   // A redirect to the server's own loopback address, as a server builds it from the request it
@@ -265,11 +265,11 @@ test("reload, the error indicator and the viewport switch", async ({ page }) => 
   await runInTerminal(page, "bun server.ts");
   await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
 
-  await expect(page.getByTestId("preview-errors")).toBeHidden();
+  await expect(page.getByTestId("wb-preview-errors")).toBeHidden();
   await frame(page).getByRole("button", { name: "Boom" }).click();
-  await expect(page.getByTestId("preview-errors")).toHaveText("1");
-  await page.getByTestId("preview-errors").click();
-  await expect(page.getByTestId("preview-error-list")).toContainText("kaboom");
+  await expect(page.getByTestId("wb-preview-errors")).toHaveText("1");
+  await page.getByTestId("wb-preview-errors").click();
+  await expect(page.getByTestId("wb-preview-error-list")).toContainText("kaboom");
 
   // A reload loads the page again, and a fresh page has no errors yet.
   await frame(page)
@@ -277,17 +277,17 @@ test("reload, the error indicator and the viewport switch", async ({ page }) => 
     .evaluate((heading) => (heading.textContent = "changed in place"));
   await page.getByRole("button", { name: "Reload preview" }).click();
   await expect(frame(page).getByRole("heading")).toHaveText("Hello from Bun.serve");
-  await expect(page.getByTestId("preview-errors")).toBeHidden();
+  await expect(page.getByTestId("wb-preview-errors")).toBeHidden();
 
   const width = () =>
-    page.getByTestId("preview-frame").evaluate((element) => element.getBoundingClientRect().width);
+    page.getByTestId("wb-preview-iframe").evaluate((element) => element.getBoundingClientRect().width);
   await page.getByRole("button", { name: "Phone viewport" }).click();
   expect(await width()).toBe(390);
   await page.getByRole("button", { name: "Tablet viewport" }).click();
   expect(await width()).toBe(768);
   // The desktop size is the pane's own width, whatever the layout gives it; the other two are
   // fixed, and scroll inside a pane that is narrower.
-  const stage = () => page.locator(".preview-stage").evaluate((element) => element.clientWidth);
+  const stage = () => page.locator(".wb-preview-stage").evaluate((element) => element.clientWidth);
   await page.getByRole("button", { name: "Desktop viewport" }).click();
   expect(await width()).toBeCloseTo(await stage(), 0);
   expect(await width()).not.toBe(768);
@@ -327,7 +327,7 @@ test("the pane's button starts a server entry file, and the pill stops it", asyn
 
   await page.getByTestId("dev-server").getByRole("button", { name: "Stop dev server" }).click();
   await expect(task).toHaveAttribute("data-status", "stopped");
-  await expect(page.getByTestId("preview-port")).toHaveCount(0);
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveCount(0);
   await expect(page.getByTestId("dev-server")).toHaveCount(0);
 
   // It starts again, from the pane's button, and that button stops it too.
@@ -339,7 +339,7 @@ test("the pane's button starts a server entry file, and the pill stops it", asyn
   await writeFile(page, "server.ts", SERVER);
   await expect(page.getByTestId("save-state")).toHaveText("saved");
   await expect(task).toHaveAttribute("data-status", "stopped");
-  await expect(page.getByTestId("preview-port")).toHaveCount(0);
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveCount(0);
 });
 
 test("the Bun.serve + bun:sqlite starter starts from the pane's button and renders", async ({ page }) => {
@@ -355,7 +355,7 @@ test("the Bun.serve + bun:sqlite starter starts from the pane's button and rende
   await page.getByTestId("preview-task").click();
   const app = frame(page);
   await expect(app.getByRole("heading")).toHaveText("Bun.serve + bun:sqlite", patient);
-  await expect(page.getByTestId("preview-port")).toHaveValue("5173");
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("5173");
   // The page is rendered from rows the server put in its database.
   await expect(app.getByText("SQLite persists inside IndexedDB")).toBeVisible();
 
@@ -378,7 +378,7 @@ test("the Vite + React starter starts from the pane's button and renders", async
   await page.getByTestId("preview-task").click();
   const app = frame(page);
   await expect(app.getByRole("heading")).toHaveText("Hello from bun.wasm", patient);
-  await expect(page.getByTestId("preview-port")).toHaveValue("5173");
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("5173");
   await app.getByRole("button", { name: "count is 0" }).click();
   await expect(app.getByRole("button", { name: "count is 1" })).toBeVisible();
   await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "running");
@@ -405,7 +405,7 @@ test("a tab that takes the workspace over is not left following the old tab's de
   const task = second.getByTestId("preview-task");
   await expect(task).toHaveAttribute("data-status", "stopped");
   await expect(task).toBeEnabled();
-  await expect(second.getByTestId("preview-port")).toHaveCount(0);
+  await expect(second.getByTestId("wb-preview-port-select")).toHaveCount(0);
   await task.click();
   await expect(frame(second).getByRole("heading")).toHaveText("Hello from Bun.serve");
   await expect(task).toHaveAttribute("data-status", "running");
@@ -420,8 +420,8 @@ test("on a phone the toolbar keeps open in new tab, and fades only where it over
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByTestId("pane-switcher").getByRole("button", { name: "Preview" }).click();
-  const scroller = page.getByTestId("preview-bar-scroll");
-  await expect(page.getByTestId("preview-open")).toBeInViewport({ ratio: 1 });
+  const scroller = page.locator(".wb-preview-toolbar-scroll");
+  await expect(page.getByTestId("wb-preview-open-tab")).toBeInViewport({ ratio: 1 });
   // The toolbar fits, so neither edge fades.
   await expect(scroller).toHaveAttribute("data-fade", "");
 
@@ -429,7 +429,7 @@ test("on a phone the toolbar keeps open in new tab, and fades only where it over
   // the button is still there.
   await page.setViewportSize({ width: 280, height: 844 });
   await expect(scroller).toHaveAttribute("data-fade", "end");
-  await expect(page.getByTestId("preview-open")).toBeInViewport({ ratio: 1 });
+  await expect(page.getByTestId("wb-preview-open-tab")).toBeInViewport({ ratio: 1 });
   await scroller.evaluate((element) => element.scrollTo({ left: element.scrollWidth }));
   await expect(scroller).toHaveAttribute("data-fade", "start");
 });
@@ -482,7 +482,7 @@ test("the preview opens in its own tab", async ({ page, context }) => {
   await expect(urlBar(page)).toHaveValue("/about");
 
   const opened = context.waitForEvent("page");
-  await page.getByTestId("preview-open").click();
+  await page.getByTestId("wb-preview-open-tab").click();
   const tab = await opened;
   await expect(tab.getByRole("heading")).toHaveText("About page");
   expect(new URL(tab.url()).pathname).toMatch(/^\/__preview\/[a-z0-9]+\/3000\/about$/);
@@ -646,7 +646,7 @@ test("a previewed page is served by its own server only, whatever it asks for or
   // Playwright's Firefox loses track of a frame that lands on an empty answer.
   const shown = () =>
     page.evaluate(() => {
-      const element = document.querySelector<HTMLIFrameElement>("[data-testid=preview-frame]");
+      const element = document.querySelector<HTMLIFrameElement>("[data-testid=wb-preview-iframe]");
       // While a browser's own error page is in the frame it cannot be read at all.
       try {
         const text = element?.contentDocument?.body?.textContent ?? "";

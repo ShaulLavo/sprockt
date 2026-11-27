@@ -1,208 +1,55 @@
-/* Terminal panel: crisp rectangular multicolor tabs matching the editor's tab strip. Each
-   terminal carries its own role color (`--tab-accent`) from src/ui/tab-colors.ts. */
+/* Sprockt Sheet & Biro terminal chrome layered over @shaulavo/workbench-terminal. */
 
 .terminal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   background: var(--term-bg);
 }
 
-.term-bar {
-  display: flex;
-  flex: none;
-  align-items: stretch;
+.terminal-panel .wb-terminal-panel {
+  background: var(--term-bg);
+  color: var(--fg);
+}
+
+.terminal-panel .wb-terminal-header {
   height: var(--tab-h);
+  min-height: var(--tab-h);
+  padding-right: var(--space-1_5);
   background: var(--bg-tabstrip);
   border-bottom: 1px solid var(--line);
 }
 
-.terminal-panel.is-collapsed .term-bar {
+.terminal-panel.is-collapsed .wb-terminal-header {
   border-bottom: 0;
 }
 
-.term-tabs {
+.terminal-panel .wb-terminal-strip-wrap {
   display: flex;
-  flex: 0 1 auto;
-  align-items: stretch;
+  flex: 1 1 auto;
   min-width: 0;
-  padding-left: 0;
+  height: 100%;
   overflow-x: auto;
-  overscroll-behavior-x: contain;
   scrollbar-width: none;
 }
 
-.term-tabs::-webkit-scrollbar {
+.terminal-panel .wb-terminal-strip-wrap::-webkit-scrollbar {
   display: none;
 }
 
-.ttab {
-  position: relative;
-  z-index: 0;
-  display: flex;
-  flex: none;
-  align-items: center;
-  height: 100%;
-  border-right: 1px solid var(--line);
-  color: var(--fg-subtle);
-  font-size: var(--text-xs);
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.ttab::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: var(--tab-indicator);
-  background: var(--tab-accent, var(--accent));
-  opacity: 0.22;
-  transform: scaleX(0.45);
-  transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-base) var(--ease-out);
-}
-
-/* The other half of a split: on screen, but not taking input. */
-.ttab.is-shown {
-  background: color-mix(in oklab, var(--term-bg) 65%, var(--bg-tabstrip));
-  color: var(--fg-muted);
-}
-
-.ttab.is-active {
+.terminal-panel .wb-terminal-view {
   background: var(--term-bg);
-  color: var(--fg);
-  font-weight: var(--weight-medium);
 }
 
-.ttab.is-active::after {
-  opacity: 0.55;
-  transform: scaleX(1);
-}
-
-.terminal-panel:focus-within .ttab.is-active {
-  background: color-mix(in oklab, var(--tab-accent, var(--accent)) 6%, var(--term-bg));
-  color: var(--fg);
-  font-weight: var(--weight-semibold);
-}
-
-.terminal-panel:focus-within .ttab.is-active::after {
-  opacity: 1;
-  transform: scaleX(1);
-}
-
-.ttab-main {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1_5);
-  height: 100%;
-  padding: 0 var(--space-1) 0 var(--space-3);
-  border-radius: 0;
-}
-
-.ttab-main .ico {
-  width: 14px;
-  height: 14px;
-  color: var(--tab-accent, var(--fg-muted));
-}
-
-.ttab-main:focus-visible {
-  outline-offset: -3px;
-}
-
-.ttab-title {
-  max-width: 22ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ttab-dot {
-  width: 7px;
-  height: 7px;
-  margin: 0 var(--space-0_5);
-  border-radius: 50%;
-  background: var(--tab-accent, var(--ok));
-}
-
-.ttab-dot[data-state="failed"] {
-  background: var(--danger);
-}
-
-.ttab-dot[data-state="exited"] {
-  background: var(--fg-subtle);
-}
-
-.ttab-close {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  margin-right: var(--space-1_5);
-  border-radius: var(--radius-xs);
-  color: var(--fg-muted);
-  opacity: 0;
-  transition:
-    opacity var(--dur-fast) var(--ease-out),
-    background-color var(--dur-fast) var(--ease-out);
-}
-
-.ttab-close .ico {
-  width: 13px;
-  height: 13px;
-}
-
-.ttab.is-active .ttab-close,
-.ttab-close:focus-visible {
-  opacity: 1;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .ttab:hover {
-    color: var(--fg-muted);
-  }
-
-  .ttab.is-active:hover {
-    color: var(--fg);
-  }
-
-  .ttab:hover .ttab-close {
-    opacity: 1;
-  }
-
-  .ttab-close:hover {
-    background: var(--bg-hover);
-    color: var(--fg);
-  }
-}
-
-.ttab-rename {
-  width: 16ch;
-  height: 24px;
-  margin: 0 var(--space-1) 0 var(--space-2);
-  padding: 0 var(--space-1_5);
-  border: 1px solid var(--focus);
-  border-radius: var(--radius-xs);
-  outline: none;
-  background: var(--bg-input);
-  font-size: var(--text-xs);
-}
-
-.term-add {
-  align-self: center;
-  width: 26px;
-  height: 26px;
-  margin-left: var(--space-1);
-}
-
-.term-fill {
-  flex: 1;
-  min-width: var(--space-2);
+.terminal-panel .wb-terminal-canvas-host {
+  padding: 0;
 }
 
 .term-state {
   align-self: center;
-  margin-right: var(--space-1_5);
+  margin-right: var(--space-1);
   color: var(--fg-subtle);
   font: var(--text-2xs) / 1 var(--font-mono);
 }
@@ -222,60 +69,9 @@
   white-space: nowrap;
 }
 
-.term-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 1px;
-  padding: 0 var(--space-1_5) 0 var(--space-1);
-}
-
-.term-split[aria-pressed="true"] {
-  background: var(--bg-active);
-  color: var(--fg);
-}
-
-.terminal-host {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  background: var(--term-bg);
-}
-
-.terminal-host[data-split] {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
-.terminal-panel.is-collapsed .terminal-host,
-.terminal-panel.is-collapsed .term-keys {
-  display: none;
-}
-
-.term-view {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-}
-
-.term-view[data-position="hidden"] {
-  display: none;
-}
-
-.term-view[data-position="right"] {
-  border-left: 1px solid var(--line);
-}
-
-.term-canvas {
-  position: absolute;
-  inset: 0;
-}
-
-.term-failure {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  background: color-mix(in oklab, var(--danger) 10%, var(--term-bg));
+.term-close-active .ico {
+  width: 14px;
+  height: 14px;
 }
 
 .term-notice {
@@ -295,7 +91,7 @@
 
 .term-empty {
   display: grid;
-  grid-column: 1 / -1;
+  flex: 1;
   place-content: center;
   justify-items: center;
   gap: var(--space-3);
@@ -309,106 +105,16 @@
   margin: 0;
 }
 
-.term-keys {
-  display: none;
-}
-
-/* ───────────── Phone ───────────── */
 @media (max-width: 768px) {
-  .term-bar {
+  .terminal-panel .wb-terminal-header {
     height: 44px;
+    min-height: 44px;
   }
 
-  /* The one pane on screen is the one in use, so its open tab carries its full accent bar. */
-  .ttab.is-active {
-    color: var(--fg);
-    font-weight: var(--weight-semibold);
-  }
-
-  .ttab.is-active::after {
-    opacity: 1;
-  }
-
-  .ttab {
-    font-size: var(--text-sm);
-  }
-
-  .ttab-main {
-    padding-left: var(--space-3);
-  }
-
-  /* A phone shows one way to close a shell: the × on its tab. Split, collapse and the bar's
-     own close button are for the desktop frame. */
-  .term-actions {
+  .terminal-panel .wb-terminal-actions [data-testid="wb-term-split"],
+  .terminal-panel .wb-terminal-actions [data-testid="wb-term-collapse"],
+  .terminal-panel .wb-terminal-actions [data-testid="wb-term-rename"],
+  .terminal-panel .term-close-active {
     display: none;
-  }
-
-  .term-add {
-    width: 40px;
-    height: 40px;
-  }
-
-  .ttab-rename {
-    font-size: 16px;
-  }
-
-  /* The row shows whole keys only: eight across, and a swipe snaps to the rest. The gap equals
-     the side padding, so the ninth key starts exactly at the row's edge and none is ever cut. */
-  .term-keys {
-    --fade-size: 0px;
-    --key-gap: var(--space-2);
-    display: flex;
-    flex: none;
-    gap: var(--key-gap);
-    padding: var(--space-1_5) var(--key-gap);
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scroll-padding-inline: var(--key-gap);
-    scroll-snap-type: x mandatory;
-    border-top: 1px solid var(--line);
-    background: var(--bg-panel);
-    scrollbar-width: none;
-  }
-
-  .term-keys::-webkit-scrollbar {
-    display: none;
-  }
-
-  .term-key {
-    flex: 0 0 calc((100% - 7 * var(--key-gap)) / 8);
-    min-width: 0;
-    height: 38px;
-    padding: 0;
-    scroll-snap-align: start;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-sm);
-    background: var(--bg-input);
-    color: var(--fg);
-    font: var(--weight-medium) var(--text-sm) / 1 var(--font-mono);
-    transition:
-      transform var(--dur-fast) var(--ease-out),
-      background-color var(--dur-fast) var(--ease-out);
-  }
-
-  .term-key:active {
-    transform: scale(0.95);
-    background: var(--bg-active);
-  }
-
-  /* Ctrl looks like any other key until it is armed. */
-  .term-key.is-mod[aria-pressed="true"] {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--accent-fg);
-  }
-}
-
-/* Every close button is visible where there is no hover to reveal it. */
-@media (pointer: coarse) {
-  .ttab-close {
-    width: 32px;
-    height: 32px;
-    margin-right: var(--space-1);
-    opacity: 1;
   }
 }
