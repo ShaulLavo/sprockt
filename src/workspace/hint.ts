@@ -28,8 +28,6 @@ const [hintRevision, setHintRevision] = createSignal(0);
  */
 const fallbackHints = new Map<string, WorkspaceMeta>();
 const fallbackPendingNames = new Map<string, string>();
-/** Per-workspace in-process lock tail so concurrent callers serialize even without Web Locks. */
-const nameLockQueues = new Map<string, Promise<unknown>>();
 
 function bumpHints(): void {
   setHintRevision((value) => value + 1);
@@ -182,31 +180,35 @@ function waitUnlessAborted(promise: Promise<unknown>, signal: AbortSignal | unde
   });
 }
 
-/** Serializes metadata read-modify-write per workspace within this tab and across attached tabs. */
-export function withWorkspaceMetaLock<T>(
-  id: string,
-  task: () => Promise<T>,
-  signal?: AbortSignal,
-): Promise<T> {
-  if (signal?.aborted) return Promise.reject(abortError(signal));
-  const runInBrowserLock = (): Promise<T> => {
+function createWorkspaceLock(suffix: string) {
+  const queues = new Map<string, Promise<unknown>>();
+  return function withLock<T>(id: string, task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     if (signal?.aborted) return Promise.reject(abortError(signal));
-    if (typeof navigator === "undefined" || !navigator.locks) return task();
-    return signal
-      ? navigator.locks.request(`sprockt:${id}:meta-name`, { signal }, task)
-      : navigator.locks.request(`sprockt:${id}:meta-name`, task);
+    const runInBrowserLock = (): Promise<T> => {
+      if (signal?.aborted) return Promise.reject(abortError(signal));
+      if (typeof navigator === "undefined" || !navigator.locks) return task();
+      return signal
+        ? navigator.locks.request(`sprockt:${id}:${suffix}`, { signal }, task)
+        : navigator.locks.request(`sprockt:${id}:${suffix}`, task);
+    };
+    const previous = queues.get(id) ?? Promise.resolve();
+    const next = waitUnlessAborted(previous, signal).then(runInBrowserLock);
+    // Keep the queue tail chained to `previous` too so aborting a queued waiter never lets a
+    // later caller overlap with the still-active holder.
+    const tail = Promise.allSettled([previous, next]).then(() => undefined);
+    queues.set(id, tail);
+    void tail.finally(() => {
+      if (queues.get(id) === tail) queues.delete(id);
+    });
+    return next;
   };
-  const previous = nameLockQueues.get(id) ?? Promise.resolve();
-  const next = waitUnlessAborted(previous, signal).then(runInBrowserLock);
-  // Keep the queue tail chained to `previous` too so aborting a queued waiter never lets a
-  // later caller overlap with the still-active holder.
-  const tail = Promise.allSettled([previous, next]).then(() => undefined);
-  nameLockQueues.set(id, tail);
-  void tail.finally(() => {
-    if (nameLockQueues.get(id) === tail) nameLockQueues.delete(id);
-  });
-  return next;
 }
+
+/** Serializes metadata read-modify-write per workspace within this tab and across attached tabs. */
+export const withWorkspaceMetaLock = createWorkspaceLock("meta-name");
+
+/** Serializes fresh-import and Retry lifecycles per workspace before either opens storage. */
+export const withWorkspaceImportLock = createWorkspaceLock("import");
 
 /**
  * Merges disk metadata read on the landing page with an existing browser hint, preserving a

@@ -7,7 +7,7 @@
 // IncompleteImport.tsx). Sprockt never deletes a workspace on its own. The one exception is
 // a cancel or failure in the same page: then this call deletes the workspace it created itself,
 // one whose id it reserved and found empty. If that delete is busy or fails, the marker stays.
-import { withWorkspaceMetaLock } from "../workspace/hint";
+import { withWorkspaceImportLock, withWorkspaceMetaLock } from "../workspace/hint";
 import { newWorkspaceId, PROJECT_ROOT, storageName } from "../workspace/paths";
 import {
   INCOMPLETE,
@@ -101,18 +101,25 @@ export async function createWorkspaceWithFiles(
   options.signal?.throwIfAborted();
   if (options.into) return rewriteIncomplete(options.into, files, meta, deps, options.signal);
   const id = await unusedId(deps);
-  // A failed open owns nothing: whatever it left is not ours to delete. Do not abort `open`
-  // here, so a cancel after storage is created still reaches ownership verification and rollback.
-  const session = await deps.open(id);
-  // Ownership is proven by an empty project (raw listing, so node_modules and .git count) and
-  // no metadata yet. Checked even after a cancel, so a workspace someone else created is never
-  // deleted.
-  const owned = await isUntouched(session).catch(() => false);
-  if (!owned) {
-    await close(session);
-    throw new WorkspaceIdTakenError(`Workspace ${id} is already in use`);
-  }
-  return fill(id, session, files, meta, { deps, signal: options.signal, created: true });
+  return withWorkspaceImportLock(
+    id,
+    async () => {
+      options.signal?.throwIfAborted();
+      // A failed open owns nothing: whatever it left is not ours to delete. Do not abort `open`
+      // here, so a cancel after storage is created still reaches ownership verification and rollback.
+      const session = await deps.open(id);
+      // Ownership is proven by an empty project (raw listing, so node_modules and .git count) and
+      // no metadata yet. Checked even after a cancel, so a workspace someone else created is never
+      // deleted.
+      const owned = await isUntouched(session).catch(() => false);
+      if (!owned) {
+        await close(session);
+        throw new WorkspaceIdTakenError(`Workspace ${id} is already in use`);
+      }
+      return fill(id, session, files, meta, { deps, signal: options.signal, created: true });
+    },
+    options.signal,
+  );
 }
 
 async function rewriteIncomplete(
@@ -122,9 +129,9 @@ async function rewriteIncomplete(
   deps: NewWorkspaceDeps,
   signal: AbortSignal | undefined,
 ): Promise<string> {
-  // Serialize the entire retry under the workspace metadata lock so two concurrent retries can
-  // never both pass the INCOMPLETE check and interleave cleanup/writes.
-  return withWorkspaceMetaLock(
+  // Serialize fresh imports and retries on the outer import lock (before opening storage) so
+  // lock ordering is strictly `import -> storage -> meta-name` with no overlap or inversion.
+  return withWorkspaceImportLock(
     id,
     async () => {
       signal?.throwIfAborted();
@@ -142,7 +149,7 @@ async function rewriteIncomplete(
         await close(session);
         throw error;
       }
-      return fill(id, session, files, meta, { deps, signal, created: false, locked: true });
+      return fill(id, session, files, meta, { deps, signal, created: false });
     },
     signal,
   );
@@ -153,8 +160,6 @@ interface FillContext {
   readonly signal: AbortSignal | undefined;
   /** Whether this call created the workspace, and so may delete it after a failure. */
   readonly created: boolean;
-  /** Whether the caller already holds `withWorkspaceMetaLock(id)`. */
-  readonly locked?: boolean;
 }
 
 async function fill(
@@ -167,19 +172,19 @@ async function fill(
   const { state: _ignored, ...complete } = meta;
   try {
     // New workspaces always write the INCOMPLETE marker before checking cancellation so a busy
-    // rollback still exposes Retry/Delete. Retries already hold the lock and marker on disk.
+    // rollback still exposes Retry/Delete. Retries already have the marker on disk, so pass the
+    // signal to avoid leaving the runtime open if the metadata lock is held when cancelled.
     await writeMeta(
       id,
       session,
       { ...complete, state: INCOMPLETE },
       context.created ? undefined : context.signal,
-      context.locked === true,
     );
     context.signal?.throwIfAborted();
     await session.files.writeMany(files);
     await session.runtime.filesystem.flush();
     context.signal?.throwIfAborted();
-    await writeMeta(id, session, complete, context.signal, context.locked === true);
+    await writeMeta(id, session, complete, context.signal);
   } catch (error) {
     await close(session);
     // A busy or failed delete leaves the marker, and the landing page offers Retry and Delete.
@@ -204,13 +209,15 @@ function writeMeta(
   session: WorkspaceWriter,
   meta: WorkspaceMeta,
   signal?: AbortSignal,
-  alreadyLocked = false,
 ): Promise<void> {
-  const write = async () => {
-    signal?.throwIfAborted();
-    await writeMetaFile(session.runtime.filesystem, meta);
-  };
-  return alreadyLocked ? write() : withWorkspaceMetaLock(id, write, signal);
+  return withWorkspaceMetaLock(
+    id,
+    async () => {
+      signal?.throwIfAborted();
+      await writeMetaFile(session.runtime.filesystem, meta);
+    },
+    signal,
+  );
 }
 
 async function close(session: WorkspaceWriter): Promise<void> {
