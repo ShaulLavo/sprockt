@@ -101,8 +101,9 @@ export async function createWorkspaceWithFiles(
   options.signal?.throwIfAborted();
   if (options.into) return rewriteIncomplete(options.into, files, meta, deps, options.signal);
   const id = await unusedId(deps);
-  // A failed open owns nothing: whatever it left is not ours to delete.
-  const session = await deps.open(id, options.signal);
+  // A failed open owns nothing: whatever it left is not ours to delete. Do not abort `open`
+  // here, so a cancel after storage is created still reaches ownership verification and rollback.
+  const session = await deps.open(id);
   // Ownership is proven by an empty project (raw listing, so node_modules and .git count) and
   // no metadata yet. Checked even after a cancel, so a workspace someone else created is never
   // deleted.

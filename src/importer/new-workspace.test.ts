@@ -573,11 +573,13 @@ describe("bulk imports over 1,024 files", () => {
     const metered = meteredProjectFilesystem();
     const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
     const controller = new AbortController();
+    let seenSignal: AbortSignal | undefined;
     const deps: NewWorkspaceDeps = {
       newId: () => "busycncl",
       exists: async () => false,
       remove: async () => "busy",
-      open: async () => {
+      open: async (_id, signal) => {
+        seenSignal = signal;
         // User leaves while storage is opening.
         controller.abort(new Error("left during open"));
         return {
@@ -591,6 +593,7 @@ describe("bulk imports over 1,024 files", () => {
     const outcome = await createWorkspaceWithFiles({ "index.ts": "1" }, META, deps, {
       signal: controller.signal,
     }).catch((error: unknown) => error);
+    expect(seenSignal).toBeUndefined();
     expect(outcome).toBeInstanceOf(Error);
     const metaBytes = metered.files.get(WORKSPACE_META_PATH);
     expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
