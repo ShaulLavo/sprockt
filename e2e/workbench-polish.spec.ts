@@ -181,6 +181,36 @@ test("terminal supports 3-state visibility, paired split tabs, and intact workbe
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
   await expect(page.locator(".wb-terminal-stage")).toBeVisible();
 
+  // Round-trip drag from collapsed: drag up until body opens, then return to start -> stays collapsed.
+  await page.getByTestId("wb-term-collapse").click();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "collapsed");
+  const collapsedSplitter = await page.locator('[data-wb-splitter="terminal"]').boundingBox();
+  if (!collapsedSplitter) throw new Error("collapsed terminal splitter not found");
+  const cx = collapsedSplitter.x + collapsedSplitter.width / 2;
+  const cy = collapsedSplitter.y + collapsedSplitter.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx, cy - 160, { steps: 6 });
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
+  await page.mouse.move(cx, cy, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "collapsed");
+  await expect(page.locator(".wb-terminal-header")).toBeVisible();
+  await page.getByTestId("wb-term-collapse").click();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
+
+  // Repeated Home presses are idempotent (minimum open size, never toggling closed) on all 3 splitters.
+  async function assertHomeKeepsPaneOpen(splitterName: string, attr: string): Promise<void> {
+    await page.locator(`[data-wb-splitter="${splitterName}"]`).focus();
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Home");
+    await expect(page.getByTestId("workbench")).toHaveAttribute(attr, "open");
+  }
+  await assertHomeKeepsPaneOpen("explorer", "data-explorer");
+  await assertHomeKeepsPaneOpen("preview", "data-preview");
+  await assertHomeKeepsPaneOpen("terminal", "data-terminal");
+
   // State 1 -> 3: sidebar terminal button completely hides terminal, tab bar included (0px).
   await page.getByTestId("toggle-terminal").click();
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "hidden");
