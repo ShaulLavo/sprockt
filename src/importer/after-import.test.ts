@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { WorkspaceSession } from "../workspace/session";
 import { attachAfterImport, configureAfterImport, onAfterImport, type WithLock } from "./after-import";
 import {
+  INCOMPLETE,
   parseMeta,
   serializeMeta,
   WORKSPACE_META_PATH,
@@ -166,5 +167,26 @@ describe("after-import hook", () => {
     stops.push(attachAfterImport(fakeSession("ws6", metadata())));
     await settle();
     expect(seen).toEqual([]);
+  });
+
+  test("an unfinished import keeps its pending plan until the importing marker clears", async () => {
+    configureAfterImport({ withLock: noLock });
+    const seen: string[] = [];
+    stops.push(onAfterImport(() => void seen.push("ran")));
+    const files = new Map([
+      [
+        WORKSPACE_META_PATH,
+        JSON.stringify({
+          state: INCOMPLETE,
+          created: "2026-04-01T00:00:00.000Z",
+          source: { kind: "github", owner: "acme", repo: "demo", ref: "main", subdir: "" },
+          pendingImport: PLAN,
+        }),
+      ],
+    ]);
+    stops.push(attachAfterImport(fakeSession("ws7", files)));
+    await settle();
+    expect(seen).toEqual([]);
+    expect(pendingIn(files)).toEqual(PLAN);
   });
 });

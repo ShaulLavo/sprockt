@@ -10,7 +10,7 @@
 // rather than skip it, so a tab whose claim gave up is followed by one that can take over.
 import { withWorkspaceMetaLock } from "../workspace/hint";
 import type { WorkspaceSession } from "../workspace/session";
-import { readMetaFile, writeMetaFile, type ImportPlan } from "./metadata";
+import { INCOMPLETE, readMetaFile, writeMetaFile, type ImportPlan } from "./metadata";
 
 export type AfterImportHandler = (session: WorkspaceSession, plan: ImportPlan) => void | Promise<void>;
 
@@ -47,8 +47,10 @@ async function handOver(session: AttachedSession): Promise<Promise<void>[]> {
   return withWorkspaceMetaLock(session.id, async () => {
     const meta = await readMetaFile(session.runtime.filesystem);
     const plan = meta?.pendingImport;
-    // Detached, or no handler yet: the plan stays where it is.
-    if (!meta || !plan || !sessions.has(session) || handlers.size === 0) return [];
+    // Detached, unfinished import, or no handler yet: the plan stays where it is.
+    if (!meta || meta.state === INCOMPLETE || !plan || !sessions.has(session) || handlers.size === 0) {
+      return [];
+    }
     // Every handler is called before the removal starts.
     const runs = Array.from(handlers, (handler) => invoke(handler, session as WorkspaceSession, plan));
     const { pendingImport: _taken, ...rest } = meta;

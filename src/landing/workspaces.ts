@@ -95,9 +95,11 @@ export function listStoredWorkspaces(): Promise<StoredWorkspaceSummary[]> {
     const { inspectIdleWorkspaceMeta } = await import("./storage-discovery");
     const results = await Promise.all(
       ids.map(async (id): Promise<StoredWorkspaceSummary | undefined> => {
-        const hint = readWorkspaceHint(id);
         try {
           const outcome = await inspectIdleWorkspaceMeta(storageName(id), WORKSPACE_META_PATH);
+          // Re-read the hint after async disk inspection so a name adopted in another tab during
+          // the probe is never overwritten by a stale pre-probe snapshot.
+          const hint = readWorkspaceHint(id);
           if (outcome.status === "missing") return undefined;
           if (outcome.status === "busy") return summaryFromMeta(id, hint, true);
           const meta = outcome.rawMeta ? parseWorkspaceMeta(outcome.rawMeta) : undefined;
@@ -108,7 +110,7 @@ export function listStoredWorkspaces(): Promise<StoredWorkspaceSummary[]> {
           }
           return summaryFromMeta(id, hint, false);
         } catch {
-          return summaryFromMeta(id, hint, false);
+          return summaryFromMeta(id, readWorkspaceHint(id), false);
         }
       }),
     );
