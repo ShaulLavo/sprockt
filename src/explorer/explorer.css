@@ -126,45 +126,6 @@
   min-height: 0;
 }
 
-.explorer-tree-host .wb-stroke-icon {
-  color: var(--ft-folder, var(--e-muted));
-}
-
-.explorer-tree-host [data-wb-stroke-icon="typescript"],
-.explorer-tree-host [data-wb-stroke-icon="react"] {
-  color: var(--ft-ts);
-}
-
-.explorer-tree-host [data-wb-stroke-icon="hash"] {
-  color: var(--ft-css);
-}
-
-.explorer-tree-host [data-wb-stroke-icon="javascript"],
-.explorer-tree-host [data-wb-stroke-icon="braces"],
-.explorer-tree-host [data-wb-stroke-icon="settings"],
-.explorer-tree-host [data-wb-stroke-icon="lock"] {
-  color: var(--ft-json);
-}
-
-.explorer-tree-host [data-wb-stroke-icon="markup"] {
-  color: var(--ft-html);
-}
-
-.explorer-tree-host [data-wb-stroke-icon="markdown"] {
-  color: var(--tab-md);
-}
-
-.explorer-tree-host [data-wb-stroke-icon="shell"],
-.explorer-tree-host [data-wb-stroke-icon="terminal"] {
-  color: var(--tab-shell);
-}
-
-.explorer-tree-host [data-wb-stroke-icon="image"],
-.explorer-tree-host [data-wb-stroke-icon="test"],
-.explorer-tree-host [data-wb-stroke-icon="claude"] {
-  color: var(--tab-aux);
-}
-
 .explorer-pane .dirty {
   display: inline-block;
   width: 6px;

@@ -41,25 +41,6 @@
   stroke-linejoin: round;
 }
 
-.ico.ft {
-  color: var(--ft-folder, var(--ed-subtle));
-}
-.ico.ft-ts {
-  color: var(--ft-ts, light-dark(#1f63c6, #7fb6ff));
-}
-.ico.ft-js {
-  color: var(--ft-json, light-dark(#946200, #f0bd4f));
-}
-.ico.ft-css {
-  color: var(--ft-css, light-dark(#b81d4e, #ff8fb0));
-}
-.ico.ft-json {
-  color: var(--ft-json, light-dark(#946200, #f0bd4f));
-}
-.ico.ft-html {
-  color: var(--ft-html, light-dark(#b4541a, #ffb27a));
-}
-
 /* ── Frame ── */
 .editor-pane > .editor-shell {
   grid-row: 1 / -1;

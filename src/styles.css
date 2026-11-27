@@ -68,14 +68,6 @@
   --git-untracked: light-dark(#15803d, #4ade80);
   --git-added: light-dark(#15803d, #4ade80);
 
-  /* ── File types ── */
-  --ft-folder: light-dark(#646973, #8490a3);
-  --ft-tsx: light-dark(#1a4be0, #6cc2ff);
-  --ft-ts: light-dark(#1a4be0, #6cc2ff);
-  --ft-css: light-dark(#c42856, #f472b6);
-  --ft-json: light-dark(#b45309, #f2c779);
-  --ft-html: light-dark(#c2410c, #ff9f7a);
-
   /* ── Multicolor tabs (Precision Sheet life, harmonized with biro blue & dark cornflower) ── */
   --tab-ts: light-dark(#1a4be0, #5ab9fc);
   --tab-css: light-dark(#c42856, #f472b6);
