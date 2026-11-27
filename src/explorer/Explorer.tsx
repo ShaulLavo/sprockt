@@ -245,7 +245,7 @@ export function Explorer(props: { readonly store: EditorStore }) {
           void adoptUploadedWorkspaceName(
             workspace.id,
             acceptedItems,
-            workspaceNameDeps(workspace.runtime, files),
+            workspaceNameDeps(workspace.runtime, files, workspace.signal),
           ).catch(() => undefined);
         }
         if (result.skipped > 0) {
@@ -261,7 +261,7 @@ export function Explorer(props: { readonly store: EditorStore }) {
         setBusy(undefined);
       }
     },
-    [files, model, persistExpanded, say, stopAutoOpen, workspace.id, workspace.runtime],
+    [files, model, persistExpanded, say, stopAutoOpen, workspace.id, workspace.runtime, workspace.signal],
   );
 
   const pickUpload = useCallback((directory: string, folder: boolean) => {

@@ -145,10 +145,9 @@ function withWorkspaceNameLock<T>(
   };
   const previous = nameLockQueues.get(id) ?? Promise.resolve();
   const next = waitUnlessAborted(previous, signal).then(runInBrowserLock);
-  const tail = next.then(
-    () => undefined,
-    () => undefined,
-  );
+  // Keep the queue tail chained to `previous` too so aborting a queued waiter never lets a
+  // later caller overlap with the still-active holder.
+  const tail = Promise.allSettled([previous, next]).then(() => undefined);
   nameLockQueues.set(id, tail);
   void tail.finally(() => {
     if (nameLockQueues.get(id) === tail) nameLockQueues.delete(id);
@@ -254,8 +253,8 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
       if (deps.signal?.aborted) return readWorkspaceHint(id)?.name ?? id;
       const now = deps.now ? deps.now() : new Date();
       const nowIso = now.toISOString();
-      const hint = readWorkspaceHint(id);
       const metaRead = await readMetaStrict(deps);
+      const hint = readWorkspaceHint(id);
       if (!metaRead.ok || deps.signal?.aborted) return hint?.name ?? id;
 
       const rawMeta = metaRead.raw;
@@ -287,7 +286,11 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
       }
 
       const derived = await deriveNameFromWorkspace(partial, deps);
-      if (deps.signal?.aborted) return hint?.name ?? id;
+      const latestHint = readWorkspaceHint(id);
+      if (deps.signal?.aborted) return latestHint?.name ?? id;
+      if (latestHint && !isPlaceholderWorkspaceName(latestHint) && latestHint.name !== id) {
+        return latestHint.name;
+      }
       if (derived) {
         const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
         saveWorkspaceHint(id, meta);
@@ -297,12 +300,12 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
 
       if (fileMeta) {
         const lastOpened =
-          newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
+          newerTimestamp(newerTimestamp(fileMeta.lastOpened, latestHint?.lastOpened), nowIso) ?? nowIso;
         saveWorkspaceHint(id, { ...fileMeta, lastOpened });
         return fileMeta.name;
       }
 
-      return hint?.name ?? id;
+      return latestHint?.name ?? id;
     },
     deps.signal,
   );
@@ -354,6 +357,10 @@ export function adoptUploadedWorkspaceName(
         (await uploadedPackageJsonName(items)) ??
         packageJsonName(await deps.readPackageJson().catch(() => undefined));
       if (!derived || deps.signal?.aborted) return undefined;
+      const latestHint = readWorkspaceHint(id);
+      if (latestHint && !isPlaceholderWorkspaceName(latestHint) && latestHint.name !== id) {
+        return undefined;
+      }
 
       const now = deps.now ? deps.now() : new Date();
       const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);

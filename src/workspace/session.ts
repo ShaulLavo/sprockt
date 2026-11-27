@@ -18,6 +18,7 @@ const metaDecoder = new TextDecoder();
 export function workspaceNameDeps(
   runtime: WorkspaceRuntime["runtime"],
   files: Pick<FileService, "read" | "writable">,
+  signal?: AbortSignal,
 ): HydrateWorkspaceNameDeps {
   return {
     async readMeta() {
@@ -25,12 +26,13 @@ export function workspaceNameDeps(
       return bytes ? metaDecoder.decode(bytes) : undefined;
     },
     async writeMeta(json) {
-      if (!files.writable()) return;
+      if (signal?.aborted || !files.writable()) return;
       await runtime.filesystem.mkdirp(WORKSPACE_META_DIR);
       await runtime.filesystem.writeFile(WORKSPACE_META_PATH, json);
       await runtime.filesystem.flush();
     },
     readPackageJson: () => files.read("package.json"),
+    signal,
   };
 }
 
@@ -43,6 +45,8 @@ export interface WorkspaceSession extends WorkspaceRuntime {
   readonly status: StatusItems;
   /** Commands the title bar offers a button for, once registered (`COMMAND`). */
   readonly commands: Commands;
+  /** Aborted when this session is revoked or disposed, cancelling background workspace tasks. */
+  readonly signal: AbortSignal;
 }
 
 const movedError = () => new Error("This workspace is open in another tab, so this tab can no longer save.");
@@ -83,12 +87,12 @@ export async function openWorkspace(
   opened.resolve();
   const files = createFileService(booted.runtime, booted.id);
   const terminals = createTerminalStore();
-  const hydration = new AbortController();
+  const lifecycle = new AbortController();
   // Revoking saves first leaves the editor's unsaved text for the new owner; then this tab's
   // shells stop and its runtime goes, so nothing here keeps running against storage it lost.
   // The previews go with them: the preview identity is for a tab that holds the storage.
   revoke = () => {
-    hydration.abort();
+    lifecycle.abort();
     files.revoke(movedError());
     void terminals
       .shutdown()
@@ -100,10 +104,9 @@ export async function openWorkspace(
   } else {
     // Hydrate reactively outside the boot turnstile so a stalled lock in another tab never
     // blocks opening or switching workspaces; disposal aborts any pending lock wait.
-    void hydrateWorkspaceName(id, {
-      ...workspaceNameDeps(booted.runtime, files),
-      signal: hydration.signal,
-    }).catch(() => undefined);
+    void hydrateWorkspaceName(id, workspaceNameDeps(booted.runtime, files, lifecycle.signal)).catch(
+      () => undefined,
+    );
   }
   terminals.create();
   return {
@@ -114,9 +117,10 @@ export async function openWorkspace(
     terminals,
     status: createStatusItems(),
     commands: createCommands(),
+    signal: lifecycle.signal,
     // Every step runs even if an earlier one fails: the runtime must not outlive its session.
     dispose: () => {
-      hydration.abort();
+      lifecycle.abort();
       return tearDownAll([() => files.dispose(), () => preview.dispose(), () => booted.dispose()]);
     },
   };

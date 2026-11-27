@@ -456,4 +456,83 @@ describe("workspace name hydration and reactivity", () => {
     gate.resolve();
     await holder;
   });
+
+  test("cancelling a queued waiter preserves serialization between the active holder and later callers", async () => {
+    const id = "queueordr1";
+    const order: string[] = [];
+    const firstGate = Promise.withResolvers<void>();
+
+    const first = hydrateWorkspaceName(id, {
+      readMeta: async () => {
+        order.push("first-start");
+        await firstGate.promise;
+        order.push("first-end");
+        return undefined;
+      },
+      readPackageJson: async () => undefined,
+    });
+
+    const cancelSecond = new AbortController();
+    const second = hydrateWorkspaceName(id, {
+      readMeta: async () => {
+        order.push("second");
+        return undefined;
+      },
+      readPackageJson: async () => undefined,
+      signal: cancelSecond.signal,
+    });
+
+    const third = hydrateWorkspaceName(id, {
+      readMeta: async () => {
+        order.push("third-start");
+        return undefined;
+      },
+      readPackageJson: async () => undefined,
+    });
+
+    cancelSecond.abort();
+    await expect(second).rejects.toThrow();
+    await Promise.resolve();
+    expect(order).toEqual(["first-start"]);
+
+    firstGate.resolve();
+    await Promise.all([first, third]);
+    expect(order).toEqual(["first-start", "first-end", "third-start"]);
+  });
+
+  test("aborted upload adoption never overwrites an explicit rename in the browser hint", async () => {
+    const id = "abortupld1";
+    const blankMeta = serializeWorkspaceMeta(
+      createWorkspaceMeta({ name: "workspace", template: "blank", defaultName: true }),
+    );
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const sessionController = new AbortController();
+    let writes = 0;
+
+    const slowPkg = {
+      text: async () => {
+        started.resolve();
+        await gate.promise;
+        return JSON.stringify({ name: "uploaded-name" });
+      },
+    } as Blob;
+
+    const pendingUpload = adoptUploadedWorkspaceName(id, [{ path: "package.json", data: slowPkg }], {
+      readMeta: async () => blankMeta,
+      writeMeta: async () => void (writes += 1),
+      readPackageJson: async () => undefined,
+      signal: sessionController.signal,
+    });
+
+    await started.promise;
+    // User leaves the workspace (aborting session) and renames it on the landing page.
+    sessionController.abort();
+    saveWorkspaceHint(id, updateWorkspaceMetaName(blankMeta, "explicit-name").meta);
+    gate.resolve();
+
+    expect(await pendingUpload).toBeUndefined();
+    expect(writes).toBe(0);
+    expect(workspaceName(id)).toBe("explicit-name");
+  });
 });
