@@ -46,21 +46,26 @@ function writeChunk(response: ServerResponse, chunk: Uint8Array): Promise<void> 
   return waitForDrain(response);
 }
 
+async function pumpStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  response: ServerResponse,
+): Promise<boolean> {
+  while (!response.destroyed) {
+    // oxlint-disable-next-line no-await-in-loop
+    const { done, value } = await reader.read();
+    if (done) return true;
+    if (response.destroyed) return false;
+    // oxlint-disable-next-line no-await-in-loop
+    await writeChunk(response, value);
+  }
+  return false;
+}
+
 async function pipeBody(body: ReadableStream<Uint8Array>, response: ServerResponse): Promise<void> {
   const reader = body.getReader();
   let completed = false;
   try {
-    while (!response.destroyed) {
-      // oxlint-disable-next-line no-await-in-loop
-      const { done, value } = await reader.read();
-      if (done) {
-        completed = true;
-        break;
-      }
-      if (response.destroyed) break;
-      // oxlint-disable-next-line no-await-in-loop
-      await writeChunk(response, value);
-    }
+    completed = await pumpStream(reader, response);
   } catch (error: unknown) {
     // Destroy the response on mid-stream failure so clients never treat a truncated body as 200 OK.
     if (!response.destroyed) {
