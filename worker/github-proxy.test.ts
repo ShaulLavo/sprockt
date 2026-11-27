@@ -391,9 +391,20 @@ describe("GitHub proxy: archives", () => {
   });
 });
 
+const RELEASE_ASSET_URL =
+  "https://release-assets.githubusercontent.com/github-production-release-asset/12345/abc-def?sp=r&sig=xyz&jwt=token";
+
+function renamedReleaseResponse(url: string): Response {
+  if (url.includes("/old/")) {
+    return redirect("https://github.com/acme/new/releases/download/v1.0.0/demo-1.0.0.tgz");
+  }
+  return url.startsWith("https://github.com/")
+    ? redirect(RELEASE_ASSET_URL)
+    : new Response(new Uint8Array([4, 5]));
+}
+
 describe("GitHub proxy: release tarballs", () => {
-  const ASSET_URL =
-    "https://release-assets.githubusercontent.com/github-production-release-asset/12345/abc-def?sp=r&sig=xyz&jwt=token";
+  const ASSET_URL = RELEASE_ASSET_URL;
 
   test("follows GitHub's release-assets redirect, sets COEP headers, and strips credentials", async () => {
     const body = new Uint8Array([0x1f, 0x8b, 9, 8, 7]);
@@ -441,13 +452,7 @@ describe("GitHub proxy: release tarballs", () => {
   });
 
   test("follows a renamed-repository redirect on github.com before the CDN hop", async () => {
-    const { calls, fetch } = upstream((url) => {
-      if (url.includes("/old/")) {
-        return redirect("https://github.com/acme/new/releases/download/v1.0.0/demo-1.0.0.tgz");
-      }
-      if (url.startsWith("https://github.com/")) return redirect(ASSET_URL);
-      return new Response(new Uint8Array([4, 5]));
-    });
+    const { calls, fetch } = upstream(renamedReleaseResponse);
     const response = await createGitHubProxy({ fetch })(
       get("/api/github/release/acme/old/v1.0.0/demo-1.0.0.tgz"),
     );

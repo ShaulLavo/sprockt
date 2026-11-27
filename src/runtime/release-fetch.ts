@@ -1,10 +1,12 @@
 // Routes `bun install` downloads of public tagged GitHub Release `.tgz` tarballs through
 // Sprockt's same-origin Worker proxy (`/api/github/release/<owner>/<repo>/<tag>/<asset>.tgz`),
 // because GitHub's release-asset CDN redirect lacks CORS/CORP headers under COEP (`require-corp`).
-// Only tagged release URLs are proxied: mutable `/releases/latest/download/` URLs are intentionally
-// excluded because `bun-wasm`'s guest tarball cache keys by URL without expiration. Tagged release
-// fetches use `packageFetch` directly so browser HTTP caching honors the Worker's `Cache-Control`
-// TTL; all other requests pass through `bun-wasm`'s `installFetch` unchanged.
+// Only tagged release URLs are proxied: mutable `/releases/latest/download/` URLs are excluded
+// because `bun-wasm`'s per-workspace guest tarball cache (`~/.bun/install/cache/bun-wasm`) keys
+// tarballs by URL until `bun install --no-cache` (matching desktop Bun). Tagged release fetches
+// use `packageFetch` directly (instead of `installFetch`'s indefinite Cache Storage) so the
+// shared browser HTTP cache honors the Worker's 5-minute TTL for fresh workspaces and bypasses
+// HTTP cache with `cache: "reload"` on `--no-cache`; all other requests pass through `installFetch`.
 import type { NetFetch } from "waffle/browser/net/helper";
 import { installFetch } from "../../node_modules/bun-wasm/web/src/net/install-cache.ts";
 import { packageFetch } from "../../node_modules/bun-wasm/web/src/net/package-fetch.ts";
@@ -109,6 +111,15 @@ export interface RuntimeFetchOptions {
   readonly releaseFetch?: NetFetch;
 }
 
+function wantsFreshTarball(init: RequestInit): boolean {
+  const headers = new Headers(init.headers);
+  const accept = (headers.get("accept") ?? "").toLowerCase();
+  if (accept.includes("; no-cache")) return true;
+  const cacheControl = headers.get("cache-control");
+  if (!cacheControl) return false;
+  return cacheControl.split(",").some((directive) => directive.trim().toLowerCase() === "no-cache");
+}
+
 /** Network fetch policy for `installBunAdapters`, proxying public tagged GitHub Release `.tgz` tarballs. */
 export function createRuntimeFetch(options: RuntimeFetchOptions = {}): NetFetch {
   const prefix = options.prefix ?? DEFAULT_GITHUB_PROXY_PREFIX;
@@ -117,6 +128,8 @@ export function createRuntimeFetch(options: RuntimeFetchOptions = {}): NetFetch 
   return (url: string, init: RequestInit): Promise<Response> => {
     const origin = options.origin ?? location.origin;
     const proxied = rewriteGitHubReleaseTarballUrl(url, init, { origin, prefix });
-    return proxied ? releaseFetch(proxied, init) : baseFetch(url, init);
+    if (!proxied) return baseFetch(url, init);
+    const releaseInit = wantsFreshTarball(init) ? { ...init, cache: "reload" as const } : init;
+    return releaseFetch(proxied, releaseInit);
   };
 }

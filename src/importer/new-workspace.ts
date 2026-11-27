@@ -121,21 +121,30 @@ async function rewriteIncomplete(
   deps: NewWorkspaceDeps,
   signal: AbortSignal | undefined,
 ): Promise<string> {
-  const session = await deps.open(id);
-  const current = await readMetaFile(session.runtime.filesystem).catch(() => undefined);
-  if (current?.state !== INCOMPLETE) {
-    await close(session);
-    throw new NotIncompleteError(`Workspace ${id} is not an unfinished import`);
-  }
-  // Clear what the cut-off attempt wrote; the marker lives outside the project and stays.
-  try {
-    const stale = await session.runtime.filesystem.listFiles(PROJECT_ROOT);
-    await removeInBatches(session.runtime.filesystem, stale, signal);
-  } catch (error) {
-    await close(session);
-    throw error;
-  }
-  return fill(id, session, files, meta, { deps, signal, created: false });
+  // Serialize the entire retry under the workspace metadata lock so two concurrent retries can
+  // never both pass the INCOMPLETE check and interleave cleanup/writes.
+  return withWorkspaceMetaLock(
+    id,
+    async () => {
+      signal?.throwIfAborted();
+      const session = await deps.open(id);
+      const current = await readMetaFile(session.runtime.filesystem).catch(() => undefined);
+      if (current?.state !== INCOMPLETE) {
+        await close(session);
+        throw new NotIncompleteError(`Workspace ${id} is not an unfinished import`);
+      }
+      // Clear what the cut-off attempt wrote; the marker lives outside the project and stays.
+      try {
+        const stale = await session.runtime.filesystem.listFiles(PROJECT_ROOT);
+        await removeInBatches(session.runtime.filesystem, stale, signal);
+      } catch (error) {
+        await close(session);
+        throw error;
+      }
+      return fill(id, session, files, meta, { deps, signal, created: false, locked: true });
+    },
+    signal,
+  );
 }
 
 interface FillContext {
@@ -143,6 +152,8 @@ interface FillContext {
   readonly signal: AbortSignal | undefined;
   /** Whether this call created the workspace, and so may delete it after a failure. */
   readonly created: boolean;
+  /** Whether the caller already holds `withWorkspaceMetaLock(id)`. */
+  readonly locked?: boolean;
 }
 
 async function fill(
@@ -155,19 +166,19 @@ async function fill(
   const { state: _ignored, ...complete } = meta;
   try {
     // New workspaces always write the INCOMPLETE marker before checking cancellation so a busy
-    // rollback still exposes Retry/Delete. Retries already have the marker on disk, so pass the
-    // signal to avoid leaving the runtime open if the metadata lock is held when cancelled.
+    // rollback still exposes Retry/Delete. Retries already hold the lock and marker on disk.
     await writeMeta(
       id,
       session,
       { ...complete, state: INCOMPLETE },
       context.created ? undefined : context.signal,
+      context.locked === true,
     );
     context.signal?.throwIfAborted();
     await session.files.writeMany(files);
     await session.runtime.filesystem.flush();
     context.signal?.throwIfAborted();
-    await writeMeta(id, session, complete, context.signal);
+    await writeMeta(id, session, complete, context.signal, context.locked === true);
   } catch (error) {
     await close(session);
     // A busy or failed delete leaves the marker, and the landing page offers Retry and Delete.
@@ -192,15 +203,13 @@ function writeMeta(
   session: WorkspaceWriter,
   meta: WorkspaceMeta,
   signal?: AbortSignal,
+  alreadyLocked = false,
 ): Promise<void> {
-  return withWorkspaceMetaLock(
-    id,
-    async () => {
-      signal?.throwIfAborted();
-      await writeMetaFile(session.runtime.filesystem, meta);
-    },
-    signal,
-  );
+  const write = async () => {
+    signal?.throwIfAborted();
+    await writeMetaFile(session.runtime.filesystem, meta);
+  };
+  return alreadyLocked ? write() : withWorkspaceMetaLock(id, write, signal);
 }
 
 async function close(session: WorkspaceWriter): Promise<void> {

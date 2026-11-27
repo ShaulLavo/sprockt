@@ -229,6 +229,20 @@ export function Explorer(props: { readonly store: EditorStore }) {
     return kind ? targetDirectory(target, kind) : "";
   }, [model]);
 
+  const adoptRootUploadName = useCallback(
+    (items: readonly UploadItem[], written: readonly string[]) => {
+      if (written.length === 0) return;
+      const accepted = new Set(written);
+      const acceptedItems = items.filter((item) => accepted.has(item.path));
+      void adoptUploadedWorkspaceName(
+        workspace.id,
+        acceptedItems,
+        workspaceNameDeps(workspace.runtime, files, workspace.signal),
+      ).catch(() => undefined);
+    },
+    [files, workspace.id, workspace.runtime, workspace.signal],
+  );
+
   const upload = useCallback(
     async (items: readonly UploadItem[], directory: string) => {
       if (items.length === 0 || !files.writable()) return;
@@ -239,14 +253,8 @@ export function Explorer(props: { readonly store: EditorStore }) {
         if (directory) {
           model.setExpanded(directory, true);
           persistExpanded();
-        } else if (result.written.length > 0) {
-          const accepted = new Set(result.written);
-          const acceptedItems = items.filter((item) => accepted.has(item.path));
-          void adoptUploadedWorkspaceName(
-            workspace.id,
-            acceptedItems,
-            workspaceNameDeps(workspace.runtime, files, workspace.signal),
-          ).catch(() => undefined);
+        } else {
+          adoptRootUploadName(items, result.written);
         }
         if (result.skipped > 0) {
           say(
@@ -261,7 +269,7 @@ export function Explorer(props: { readonly store: EditorStore }) {
         setBusy(undefined);
       }
     },
-    [files, model, persistExpanded, say, stopAutoOpen, workspace.id, workspace.runtime, workspace.signal],
+    [adoptRootUploadName, files, model, persistExpanded, say, stopAutoOpen],
   );
 
   const pickUpload = useCallback((directory: string, folder: boolean) => {

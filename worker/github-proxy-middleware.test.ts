@@ -58,6 +58,20 @@ function mockRequest(method: string, url: string): IncomingMessage {
   return { method, url, headers: {} } as unknown as IncomingMessage;
 }
 
+async function invokeMiddleware(
+  middleware: ReturnType<typeof createGitHubProxyMiddleware>,
+  method: string,
+  url: string,
+): Promise<{ readonly response: MockServerResponse; readonly nextError: unknown }> {
+  const response = new MockServerResponse();
+  let nextError: unknown;
+  middleware(mockRequest(method, url), response as unknown as ServerResponse, (error) => {
+    nextError = error;
+  });
+  await response.settled();
+  return { response, nextError };
+}
+
 describe("GitHub proxy Connect middleware", () => {
   test("passes non-proxy paths through to next()", () => {
     const middleware = createGitHubProxyMiddleware();
@@ -79,17 +93,12 @@ describe("GitHub proxy Connect middleware", () => {
     const middleware = createGitHubProxyMiddleware(handler);
 
     for (const method of ["TRACE", "POST", "DELETE"]) {
-      const response = new MockServerResponse();
-      let nextError: unknown;
-      middleware(
-        mockRequest(method, "/api/github/release/acme/demo/v1/pkg.tgz"),
-        response as unknown as ServerResponse,
-        (error) => {
-          nextError = error;
-        },
-      );
       // oxlint-disable-next-line no-await-in-loop
-      await response.settled();
+      const { response, nextError } = await invokeMiddleware(
+        middleware,
+        method,
+        "/api/github/release/acme/demo/v1/pkg.tgz",
+      );
       expect(nextError).toBeUndefined();
       expect(response.statusCode).toBe(405);
       expect(response.headers.get("allow")).toBe("GET, HEAD");

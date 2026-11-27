@@ -529,28 +529,25 @@ describe("bulk imports over 1,024 files", () => {
 
   test("cancellation while waiting for the final metadata lock leaves the incomplete marker intact", async () => {
     const id = "cancelmeta";
-    const metered = meteredProjectFilesystem({
-      [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
-    });
+    const metered = meteredProjectFilesystem();
     const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
     const lockGate = Promise.withResolvers<void>();
     const lockStarted = Promise.withResolvers<void>();
     let holder: Promise<void> | undefined;
+    const writeAndHold = async (entries: Readonly<Record<string, string | Uint8Array>>) => {
+      await projectFiles.writeMany(entries);
+      holder = withWorkspaceMetaLock(id, async () => {
+        lockStarted.resolve();
+        await lockGate.promise;
+      });
+      await lockStarted.promise;
+    };
     const deps: NewWorkspaceDeps = {
-      exists: async () => true,
-      remove: async () => "deleted",
+      newId: () => id,
+      exists: async () => false,
+      remove: async () => "busy",
       open: async () => ({
-        files: {
-          writeMany: async (entries) => {
-            await projectFiles.writeMany(entries);
-            // Hold the metadata lock right before fill() clears the INCOMPLETE marker.
-            holder = withWorkspaceMetaLock(id, async () => {
-              lockStarted.resolve();
-              await lockGate.promise;
-            });
-            await lockStarted.promise;
-          },
-        },
+        files: { writeMany: writeAndHold },
         runtime: { filesystem: metered.filesystem },
         dispose: async () => projectFiles.dispose(),
       }),
@@ -558,7 +555,6 @@ describe("bulk imports over 1,024 files", () => {
 
     const controller = new AbortController();
     const attempt = createWorkspaceWithFiles({ "index.ts": "export const ok = 1;\n" }, META, deps, {
-      into: id,
       signal: controller.signal,
     }).catch((error: unknown) => error);
 
@@ -600,7 +596,7 @@ describe("bulk imports over 1,024 files", () => {
     expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
   });
 
-  test("cancelling Retry while the metadata lock is held closes the runtime immediately", async () => {
+  test("cancelling Retry while the metadata lock is held aborts immediately without leaving a runtime open", async () => {
     const id = "retrycncl";
     const metered = meteredProjectFilesystem({
       [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
@@ -614,18 +610,18 @@ describe("bulk imports over 1,024 files", () => {
     });
     await lockStarted.promise;
 
-    let disposed = false;
+    let openCount = 0;
     const deps: NewWorkspaceDeps = {
       exists: async () => true,
       remove: async () => "deleted",
-      open: async () => ({
-        files: projectFiles,
-        runtime: { filesystem: metered.filesystem },
-        dispose: async () => {
-          disposed = true;
-          projectFiles.dispose();
-        },
-      }),
+      open: async () => {
+        openCount += 1;
+        return {
+          files: projectFiles,
+          runtime: { filesystem: metered.filesystem },
+          dispose: async () => projectFiles.dispose(),
+        };
+      },
     };
 
     const controller = new AbortController();
@@ -635,16 +631,65 @@ describe("bulk imports over 1,024 files", () => {
     }).catch((error: unknown) => error);
 
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(disposed).toBe(false);
+    expect(openCount).toBe(0);
 
     controller.abort(new Error("retry cancelled"));
     const outcome = await attempt;
     expect(outcome).toBeInstanceOf(Error);
-    expect(disposed).toBe(true);
+    expect(openCount).toBe(0);
 
     lockGate.resolve();
     await holder;
     const metaBytes = metered.files.get(WORKSPACE_META_PATH);
     expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
+  });
+
+  test("concurrent retries serialize under the metadata lock so only the first succeeds and files never mix", async () => {
+    const id = "concretry";
+    const metered = meteredProjectFilesystem({
+      [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
+      [`${PROJECT_ROOT}/stale.txt`]: "old",
+    });
+    const writeGate = Promise.withResolvers<void>();
+    const firstWriting = Promise.withResolvers<void>();
+    const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
+    let opens = 0;
+    const writeWithGate = async (
+      attemptNumber: number,
+      entries: Readonly<Record<string, string | Uint8Array>>,
+    ) => {
+      if (attemptNumber === 1) {
+        firstWriting.resolve();
+        await writeGate.promise;
+      }
+      await projectFiles.writeMany(entries);
+    };
+    const deps: NewWorkspaceDeps = {
+      exists: async () => true,
+      remove: async () => "deleted",
+      open: async () => {
+        opens += 1;
+        const attemptNumber = opens;
+        return {
+          files: { writeMany: (entries) => writeWithGate(attemptNumber, entries) },
+          runtime: { filesystem: metered.filesystem },
+          dispose: async () => undefined,
+        };
+      },
+    };
+
+    const first = createWorkspaceWithFiles({ "first.ts": "1\n" }, META, deps, { into: id });
+    await firstWriting.promise;
+    const second = createWorkspaceWithFiles({ "second.ts": "2\n" }, META, deps, { into: id }).catch(
+      (error: unknown) => error,
+    );
+
+    writeGate.resolve();
+    expect(await first).toBe(id);
+    expect(await second).toBeInstanceOf(NotIncompleteError);
+    expect(metered.files.has(`${PROJECT_ROOT}/first.ts`)).toBe(true);
+    expect(metered.files.has(`${PROJECT_ROOT}/second.ts`)).toBe(false);
+    expect(metered.files.has(`${PROJECT_ROOT}/stale.txt`)).toBe(false);
+    projectFiles.dispose();
   });
 });

@@ -131,5 +131,12 @@ describe("rewriteGitHubReleaseTarballUrl and createRuntimeFetch", () => {
     ]);
     expect(releaseSeen[0]?.init).toBe(TARBALL_INIT);
     expect(baseSeen[0]?.init).toBe(TARBALL_INIT);
+
+    // `bun install --no-cache` passes `; no-cache` on Accept: bypass the browser HTTP cache too.
+    await runtimeFetch(
+      "https://github.com/ShaulLavo/waffle/releases/download/programs-v0.0.23/waffle-base-0.0.23.tgz",
+      { method: "GET", headers: [["accept", "application/vnd.bun.install-tarball; no-cache"]] },
+    );
+    expect(releaseSeen[1]?.init.cache).toBe("reload");
   });
 });

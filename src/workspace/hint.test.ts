@@ -51,16 +51,19 @@ afterEach(() => {
   });
 });
 
+function observeWorkspaceName(id: string): { readonly values: string[]; readonly dispose: () => void } {
+  const values: string[] = [];
+  const dispose = createRoot((stop) => {
+    createEffect(() => void values.push(workspaceName(id)));
+    return stop;
+  });
+  return { values, dispose };
+}
+
 describe("workspace name hydration and reactivity", () => {
   test("hydrates an existing workspace from workspace.json and notifies reactive readers", async () => {
     const id = "yml15hftfs";
-    const observed: string[] = [];
-    const dispose = createRoot((stop) => {
-      createEffect(() => {
-        observed.push(workspaceName(id));
-      });
-      return stop;
-    });
+    const { values: observed, dispose } = observeWorkspaceName(id);
     expect(observed).toEqual([id]);
 
     const name = await hydrateWorkspaceName(id, {
