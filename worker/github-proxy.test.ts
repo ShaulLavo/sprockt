@@ -554,6 +554,26 @@ describe("GitHub proxy: release tarballs", () => {
     await expect(cutOff.arrayBuffer()).rejects.toThrow("larger than 6 bytes");
   });
 
+  test("maps upstream transport failures to structured 502 while preserving client cancellation", async () => {
+    const failed = await createGitHubProxy({
+      fetch: () => Promise.reject(new Error("ECONNRESET")),
+    })(get("/api/github/release/acme/demo/v1/pkg.tgz"));
+    expect(failed.status).toBe(502);
+    expect(failed.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    expect(await failed.json()).toMatchObject({ error: "upstream" });
+
+    const controller = new AbortController();
+    controller.abort(new Error("client disconnected"));
+    await expect(
+      createGitHubProxy({
+        fetch: async (_url, init) => {
+          init?.signal?.throwIfAborted();
+          return new Response("unreachable");
+        },
+      })(get("/api/github/release/acme/demo/v1/pkg.tgz", { signal: controller.signal })),
+    ).rejects.toThrow("client disconnected");
+  });
+
   test("maps 404 and 429 cleanly and bypasses the GitHub API quota limiter", async () => {
     const missing = upstream(() => new Response("", { status: 404 }));
     const notFound = await createGitHubProxy({ fetch: missing.fetch })(

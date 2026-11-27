@@ -329,7 +329,7 @@ async function commitDerivedHydration(
     saveWorkspaceHint(id, hintFromPartial(freshPartial, freshPartial.name, latestHint, nowIso));
     return freshPartial.name;
   }
-  const { json, meta } = mergeDerivedWorkspaceName(freshRaw, derived, now);
+  const { json, meta } = mergeDerivedWorkspaceName(freshRaw, derived, now, latestHint);
   saveWorkspaceHint(id, meta);
   if (canMergeMetaRaw(freshRaw)) await persistDerivedMeta(id, deps, freshPartial?.state, json);
   return derived;
@@ -375,9 +375,9 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
       // If an earlier adoption/rename saved a real hint while disk still holds a placeholder or
       // nothing, retry persisting it to disk so clearing browser storage never loses the name.
       if (hint && !isPlaceholderWorkspaceName(hint) && hint.name !== id) {
-        const { json, meta } = mergeDerivedWorkspaceName(rawMeta, hint.name, now);
         const lastOpened = newerTimestamp(hint.lastOpened, nowIso) ?? nowIso;
-        saveWorkspaceHint(id, { ...meta, lastOpened });
+        const { json, meta } = mergeDerivedWorkspaceName(rawMeta, hint.name, new Date(lastOpened), hint);
+        saveWorkspaceHint(id, meta);
         if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(id, deps, partial?.state, json);
         return hint.name;
       }
@@ -486,7 +486,7 @@ export function adoptUploadedWorkspaceName(
       }
 
       const now = deps.now ? deps.now() : new Date();
-      const { json, meta } = mergeDerivedWorkspaceName(freshRaw, derived, now);
+      const { json, meta } = mergeDerivedWorkspaceName(freshRaw, derived, now, latestHint);
       saveWorkspaceHint(id, meta);
       if (canMergeMetaRaw(freshRaw)) await persistDerivedMeta(id, deps, freshPartial?.state, json);
       return derived;

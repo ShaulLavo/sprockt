@@ -197,12 +197,14 @@ function mergeMetaJson(raw: string | undefined, meta: WorkspaceMeta): string {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
       const merged: Record<string, unknown> = {
-        ...(parsed as Record<string, unknown>),
+        ...record,
         name: meta.name,
         template: meta.template,
         created: meta.created,
         lastOpened: meta.lastOpened,
+        ...(meta.source && !readWorkspaceSource(record) ? { source: meta.source } : {}),
       };
       delete merged.defaultName;
       return `${JSON.stringify(merged, null, 2)}\n`;
@@ -218,15 +220,19 @@ function buildRecoveredMeta(
   name: string,
   timestamp: string,
   preserveLastOpened: boolean,
+  fallbackHint?: WorkspaceMeta,
 ): WorkspaceMeta {
   const partial = parsePartialWorkspaceMeta(raw);
+  const source = partial?.source ?? fallbackHint?.source;
   return {
     name,
-    template: partial?.template ?? "blank",
-    created: partial?.created ?? timestamp,
-    lastOpened: preserveLastOpened ? (partial?.lastOpened ?? timestamp) : timestamp,
+    template: partial?.template ?? fallbackHint?.template ?? "blank",
+    created: partial?.created ?? fallbackHint?.created ?? timestamp,
+    lastOpened: preserveLastOpened
+      ? (partial?.lastOpened ?? fallbackHint?.lastOpened ?? timestamp)
+      : timestamp,
     ...(partial?.state ? { state: partial.state } : {}),
-    ...(partial?.source ? { source: partial.source } : {}),
+    ...(source ? { source } : {}),
   };
 }
 
@@ -245,17 +251,18 @@ export function updateWorkspaceMetaName(
   return { json, meta: parseWorkspaceMeta(json) ?? fallback };
 }
 
-/** Updates an auto-derived workspace name while preserving valid fields and clearing any placeholder flag. */
+/** Updates an auto-derived workspace name while preserving valid disk fields and falling back to known hint fields. */
 export function mergeDerivedWorkspaceName(
   raw: string | undefined,
   derivedName: string,
   now = new Date(),
+  fallbackHint?: WorkspaceMeta,
 ): {
   readonly json: string;
   readonly meta: WorkspaceMeta;
 } {
   const timestamp = now.toISOString();
-  const fallback = buildRecoveredMeta(raw, derivedName, timestamp, false);
+  const fallback = buildRecoveredMeta(raw, derivedName, timestamp, false, fallbackHint);
   const json = mergeMetaJson(raw, fallback);
   return { json, meta: parseWorkspaceMeta(json) ?? fallback };
 }

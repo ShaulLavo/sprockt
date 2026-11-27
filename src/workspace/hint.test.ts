@@ -738,4 +738,34 @@ describe("workspace name hydration and reactivity", () => {
     expect(workspaceName(id)).toBe("demo-repo");
     expect(JSON.parse(storedMeta)).toEqual(importedMeta);
   });
+
+  test("preserves known hint details (template, created, source) when recovering missing workspace.json", async () => {
+    const id = "recovgh01";
+    const ghHint = {
+      name: "demo-repo",
+      template: "github",
+      created: "2026-01-15T12:00:00.000Z",
+      lastOpened: "2026-01-16T12:00:00.000Z",
+      source: { kind: "github" as const, owner: "acme", repo: "demo-repo", ref: "main", subdir: "" },
+    };
+    saveWorkspaceHint(id, ghHint);
+
+    let persisted: string | undefined;
+    const hydrated = await hydrateWorkspaceName(id, {
+      readMeta: async () => undefined,
+      writeMeta: async (json: string) => void (persisted = json),
+      readPackageJson: async () => undefined,
+      now: () => new Date("2026-04-01T00:00:00.000Z"),
+    });
+
+    expect(hydrated).toBe("demo-repo");
+    expect(readWorkspaceHint(id)).toEqual({
+      ...ghHint,
+      lastOpened: "2026-04-01T00:00:00.000Z",
+    });
+    expect(JSON.parse(persisted!)).toEqual({
+      ...ghHint,
+      lastOpened: "2026-04-01T00:00:00.000Z",
+    });
+  });
 });

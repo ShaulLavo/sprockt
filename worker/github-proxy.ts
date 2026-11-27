@@ -333,8 +333,14 @@ async function releaseAsset(
     return errorResponse(400, "invalid-source", `"${asset}" is not a valid .tgz release asset.`);
   }
   const url = `${GITHUB_ORIGIN}/${owner}/${repo}/releases/download/${encodeRefPath(tag)}/${encodeURIComponent(asset)}`;
-  const response = await fetchReleaseUpstream(context, url);
   const name = `${owner}/${repo}`;
+  let response: Response | undefined;
+  try {
+    response = await fetchReleaseUpstream(context, url);
+  } catch (error: unknown) {
+    if (context.signal.aborted) throw error;
+    return errorResponse(502, "upstream", `Could not reach GitHub for ${name}.`);
+  }
   if (!response) return errorResponse(502, "upstream", "GitHub redirected somewhere unexpected.");
   if (response.status === 404) {
     return errorResponse(
