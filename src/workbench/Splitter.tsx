@@ -86,8 +86,8 @@ export function Splitter(props: SplitterProps) {
         store.show(fromGeometry(next, store.layout(), splitter, meta, dragStartTerminalStateRef.current))
       }
       onCommitGeometry={(next, meta) => {
-        const dragStartState = dragStartTerminalStateRef.current;
-        dragStartTerminalStateRef.current = undefined;
+        const dragStartState = meta.source === "drag" ? dragStartTerminalStateRef.current : undefined;
+        if (meta.source === "drag") dragStartTerminalStateRef.current = undefined;
         store.set(fromGeometry(next, store.layout(), splitter, meta, dragStartState));
       }}
       onDraggingChange={(dragging) => {

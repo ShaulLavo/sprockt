@@ -215,6 +215,9 @@ test("terminal supports 3-state visibility, paired split tabs, and intact workbe
   );
   await expect(termSplitter).toHaveAttribute("data-dragging", "true");
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
+  // Even a keyboard commit mid-drag must not discard the starting collapsed state before release.
+  await termSplitter.focus();
+  await page.keyboard.press("Home");
   await page.mouse.move(cx, cy, { steps: 6 });
   await page.mouse.up();
   await expect(termSplitter).not.toHaveAttribute("data-dragging", "true");
