@@ -4,6 +4,7 @@
  */
 const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 const REPO = /^[A-Za-z0-9._-]{1,100}$/;
+const RELEASE_ASSET = /^[A-Za-z0-9_][A-Za-z0-9._+-]{0,250}\.tgz$/;
 /** Characters `git check-ref-format` forbids anywhere: controls, space, DEL and `~^:?*[\`. */
 // Matching control characters is the point of this pattern.
 // oxlint-disable-next-line no-control-regex
@@ -16,6 +17,11 @@ export function isOwnerName(name: string): boolean {
 
 export function isRepoName(name: string): boolean {
   return REPO.test(name) && name !== "." && name !== ".." && !name.endsWith(".git");
+}
+
+/** Strict allowlist for public GitHub release `.tgz` tarball filenames (single path segment). */
+export function isReleaseAssetName(name: string): boolean {
+  return RELEASE_ASSET.test(name) && !name.includes("..");
 }
 
 /**

@@ -42,6 +42,7 @@ export const SELECTORS = {
   },
   explorer: {
     tree: '[data-testid="file-tree"]',
+    workspaceName: '[data-testid="explorer-workspace-name"]',
     row: "[data-wb-tree-row]",
     newFile: '[data-testid="new-file"]',
     newFolder: '[data-testid="new-folder"]',

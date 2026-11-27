@@ -3,7 +3,7 @@ import type { Page, Route } from "@playwright/test";
 import { buildTar, paxBody, type TarFixtureEntry } from "../src/importer/github/tar-writer.ts";
 import { encodeShareFragment } from "../src/share/share.ts";
 import { createGitHubProxy } from "../worker/github-proxy.ts";
-import { expect, test } from "./helpers";
+import { expect, runInTerminal, terminalText, test } from "./helpers";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 
@@ -80,6 +80,8 @@ test("imports a repository into a new workspace and opens it", async ({ page }) 
   });
   await page.goto("/github/acme/demo");
   await expectWorkspace(page);
+  await expect(page.getByTestId("workspace-name")).toHaveText("demo");
+  await expect(page.getByTestId("explorer-workspace-name")).toHaveText("demo");
   const tree = page.getByTestId("file-tree");
   await expect(tree).toContainText("package.json");
   await expect(tree).toContainText("src");
@@ -103,11 +105,13 @@ test("imports only the subfolder of a branch whose name has a slash", async ({ p
   });
   await page.goto("/github/acme/demo/tree/feature/x/apps/web");
   await expectWorkspace(page);
+  await expect(page.getByTestId("workspace-name")).toHaveText("web");
+  await expect(page.getByTestId("explorer-workspace-name")).toHaveText("web");
   const tree = page.getByTestId("file-tree");
   await expect(tree).toContainText("index.html");
   await expect(tree).not.toContainText("package.json");
   expect(await workspaceMeta(page)).toMatchObject({
-    name: "demo/apps/web",
+    name: "web",
     source: { ref: "feature/x", subdir: "apps/web" },
   });
 });
@@ -183,11 +187,16 @@ test("a share link opens the workspace's files in a new workspace", async ({ pag
   await second.goto(link);
   const opened = await expectWorkspace(second);
   expect(opened).not.toBe(first);
+  await expect(second.getByTestId("workspace-name")).toHaveText("demo");
+  await expect(second.getByTestId("explorer-workspace-name")).toHaveText("demo");
   await expect(second.getByTestId("file-tree")).toContainText("package.json");
   expect(await second.evaluate(() => globalThis.sprockt?.workspace?.files.read("notes/shared.txt"))).toBe(
     "from the first tab\n",
   );
-  expect(await workspaceMeta(second)).toMatchObject({ source: { kind: "share", template: "blank" } });
+  expect(await workspaceMeta(second)).toMatchObject({
+    name: "demo",
+    source: { kind: "share", template: "blank" },
+  });
 });
 
 test("a damaged share link says so", async ({ page }) => {
@@ -370,5 +379,121 @@ test("imports a small real public repository through the proxy code", async ({ p
   test.skip(trouble.length > 0, `GitHub did not serve the import: ${trouble.join(", ")}`);
   await expectWorkspace(page);
   await expect(page.getByTestId("file-tree")).toContainText("README");
-  expect(await workspaceMeta(page)).toMatchObject({ source: { owner: "octocat", repo: "Hello-World" } });
+  await expect(page.getByTestId("workspace-name")).toHaveText("Hello-World");
+  await expect(page.getByTestId("explorer-workspace-name")).toHaveText("Hello-World");
+  expect(await workspaceMeta(page)).toMatchObject({
+    name: "Hello-World",
+    source: { owner: "octocat", repo: "Hello-World" },
+  });
+});
+
+test("hydrates project names for existing workspaces without localStorage hints", async ({ page }) => {
+  await mockGitHub(page, {
+    "/repo/acme/demo": repoInfo(),
+    "/archive/acme/demo/main": { body: archive(DEMO) },
+  });
+  await page.goto("/github/acme/demo");
+  const id = await expectWorkspace(page);
+  await expect(page.getByTestId("workspace-name")).toHaveText("demo");
+
+  // Simulate an existing workspace whose browser has no localStorage hint at all.
+  await page.evaluate(() => localStorage.clear());
+  await page.goto(`/w/${id}`);
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+  await expect(page.getByTestId("workspace-name")).toHaveText("demo");
+  await expect(page.getByTestId("explorer-workspace-name")).toHaveText("demo");
+
+  // An existing workspace with no workspace.json hydrates from its root package.json.
+  await page.goto("/w/legacyproj");
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+  await page.evaluate(async () => {
+    const workspace = globalThis.sprockt?.workspace;
+    await workspace?.files.write("package.json", JSON.stringify({ name: "hydrated-pkg" }));
+    await workspace?.runtime.filesystem.flush();
+    localStorage.clear();
+  });
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+  await page.reload();
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+  await expect(page.getByTestId("workspace-name")).toHaveText("hydrated-pkg");
+  await expect(page.getByTestId("explorer-workspace-name")).toHaveText("hydrated-pkg");
+});
+
+/** A valid npm `.tgz` tarball (`package/...`), as published on GitHub Releases. */
+function npmTarball(files: Readonly<Record<string, string>>): Buffer {
+  const entries: TarFixtureEntry[] = Object.entries(files).map(([path, text]) => ({
+    path: `package/${path}`,
+    bytes: text,
+  }));
+  return gzipSync(buildTar(entries));
+}
+
+test("bun install fetches public GitHub Release .tgz dependencies through the same-origin proxy", async ({
+  page,
+}) => {
+  const releaseTarball = npmTarball({
+    "package.json": JSON.stringify({ name: "release-demo", version: "1.0.0", main: "index.js" }),
+    "index.js": 'module.exports = { greeting: "hello-from-release-tgz" };\n',
+  });
+  const releaseUrl = "https://github.com/acme/release-demo/releases/download/v1.0.0/release-demo-1.0.0.tgz";
+  const cdnUrl =
+    "https://release-assets.githubusercontent.com/github-production-release-asset/42/asset-id?sp=r&sig=ok";
+
+  const proxyUpstreamCalls: string[] = [];
+  const proxy = createGitHubProxy({
+    fetch: async (url) => {
+      proxyUpstreamCalls.push(url);
+      if (url === releaseUrl) {
+        return new Response(null, { status: 302, headers: { location: cdnUrl } });
+      }
+      if (url === cdnUrl) {
+        return new Response(new Uint8Array(releaseTarball), {
+          status: 200,
+          headers: {
+            "content-type": "application/octet-stream",
+            "content-length": String(releaseTarball.byteLength),
+          },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  const proxiedPaths: string[] = [];
+  const directGitHubRequests: string[] = [];
+  await page.route("https://github.com/**", (route) => {
+    directGitHubRequests.push(route.request().url());
+    return route.abort();
+  });
+  await page.route("https://release-assets.githubusercontent.com/**", (route) => {
+    directGitHubRequests.push(route.request().url());
+    return route.abort();
+  });
+  await page.route("**/api/github/**", async (route) => {
+    const reqUrl = route.request().url();
+    proxiedPaths.push(new URL(reqUrl).pathname);
+    const response = await proxy(new Request(reqUrl, { method: route.request().method() }));
+    await route.fulfill({
+      status: response.status,
+      headers: Object.fromEntries(response.headers),
+      body: Buffer.from(await response.arrayBuffer()),
+    });
+  });
+
+  await page.goto("/w/reltgztest");
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+  await page.evaluate(async (depUrl) => {
+    await globalThis.sprockt?.workspace?.files.write(
+      "package.json",
+      JSON.stringify({ name: "rel-consumer", dependencies: { "release-demo": depUrl } }, null, 2),
+    );
+    await globalThis.sprockt?.workspace?.runtime.filesystem.flush();
+  }, releaseUrl);
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+
+  await runInTerminal(page, `bun install && bun -e 'console.log(require("release-demo").greeting)'`);
+  await expect.poll(() => terminalText(page)).toContain("hello-from-release-tgz");
+  expect(directGitHubRequests).toEqual([]);
+  expect(proxiedPaths).toContain("/api/github/release/acme/release-demo/v1.0.0/release-demo-1.0.0.tgz");
+  expect(proxyUpstreamCalls).toEqual([releaseUrl, cdnUrl]);
 });

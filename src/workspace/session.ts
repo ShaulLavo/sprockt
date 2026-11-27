@@ -2,13 +2,37 @@
 // what they need from here through WorkspaceContext; they never reach into each other.
 import { createContext, useContext } from "react";
 import { createFileService, type FileService } from "../files/service";
+import { WORKSPACE_META_DIR, WORKSPACE_META_PATH } from "../importer/metadata";
 import { createPreviewTransport } from "../preview";
 import type { PreviewTransport } from "../preview/transport";
 import { bootWorkspace, type BootOptions, type BootStage, type WorkspaceRuntime } from "../runtime/boot";
 import { createTerminalStore, type TerminalStore } from "../terminal/store";
 import { createCommands, createStatusItems, type Commands, type StatusItems } from "../workbench/slots";
+import { hydrateWorkspaceName, type HydrateWorkspaceNameDeps } from "./hint";
 import { tearDownAll } from "./lifecycle";
 import { withServerEnv } from "./shell-env";
+
+const metaDecoder = new TextDecoder();
+
+/** Connects workspace name hydration/adoption to a live session's root metadata and `package.json`. */
+export function workspaceNameDeps(
+  runtime: WorkspaceRuntime["runtime"],
+  files: Pick<FileService, "read" | "writable">,
+): HydrateWorkspaceNameDeps {
+  return {
+    async readMeta() {
+      const bytes = await runtime.filesystem.readFile(WORKSPACE_META_PATH);
+      return bytes ? metaDecoder.decode(bytes) : undefined;
+    },
+    async writeMeta(json) {
+      if (!files.writable()) return;
+      await runtime.filesystem.mkdirp(WORKSPACE_META_DIR);
+      await runtime.filesystem.writeFile(WORKSPACE_META_PATH, json);
+      await runtime.filesystem.flush();
+    },
+    readPackageJson: () => files.read("package.json"),
+  };
+}
 
 export interface WorkspaceSession extends WorkspaceRuntime {
   readonly files: FileService;
@@ -70,6 +94,7 @@ export async function openWorkspace(
       .catch((error: unknown) => console.error("Releasing a workspace taken by another tab failed", error));
   };
   if (moved) revoke();
+  else await hydrateWorkspaceName(id, workspaceNameDeps(booted.runtime, files)).catch(() => undefined);
   terminals.create();
   return {
     ...booted,

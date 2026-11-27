@@ -13,8 +13,9 @@ import type { EditorStore } from "../editor/store";
 import { DestinationExistsError, FolderGoneError } from "../files/errors";
 import type { UploadItem } from "../files/service";
 import { useValue } from "../lib/react";
-import { workspaceName } from "../workspace/hint";
-import { useWorkspace } from "../workspace/session";
+import { zipFilename } from "../templates/workspace-meta";
+import { adoptUploadedWorkspaceName, workspaceName } from "../workspace/hint";
+import { useWorkspace, workspaceNameDeps } from "../workspace/session";
 import { createAutoOpener } from "./auto-open";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -202,6 +203,7 @@ export function Explorer(props: { readonly store: EditorStore }) {
 
   const activePath = useValue(store.active);
   const writable = useValue(files.writable);
+  const projectName = useValue(() => workspaceName(workspace.id));
   const dirtyPaths = useValue(() => {
     const dirty = new Set<string>();
     const dirtyDirs = new Set<string>();
@@ -237,6 +239,12 @@ export function Explorer(props: { readonly store: EditorStore }) {
         if (directory) {
           model.setExpanded(directory, true);
           persistExpanded();
+        } else if (result.written.length > 0) {
+          void adoptUploadedWorkspaceName(
+            workspace.id,
+            items,
+            workspaceNameDeps(workspace.runtime, files),
+          ).catch(() => undefined);
         }
         if (result.skipped > 0) {
           say(
@@ -251,7 +259,7 @@ export function Explorer(props: { readonly store: EditorStore }) {
         setBusy(undefined);
       }
     },
-    [files, model, persistExpanded, say, stopAutoOpen],
+    [files, model, persistExpanded, say, stopAutoOpen, workspace.id, workspace.runtime],
   );
 
   const pickUpload = useCallback((directory: string, folder: boolean) => {
@@ -275,7 +283,7 @@ export function Explorer(props: { readonly store: EditorStore }) {
     setBusy("zip");
     try {
       const blob = await files.exportZip();
-      downloadBlob(blob, `${workspaceName(workspace.id)}.zip`);
+      downloadBlob(blob, zipFilename(workspaceName(workspace.id)));
     } catch (error) {
       say(fill(copy.notices.zipFailed, { message: error instanceof Error ? error.message : String(error) }));
     } finally {
@@ -463,7 +471,7 @@ export function Explorer(props: { readonly store: EditorStore }) {
         }}
       >
         <StrokeIcon name="chevron" className="ico tree-root-chevron" />
-        <span>{workspaceName(workspace.id)}</span>
+        <span data-testid="explorer-workspace-name">{projectName}</span>
       </div>
       <div className="explorer-tree-host" data-testid="file-tree">
         <FileTreeView

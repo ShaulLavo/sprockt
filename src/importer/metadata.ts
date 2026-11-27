@@ -62,6 +62,8 @@ export const INCOMPLETE = "importing";
 
 export interface WorkspaceMeta {
   readonly name: string;
+  /** True when the visitor explicitly renamed this workspace; auto-hydration never overwrites it. */
+  readonly customName?: boolean;
   /** The template the workspace started from, when it did. */
   readonly template?: string;
   readonly source?: WorkspaceSource;

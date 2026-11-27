@@ -4,6 +4,9 @@ import { browserWorkspaceDeps, openUnlessCancelled } from "../importer/browser-d
 import { COPY } from "../importer/copy";
 import { importErrorMessage } from "../importer/messages";
 import { createWorkspaceWithFiles } from "../importer/new-workspace";
+import { templateDefaultName } from "../templates/metadata";
+import { packageJsonName } from "../templates/workspace-meta";
+import { saveWorkspaceHint } from "../workspace/hint";
 import { BLANK_TEMPLATE } from "./templates";
 import { restoreShare } from "./share-workspace";
 import "../importer/importer.css";
@@ -12,17 +15,26 @@ async function openShare(fragment: string, signal: AbortSignal): Promise<string 
   const restored = await restoreShare(fragment);
   if (!restored.ok) return COPY.errors.shareLinkInvalid;
   signal.throwIfAborted();
+  const created = new Date().toISOString();
+  const name =
+    packageJsonName(restored.files["package.json"]) ??
+    (restored.template !== BLANK_TEMPLATE ? templateDefaultName(restored.template) : undefined) ??
+    COPY.share.sharedName;
+  const source = { kind: "share" as const, template: restored.template };
+  const template = restored.template === BLANK_TEMPLATE ? "blank" : restored.template;
   const id = await createWorkspaceWithFiles(
     restored.files,
     {
-      name: COPY.share.sharedName,
-      created: new Date().toISOString(),
-      source: { kind: "share", template: restored.template },
+      name,
+      created,
+      lastOpened: created,
+      source,
       ...(restored.template === BLANK_TEMPLATE ? {} : { template: restored.template }),
     },
     browserWorkspaceDeps,
     { signal },
   );
+  saveWorkspaceHint(id, { name, template, created, lastOpened: created, source });
   openUnlessCancelled(id, signal);
   return undefined;
 }

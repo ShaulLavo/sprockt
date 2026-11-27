@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { navigate } from "../app/router";
 import type { Route } from "../app/routes";
+import { deriveGitHubWorkspaceName } from "../templates/workspace-meta";
+import { saveWorkspaceHint } from "../workspace/hint";
 import { browserWorkspaceDeps, openUnlessCancelled, retryTarget } from "./browser-deps";
 import { COPY, fill } from "./copy";
 import { importGitHubRepo, type ImportProgress } from "./github/import";
@@ -39,19 +41,24 @@ async function runImport(
   onState({ stage: "writing", files: result.files.length });
   const detection = detectFromEntries(result.files);
   const plan = planFrom(detection);
+  const name = deriveGitHubWorkspaceName(result.repo, result.subdir);
+  const created = new Date().toISOString();
+  const source = {
+    kind: "github" as const,
+    owner: result.owner,
+    repo: result.repo,
+    ref: result.ref,
+    subdir: result.subdir,
+    ...(result.commit ? { commit: result.commit } : {}),
+  };
   const id = await createWorkspaceWithFiles(
     fileRecord(result.files),
     {
-      name: result.subdir ? `${result.repo}/${result.subdir}` : result.repo,
-      created: new Date().toISOString(),
-      source: {
-        kind: "github",
-        owner: result.owner,
-        repo: result.repo,
-        ref: result.ref,
-        subdir: result.subdir,
-        ...(result.commit ? { commit: result.commit } : {}),
-      },
+      name,
+      template: "github",
+      created,
+      lastOpened: created,
+      source,
       detected: {
         framework: detection.framework,
         packageManager: detection.packageManager,
@@ -63,6 +70,7 @@ async function runImport(
     browserWorkspaceDeps,
     { signal, into: retryTarget(location.search) },
   );
+  saveWorkspaceHint(id, { name, template: "github", created, lastOpened: created, source });
   onState({ stage: "opening" });
   openUnlessCancelled(id, signal);
 }

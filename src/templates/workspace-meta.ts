@@ -11,6 +11,9 @@ import {
 export { INCOMPLETE, WORKSPACE_META_DIR, WORKSPACE_META_PATH };
 
 const MAX_NAME_LENGTH = 64;
+const BLANK_DEFAULT_NAME = "workspace";
+const SHARED_DEFAULT_NAME = "Shared workspace";
+const metaTextDecoder = new TextDecoder();
 
 export type WorkspaceState = typeof INCOMPLETE;
 
@@ -26,6 +29,72 @@ export function normalizeWorkspaceName(raw: string): string | undefined {
   return collapsed.slice(0, MAX_NAME_LENGTH);
 }
 
+/** Derives a clean display name for a GitHub import: subdir basename when set, otherwise repo name. */
+export function deriveGitHubWorkspaceName(repo: string, subdir = ""): string {
+  const segments = subdir.split("/").filter((segment) => segment !== "");
+  const leaf = segments.at(-1);
+  if (leaf) {
+    const normalized = normalizeWorkspaceName(leaf);
+    if (normalized) return normalized;
+  }
+  return normalizeWorkspaceName(repo) ?? BLANK_DEFAULT_NAME;
+}
+
+/** Reads a clean project name from a root `package.json` string or UTF-8 bytes. */
+export function packageJsonName(raw: string | Uint8Array | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const text = typeof raw === "string" ? raw : metaTextDecoder.decode(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const name = (parsed as Record<string, unknown>).name;
+  return typeof name === "string" ? normalizeWorkspaceName(name) : undefined;
+}
+
+/**
+ * Derives a clean name when every uploaded item lives under a single top-level folder
+ * (a folder picker pick or a dropped directory). Loose files return `undefined`.
+ */
+export function deriveUploadFolderName(
+  items: readonly { readonly path: string; readonly hasData: boolean }[],
+): string | undefined {
+  if (items.length === 0) return undefined;
+  let folder: string | undefined;
+  let hasFolderEvidence = false;
+  for (const item of items) {
+    const slash = item.path.indexOf("/");
+    const head = slash === -1 ? item.path : item.path.slice(0, slash);
+    if (!head) return undefined;
+    if (folder === undefined) folder = head;
+    else if (folder !== head) return undefined;
+    if (slash !== -1 || !item.hasData) hasFolderEvidence = true;
+  }
+  return hasFolderEvidence && folder ? normalizeWorkspaceName(folder) : undefined;
+}
+
+/** Safe `.zip` filename derived from a workspace display name. */
+export function zipFilename(name: string): string {
+  // Replacing control characters is intentional so downloaded filenames are safe across OSes.
+  // oxlint-disable-next-line no-control-regex
+  const cleaned = name.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-").replace(/^[.\s-]+|[.\s-]+$/g, "");
+  return `${cleaned || BLANK_DEFAULT_NAME}.zip`;
+}
+
+/**
+ * Whether `meta.name` is an auto-assigned generic placeholder (raw id, blank default, or generic
+ * shared name) rather than a real project name or an explicit user rename.
+ */
+export function isGenericWorkspaceName(id: string, meta: WorkspaceMeta): boolean {
+  if (meta.customName) return false;
+  if (meta.name === id) return true;
+  if (meta.template === "blank" && meta.name === BLANK_DEFAULT_NAME) return true;
+  return meta.source?.kind === "share" && meta.name === SHARED_DEFAULT_NAME;
+}
+
 export function createWorkspaceMeta(input: {
   readonly name: string;
   readonly template: string;
@@ -33,7 +102,7 @@ export function createWorkspaceMeta(input: {
   readonly state?: WorkspaceState;
 }): WorkspaceMeta {
   const timestamp = (input.now ?? new Date()).toISOString();
-  const name = normalizeWorkspaceName(input.name) ?? "workspace";
+  const name = normalizeWorkspaceName(input.name) ?? BLANK_DEFAULT_NAME;
   return input.state
     ? { name, template: input.template, created: timestamp, lastOpened: timestamp, state: input.state }
     : { name, template: input.template, created: timestamp, lastOpened: timestamp };
@@ -74,24 +143,47 @@ export function parseWorkspaceMeta(raw: string): WorkspaceMeta | undefined {
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
   const record = parsed as Record<string, unknown>;
-  const name = normalizeWorkspaceName(readStringField(record, "name") ?? "");
   const source = readWorkspaceSource(record);
+  const rawName = normalizeWorkspaceName(readStringField(record, "name") ?? "");
+  const name =
+    rawName ??
+    (source?.kind === "github" ? deriveGitHubWorkspaceName(source.repo, source.subdir) : undefined);
   const template = readStringField(record, "template") ?? (source?.kind === "github" ? "github" : "blank");
   const created = readStringField(record, "created") ?? readStringField(record, "createdAt");
   const lastOpened = readStringField(record, "lastOpened") ?? created;
   if (!name || !created || !lastOpened) return undefined;
   const state = readStateField(record);
+  const customName = record.customName === true ? true : undefined;
   return {
     name,
     template,
     created,
     lastOpened,
+    ...(customName ? { customName } : {}),
     ...(state ? { state } : {}),
     ...(source ? { source } : {}),
   };
 }
 
-/** Updates only the workspace name while preserving any extra fields (e.g. importer source/detected). */
+function mergeMetaJson(
+  raw: string | undefined,
+  fields: Readonly<Record<string, unknown>>,
+  fallback: WorkspaceMeta,
+): string {
+  if (!raw) return serializeWorkspaceMeta(fallback);
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const merged = { ...(parsed as Record<string, unknown>), ...fields };
+      return `${JSON.stringify(merged, null, 2)}\n`;
+    }
+  } catch {
+    // Fall through to clean serialized metadata.
+  }
+  return serializeWorkspaceMeta(fallback);
+}
+
+/** Records an explicit user rename while preserving any extra fields (e.g. importer source/detected). */
 export function updateWorkspaceMetaName(
   raw: string | undefined,
   nextName: string,
@@ -103,21 +195,26 @@ export function updateWorkspaceMetaName(
   const existing = raw ? parseWorkspaceMeta(raw) : undefined;
   const timestamp = now.toISOString();
   const meta: WorkspaceMeta = existing
-    ? { ...existing, name: nextName }
-    : { name: nextName, template: "blank", created: timestamp, lastOpened: timestamp };
+    ? { ...existing, name: nextName, customName: true }
+    : { name: nextName, customName: true, template: "blank", created: timestamp, lastOpened: timestamp };
+  return { json: mergeMetaJson(raw, { name: nextName, customName: true }, meta), meta };
+}
 
-  if (raw) {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const merged = { ...(parsed as Record<string, unknown>), name: nextName };
-        return { json: `${JSON.stringify(merged, null, 2)}\n`, meta };
-      }
-    } catch {
-      // Fall through to clean serialized metadata.
-    }
-  }
-  return { json: serializeWorkspaceMeta(meta), meta };
+/** Updates an auto-derived workspace name without marking it as an explicit user rename. */
+export function mergeDerivedWorkspaceName(
+  raw: string | undefined,
+  derivedName: string,
+  now = new Date(),
+): {
+  readonly json: string;
+  readonly meta: WorkspaceMeta;
+} {
+  const existing = raw ? parseWorkspaceMeta(raw) : undefined;
+  const timestamp = now.toISOString();
+  const meta: WorkspaceMeta = existing
+    ? { ...existing, name: derivedName, lastOpened: timestamp }
+    : { name: derivedName, template: "blank", created: timestamp, lastOpened: timestamp };
+  return { json: mergeMetaJson(raw, { name: derivedName }, meta), meta };
 }
 
 export function serializeWorkspaceMeta(meta: WorkspaceMeta): string {

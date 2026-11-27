@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import {
   createWorkspaceMeta,
+  deriveGitHubWorkspaceName,
+  deriveUploadFolderName,
   formatRelativeTime,
+  isGenericWorkspaceName,
+  mergeDerivedWorkspaceName,
   normalizeWorkspaceName,
+  packageJsonName,
   parseWorkspaceMeta,
   serializeWorkspaceMeta,
   updateWorkspaceMetaName,
+  zipFilename,
 } from "./workspace-meta";
 
 describe("workspace metadata", () => {
@@ -76,6 +82,64 @@ describe("workspace metadata", () => {
       "new-name",
     );
     expect(renamed.meta.name).toBe("new-name");
-    expect(JSON.parse(renamed.json)).toMatchObject({ name: "new-name", detected: { framework: "vite" } });
+    expect(renamed.meta.customName).toBe(true);
+    expect(JSON.parse(renamed.json)).toMatchObject({
+      name: "new-name",
+      customName: true,
+      detected: { framework: "vite" },
+    });
+  });
+
+  test("derives clean names for GitHub imports, package.json, folder uploads, and ZIP filenames", () => {
+    expect(deriveGitHubWorkspaceName("bash-web")).toBe("bash-web");
+    expect(deriveGitHubWorkspaceName("demo", "apps/web")).toBe("web");
+    expect(deriveGitHubWorkspaceName("demo", "apps/web/")).toBe("web");
+    expect(deriveGitHubWorkspaceName("demo", "/")).toBe("demo");
+
+    expect(packageJsonName(JSON.stringify({ name: "my-project" }))).toBe("my-project");
+    expect(packageJsonName(new TextEncoder().encode(JSON.stringify({ name: "@scope/pkg" })))).toBe(
+      "@scope/pkg",
+    );
+    expect(packageJsonName(JSON.stringify({ name: "   " }))).toBeUndefined();
+    expect(packageJsonName("{invalid")).toBeUndefined();
+
+    expect(
+      deriveUploadFolderName([
+        { path: "my-app/package.json", hasData: true },
+        { path: "my-app/src/index.ts", hasData: true },
+      ]),
+    ).toBe("my-app");
+    expect(deriveUploadFolderName([{ path: "empty-dir", hasData: false }])).toBe("empty-dir");
+    expect(deriveUploadFolderName([{ path: "single-file.ts", hasData: true }])).toBeUndefined();
+    expect(
+      deriveUploadFolderName([
+        { path: "a/index.ts", hasData: true },
+        { path: "b/index.ts", hasData: true },
+      ]),
+    ).toBeUndefined();
+
+    expect(zipFilename("bash-web")).toBe("bash-web.zip");
+    expect(zipFilename("@shaulavo/bash-web")).toBe("@shaulavo-bash-web.zip");
+    expect(zipFilename("///")).toBe("workspace.zip");
+  });
+
+  test("falls back to GitHub source when workspace.json lacks a name and distinguishes generic names", () => {
+    const parsed = parseWorkspaceMeta(
+      JSON.stringify({
+        created: "2026-11-25T18:00:00.000Z",
+        source: { kind: "github", owner: "acme", repo: "mono", ref: "main", subdir: "apps/web" },
+      }),
+    );
+    expect(parsed?.name).toBe("web");
+
+    const blank = createWorkspaceMeta({ name: "workspace", template: "blank" });
+    expect(isGenericWorkspaceName("abc1234567", blank)).toBe(true);
+    const customBlank = updateWorkspaceMetaName(serializeWorkspaceMeta(blank), "workspace").meta;
+    expect(isGenericWorkspaceName("abc1234567", customBlank)).toBe(false);
+
+    const derived = mergeDerivedWorkspaceName(serializeWorkspaceMeta(blank), "cool-app");
+    expect(derived.meta.name).toBe("cool-app");
+    expect(derived.meta.customName).toBeUndefined();
+    expect(isGenericWorkspaceName("abc1234567", derived.meta)).toBe(false);
   });
 });

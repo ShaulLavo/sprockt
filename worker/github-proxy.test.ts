@@ -387,6 +387,194 @@ describe("GitHub proxy: archives", () => {
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/gzip");
+    expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+  });
+});
+
+describe("GitHub proxy: release tarballs", () => {
+  const ASSET_URL =
+    "https://release-assets.githubusercontent.com/github-production-release-asset/12345/abc-def?sp=r&sig=xyz&jwt=token";
+
+  test("follows GitHub's release-assets redirect, sets COEP headers, and strips credentials", async () => {
+    const body = new Uint8Array([0x1f, 0x8b, 9, 8, 7]);
+    const { calls, fetch } = upstream((url) =>
+      url.startsWith("https://github.com/")
+        ? new Response(null, { status: 302, headers: { location: ASSET_URL } })
+        : new Response(body, {
+            headers: { "content-type": "application/octet-stream", "content-length": "5" },
+          }),
+    );
+    const response = await createGitHubProxy({ fetch })(
+      get("/api/github/release/ShaulLavo/waffle/programs-v0.0.23/waffle-base-0.0.23.tgz"),
+      { GITHUB_TOKEN: "server-token" },
+    );
+    expect(response.status).toBe(200);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(body);
+    expect(response.headers.get("content-type")).toBe("application/gzip");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300");
+    expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://github.com/ShaulLavo/waffle/releases/download/programs-v0.0.23/waffle-base-0.0.23.tgz",
+      ASSET_URL,
+    ]);
+    for (const call of calls) {
+      expect(auth(call)).toBeNull();
+      expect(new Headers(call.init.headers).get("cookie")).toBeNull();
+      expect(call.init.redirect).toBe("manual");
+      expect(call.init.cf).toBeUndefined();
+    }
+  });
+
+  test.each([
+    "https://objects.githubusercontent.com/github-production-release-asset-2e65be/1/2?sig=ok",
+    "https://objects-origin.githubusercontent.com/github-production-release-asset/1/2?sig=ok",
+  ])("allows official release CDN host %s", async (cdnUrl) => {
+    const { fetch } = upstream((url) =>
+      url.startsWith("https://github.com/") ? redirect(cdnUrl) : new Response(new Uint8Array([1, 2])),
+    );
+    const response = await createGitHubProxy({ fetch })(
+      get("/api/github/release/acme/demo/v1.0.0/demo-1.0.0.tgz"),
+    );
+    expect(response.status).toBe(200);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2]));
+  });
+
+  test("follows a renamed-repository redirect on github.com before the CDN hop", async () => {
+    const { calls, fetch } = upstream((url) => {
+      if (url.includes("/old/")) {
+        return redirect("https://github.com/acme/new/releases/download/v1.0.0/demo-1.0.0.tgz");
+      }
+      if (url.startsWith("https://github.com/")) return redirect(ASSET_URL);
+      return new Response(new Uint8Array([4, 5]));
+    });
+    const response = await createGitHubProxy({ fetch })(
+      get("/api/github/release/acme/old/v1.0.0/demo-1.0.0.tgz"),
+    );
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(3);
+  });
+
+  test("supports tags with slashes and HEAD requests", async () => {
+    const { calls, fetch } = upstream((url) =>
+      url.startsWith("https://github.com/")
+        ? redirect(ASSET_URL)
+        : new Response(new Uint8Array([1, 2, 3]), { headers: { "content-length": "3" } }),
+    );
+    const response = await createGitHubProxy({ fetch })(
+      get("/api/github/release/acme/demo/packages/v1.2.3/pkg-1.2.3.tgz", { method: "HEAD" }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
+    expect(response.headers.get("content-type")).toBe("application/gzip");
+    expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    expect(calls[0]?.url).toBe(
+      "https://github.com/acme/demo/releases/download/packages/v1.2.3/pkg-1.2.3.tgz",
+    );
+  });
+
+  test.each([
+    ["an arbitrary host", "https://evil.example/github-production-release-asset/1"],
+    [
+      "a lookalike subdomain host",
+      "https://release-assets.githubusercontent.com.evil.example/github-production-release-asset/1",
+    ],
+    ["api.github.com", "https://api.github.com/repos/acme/demo"],
+    ["codeload.github.com", "https://codeload.github.com/acme/demo/tar.gz/v1"],
+    ["plain http", "http://release-assets.githubusercontent.com/github-production-release-asset/1"],
+    [
+      "a non-default port",
+      "https://release-assets.githubusercontent.com:8443/github-production-release-asset/1",
+    ],
+    [
+      "embedded credentials",
+      "https://user:pass@release-assets.githubusercontent.com/github-production-release-asset/1",
+    ],
+    ["an unrelated CDN path", "https://release-assets.githubusercontent.com/other-bucket/asset.tgz"],
+    [
+      "a traversal CDN path",
+      "https://release-assets.githubusercontent.com/github-production-release-asset/../secret",
+    ],
+    ["a non-release github.com path", "https://github.com/login"],
+    ["a non-.tgz github.com release asset", "https://github.com/acme/demo/releases/download/v1/file.zip"],
+    [
+      "a github.com redirect with a query string",
+      "https://github.com/acme/demo/releases/download/v1/pkg.tgz?x=1",
+    ],
+  ])("refuses a release redirect to %s", async (_, location) => {
+    const { calls, fetch } = upstream(() => redirect(location));
+    const response = await createGitHubProxy({ fetch })(
+      get("/api/github/release/acme/demo/v1.0.0/demo-1.0.0.tgz"),
+      { GITHUB_TOKEN: "secret" },
+    );
+    expect(response.status).toBe(502);
+    expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    expect(calls).toHaveLength(1);
+  });
+
+  test("refuses a CDN hop that redirects back to github.com", async () => {
+    const { calls, fetch } = upstream((url) =>
+      url.startsWith("https://github.com/")
+        ? redirect(ASSET_URL)
+        : redirect("https://github.com/acme/demo/releases/download/v1.0.0/demo-1.0.0.tgz"),
+    );
+    const response = await createGitHubProxy({ fetch })(
+      get("/api/github/release/acme/demo/v1.0.0/demo-1.0.0.tgz"),
+    );
+    expect(response.status).toBe(502);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("enforces size limit on declared length and on streaming bodies", async () => {
+    const declaredBig = upstream(
+      () => new Response(new Uint8Array(10), { headers: { "content-length": "10" } }),
+    );
+    const tooLarge = await createGitHubProxy({ fetch: declaredBig.fetch })(
+      get("/api/github/release/acme/demo/v1/pkg.tgz"),
+      { GITHUB_PROXY_MAX_ARCHIVE_BYTES: "5" },
+    );
+    expect(tooLarge.status).toBe(413);
+    expect((await tooLarge.json()).error).toBe("too-large");
+    expect(tooLarge.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+
+    // Even when upstream under-declares content-length, byteLimit cuts off the stream.
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(4));
+        controller.enqueue(new Uint8Array(4));
+        controller.close();
+      },
+    });
+    const lying = upstream(() => new Response(stream, { headers: { "content-length": "4" } }));
+    const cutOff = await createGitHubProxy({ fetch: lying.fetch })(
+      get("/api/github/release/acme/demo/v1/pkg.tgz"),
+      { GITHUB_PROXY_MAX_ARCHIVE_BYTES: "6" },
+    );
+    expect(cutOff.status).toBe(200);
+    await expect(cutOff.arrayBuffer()).rejects.toThrow("larger than 6 bytes");
+  });
+
+  test("maps 404 and 429 cleanly and bypasses the GitHub API quota limiter", async () => {
+    const missing = upstream(() => new Response("", { status: 404 }));
+    const notFound = await createGitHubProxy({ fetch: missing.fetch })(
+      get("/api/github/release/acme/demo/v1/missing.tgz"),
+    );
+    expect(notFound.status).toBe(404);
+    expect((await notFound.json()).error).toBe("not-found");
+    expect(notFound.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+
+    const throttled = upstream(() => new Response("", { status: 429, headers: { "retry-after": "15" } }));
+    const limited = await createGitHubProxy({ fetch: throttled.fetch })(
+      get("/api/github/release/acme/demo/v1/pkg.tgz"),
+    );
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toMatchObject({ error: "rate-limited", retryAfter: 15 });
+
+    const { fetch } = upstream(() => new Response(new Uint8Array([1])));
+    const env: GitHubProxyEnv = { GITHUB_API_LIMITER: { limit: async () => ({ success: false }) } };
+    expect(
+      (await createGitHubProxy({ fetch })(get("/api/github/release/acme/demo/v1/pkg.tgz"), env)).status,
+    ).toBe(200);
   });
 });
 
@@ -404,6 +592,14 @@ describe("GitHub proxy: refuses everything else", () => {
     ["/api/github/archive/-bad/demo/main", 400],
     ["/api/github/archive/acme/demo%2F..%2Fother/main", 400],
     ["/api/github/archive/acme/demo", 404],
+    ["/api/github/release/acme/demo/v1", 404],
+    ["/api/github/release/acme/demo/v1/not-tarball.zip", 400],
+    ["/api/github/release/acme/demo/v1/not-tarball.tar.gz", 400],
+    ["/api/github/release/acme/demo/v1/.hidden.tgz", 400],
+    ["/api/github/release/acme/demo/v1/a..b.tgz", 400],
+    ["/api/github/release/acme/demo/v1/..%2Fsecret.tgz", 400],
+    ["/api/github/release/acme/demo/..%2Fetc/pkg.tgz", 400],
+    ["/api/github/release/-bad/demo/v1/pkg.tgz", 400],
     ["/api/github/repo/acme/demo/extra", 404],
     ["/api/github/refs/acme/demo", 404],
     ["/api/github/refs/acme/demo/a/b", 404],

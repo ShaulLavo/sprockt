@@ -8,6 +8,7 @@ import type { PreviewServer as PreviewBackend } from "waffle/browser/preview";
 import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import { runtimeAssets } from "./assets";
 import { bootUntilHandedOver } from "./handover";
+import { createRuntimeFetch } from "./release-fetch";
 import { TAB_POLICY } from "./tab-policy";
 
 /**
@@ -96,7 +97,7 @@ async function installPrograms(runtime: Runtime, ports: PortListener | undefined
     notificationWorkerUrl: runtimeAssets.bunNotificationWorker,
     engine: "browser",
     asset: runtimeAssets.bunGuest,
-    network: ports,
+    network: { ...ports, fetch: createRuntimeFetch() },
   });
   const base = await installBase(runtime, { launcher: programLauncher(runtimeAssets.programWorker) });
   await installShellCommands(runtime, {

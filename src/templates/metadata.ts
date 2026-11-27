@@ -87,3 +87,7 @@ export function templateLabel(id: string): string {
   if (id === "github") return "GitHub";
   return ALL_SUMMARIES.find((template) => template.id === id)?.label ?? "Workspace";
 }
+
+export function templateDefaultName(id: string): string | undefined {
+  return ALL_SUMMARIES.find((template) => template.id === id)?.defaultName;
+}

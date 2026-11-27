@@ -4,13 +4,20 @@
 import type { WorkspaceSource } from "../importer/metadata";
 import {
   parseWorkspaceMeta,
-  serializeWorkspaceMeta,
   WORKSPACE_META_PATH,
   type WorkspaceMeta,
   type WorkspaceState,
 } from "../templates/workspace-meta";
-import { readWorkspaceHint, WORKSPACE_HINT_PREFIX as HINT_PREFIX } from "../workspace/hint";
+import {
+  hasWorkspaceHints,
+  readWorkspaceHint,
+  removeWorkspaceHint,
+  saveWorkspaceHint,
+  touchWorkspaceHint,
+} from "../workspace/hint";
 import { storageName, workspaceIdOf } from "../workspace/paths";
+
+export { hasWorkspaceHints, removeWorkspaceHint, saveWorkspaceHint, touchWorkspaceHint };
 
 // Serialize same-tab storage probes and mutations so a focus/visibility refresh never collides
 // with an explicit rename, retry, or delete on the same Waffle maintenance lock.
@@ -35,37 +42,6 @@ export interface StoredWorkspaceSummary {
   readonly source?: WorkspaceSource;
   readonly meta?: WorkspaceMeta;
   readonly openInOtherTab: boolean;
-}
-
-export function saveWorkspaceHint(id: string, meta: WorkspaceMeta): void {
-  try {
-    localStorage.setItem(HINT_PREFIX + id, serializeWorkspaceMeta(meta));
-  } catch {
-    // Ignore storage quota or private-mode refusals.
-  }
-}
-
-/** Whether this browser remembers any workspace, known at once, before storage is read. */
-export function hasWorkspaceHints(): boolean {
-  try {
-    return Object.keys(localStorage).some((key) => key.startsWith(HINT_PREFIX));
-  } catch {
-    return false;
-  }
-}
-
-export function removeWorkspaceHint(id: string): void {
-  try {
-    localStorage.removeItem(HINT_PREFIX + id);
-  } catch {
-    // Ignore private-mode refusals.
-  }
-}
-
-export function touchWorkspaceHint(id: string): void {
-  const existing = readWorkspaceHint(id);
-  if (!existing) return;
-  saveWorkspaceHint(id, { ...existing, lastOpened: new Date().toISOString() });
 }
 
 function newerTimestamp(a: string | undefined, b: string | undefined): string | undefined {
