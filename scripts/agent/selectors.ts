@@ -42,11 +42,11 @@ export const SELECTORS = {
   },
   explorer: {
     tree: '[data-testid="file-tree"]',
-    row: '[data-testid="tree-row"]',
+    row: "[data-wb-tree-row]",
     newFile: '[data-testid="new-file"]',
     newFolder: '[data-testid="new-folder"]',
-    input: '[data-testid="tree-input"]',
-    filterInput: '[data-testid="tree-filter-input"]',
+    input: '[data-testid="wb-tree-inline-input"]',
+    filterInput: "[data-wb-filter-field] input",
     confirmDelete: '[data-testid="confirm-delete"]',
   },
   editor: {

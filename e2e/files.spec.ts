@@ -47,13 +47,12 @@ async function pickFolder(
   }, files);
 }
 
-const row = (page: Page, path: string): Locator =>
-  page.locator(`[data-testid="tree-row"][data-path="${path}"]`);
+const row = (page: Page, path: string): Locator => page.locator(`[data-wb-tree-row][data-path="${path}"]`);
 
 /** Clicks "new file" or "new folder", types the name into the inline box and confirms it. */
 async function create(page: Page, kind: "file" | "folder", name: string): Promise<void> {
   await page.getByTestId(kind === "file" ? "new-file" : "new-folder").click();
-  const input = page.getByTestId("tree-input");
+  const input = page.getByTestId("wb-tree-inline-input");
   await input.fill(name);
   await input.press("Enter");
   await expect(input).toHaveCount(0);
@@ -67,12 +66,14 @@ async function create(page: Page, kind: "file" | "folder", name: string): Promis
  */
 async function expandRow(page: Page, path: string): Promise<void> {
   const folder = row(page, path);
-  const segment = page.locator(`[data-segment-path="${path}"]`);
+  const segment = page.locator(`[data-wb-drop-segment="${path}"]`);
   await expect(folder.or(segment).first()).toBeVisible();
   if ((await folder.count()) === 0) return;
   await expect(async () => {
     if ((await folder.count()) === 0 && (await segment.count()) > 0) return;
-    if ((await folder.getAttribute("aria-expanded")) !== "true") await folder.click();
+    if ((await folder.getAttribute("aria-expanded")) !== "true") {
+      await folder.locator(".wb-tree-chevron").click();
+    }
     if ((await folder.count()) === 0 && (await segment.count()) > 0) return;
     await expect(folder).toHaveAttribute("aria-expanded", "true", { timeout: 1000 });
   }).toPass();
@@ -119,16 +120,16 @@ test("files and folders can be created, renamed and deleted, and the tree surviv
 
   // F2 renames the focused row.
   await row(page, "docs/notes.md").press("F2");
-  await page.getByTestId("tree-input").fill("readme.md");
-  await page.getByTestId("tree-input").press("Enter");
+  await page.getByTestId("wb-tree-inline-input").fill("readme.md");
+  await page.getByTestId("wb-tree-inline-input").press("Enter");
   await expect(row(page, "docs/readme.md")).toBeVisible();
   await expect(row(page, "docs/notes.md")).toHaveCount(0);
 
   // The context menu renames a folder, and its open state and contents move with it.
   await row(page, "docs").click({ button: "right" });
   await page.getByTestId("menu-rename").click();
-  await page.getByTestId("tree-input").fill("guide");
-  await page.getByTestId("tree-input").press("Enter");
+  await page.getByTestId("wb-tree-inline-input").fill("guide");
+  await page.getByTestId("wb-tree-inline-input").press("Enter");
   await expect(row(page, "guide/readme.md")).toBeVisible();
   await expect(row(page, "docs")).toHaveCount(0);
   // The editor followed the folder: the open file now has its new path.
@@ -172,7 +173,7 @@ test("a name that is taken or not allowed is refused and the box stays open", as
   await create(page, "file", "a.txt");
 
   await page.getByTestId("new-file").click();
-  const input = page.getByTestId("tree-input");
+  const input = page.getByTestId("wb-tree-inline-input");
   await input.fill("a.txt");
   await input.press("Enter");
   await expect(page.getByRole("alert")).toBeVisible();
@@ -223,7 +224,7 @@ test("files and folders from the desktop can be uploaded by picker and by drop, 
   await row(page, "site/css").dispatchEvent("drop", { dataTransfer: transfer });
   await expect(row(page, "site/css/dropped.txt")).toBeVisible();
 
-  await page.getByRole("button", { name: "hello.txt" }).click();
+  await page.getByTestId("file-tree").getByRole("treeitem", { name: "hello.txt", exact: true }).click();
   await expect.poll(() => editorText(page)).toBe("hello from the picker\n");
   await saved(page);
 
@@ -237,7 +238,7 @@ test("dragging an entry onto a folder moves it, and onto the empty tree moves it
 }) => {
   await newWorkspace(page);
   await create(page, "folder", "target");
-  await expect(row(page, "target")).toHaveClass(/is-selected/);
+  await expect(row(page, "target")).toHaveAttribute("data-selected", "true");
   // Clicking the project name selects nothing, so the next file goes to the project root.
   await page.locator(".tree-root").click();
   await create(page, "file", "moving.txt");
@@ -256,7 +257,7 @@ test("dragging an entry onto a folder moves it, and onto the empty tree moves it
   await expect(row(page, "moving.txt")).toHaveCount(0);
   expect(await readFile(page, "target/moving.txt")).toBe("payload");
 
-  await drag(row(page, "target/moving.txt"), page.locator(".tree-scroll"));
+  await drag(row(page, "target/moving.txt"), page.locator("[data-wb-tree-scroller]"));
   await expect(row(page, "moving.txt")).toBeVisible();
   await expect(row(page, "target/moving.txt")).toHaveCount(0);
 
@@ -276,7 +277,7 @@ test("create, rename and drag-move never replace a name that was taken after the
 }) => {
   await newWorkspace(page);
   await create(page, "folder", "target");
-  await expect(row(page, "target")).toHaveClass(/is-selected/);
+  await expect(row(page, "target")).toHaveAttribute("data-selected", "true");
   await page.locator(".tree-root").click();
   await create(page, "file", "mover.txt");
   await expect(page.getByTestId("editor-file")).toHaveAttribute("aria-label", "mover.txt");
@@ -285,7 +286,7 @@ test("create, rename and drag-move never replace a name that was taken after the
   // Create: the name box is open, then someone else takes the name, then the name is confirmed.
   await page.locator(".tree-root").click();
   await page.getByTestId("new-file").click();
-  const input = page.getByTestId("tree-input");
+  const input = page.getByTestId("wb-tree-inline-input");
   await writeFile(page, "taken.txt", "precious create");
   await input.fill("taken.txt");
   await input.press("Enter");
@@ -296,8 +297,8 @@ test("create, rename and drag-move never replace a name that was taken after the
   await row(page, "mover.txt").click();
   await row(page, "mover.txt").press("F2");
   await writeFile(page, "renamed.txt", "precious rename");
-  await page.getByTestId("tree-input").fill("renamed.txt");
-  await page.getByTestId("tree-input").press("Enter");
+  await page.getByTestId("wb-tree-inline-input").fill("renamed.txt");
+  await page.getByTestId("wb-tree-inline-input").press("Enter");
   await expect(row(page, "mover.txt")).toBeVisible();
   expect(await readFile(page, "renamed.txt")).toBe("precious rename");
   expect(await readFile(page, "mover.txt")).toBe("mover bytes");
@@ -341,7 +342,7 @@ test("the tree always has one Tab stop, and Escape returns from the context menu
   await expandRow(page, "one");
   await expandRow(page, "one/two");
   await row(page, "one/two/deep.txt").focus();
-  const stops = page.locator('[data-testid="tree-row"][tabindex="0"]');
+  const stops = page.locator('[data-wb-tree-row][tabindex="0"]');
   await expect(stops).toHaveCount(1);
 
   // Collapse All hides the focused row; the tree still has exactly one way in.
@@ -375,8 +376,8 @@ test("a folder holding unsaved edits can be renamed, moved and deleted; the edit
 
   // Rename the folder: the open file follows, unsaved, and the disk keeps the saved text.
   await row(page, "docs").press("F2");
-  await page.getByTestId("tree-input").fill("renamed");
-  await page.getByTestId("tree-input").press("Enter");
+  await page.getByTestId("wb-tree-inline-input").fill("renamed");
+  await page.getByTestId("wb-tree-inline-input").press("Enter");
   await expect(row(page, "renamed")).toBeVisible();
   await expect(page.getByTestId("editor-file")).toHaveAttribute("aria-label", "renamed/a.txt");
   await expect(page.getByTestId("editor-dirty")).toBeVisible();
@@ -468,16 +469,18 @@ test("renaming a folder takes an unsaved file under node_modules along", async (
   await expect(page.getByTestId("editor-dirty")).toBeVisible();
 
   // `node_modules` compacts with its single child `pkg`; clicking its segment selects it for F2 rename.
-  const nodeModulesSegment = page.locator('[data-segment-path="node_modules"]');
+  const nodeModulesSegment = page.locator('[data-wb-drop-segment="node_modules"]');
   if ((await nodeModulesSegment.count()) > 0) {
     await nodeModulesSegment.click();
     await page.keyboard.press("F2");
   } else {
     await row(page, "node_modules").press("F2");
   }
-  await page.getByTestId("tree-input").fill("modules");
-  await page.getByTestId("tree-input").press("Enter");
-  await expect(row(page, "modules").or(page.locator('[data-segment-path="modules"]')).first()).toBeVisible();
+  await page.getByTestId("wb-tree-inline-input").fill("modules");
+  await page.getByTestId("wb-tree-inline-input").press("Enter");
+  await expect(
+    row(page, "modules").or(page.locator('[data-wb-drop-segment="modules"]')).first(),
+  ).toBeVisible();
   await expect(page.getByTestId("editor-file")).toHaveAttribute("aria-label", "modules/pkg/index.js");
   await expect(page.getByTestId("editor-dirty")).toBeVisible();
   expect(await editorText(page)).toBe("x\nunsaved");

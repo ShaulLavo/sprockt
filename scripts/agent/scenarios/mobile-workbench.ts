@@ -64,9 +64,9 @@ export const mobileWorkbenchScenario: AgentScenario = {
     await page.locator(SELECTORS.workbench.paneButton("Files")).tap();
     const appTsx = page
       .locator(SELECTORS.explorer.tree)
-      .getByRole("button", { name: "App.tsx", exact: true });
+      .getByRole("treeitem", { name: "App.tsx", exact: true });
     if ((await appTsx.count()) === 0) {
-      await page.locator(SELECTORS.explorer.tree).getByRole("button", { name: "src", exact: true }).tap();
+      await page.locator(SELECTORS.explorer.tree).getByRole("treeitem", { name: "src", exact: true }).tap();
     }
     await appTsx.tap();
     await page.waitForFunction(
@@ -74,7 +74,7 @@ export const mobileWorkbenchScenario: AgentScenario = {
       SELECTORS.editor.activeFile,
     );
     await page.locator(SELECTORS.workbench.paneButton("Files")).tap();
-    await page.locator(SELECTORS.explorer.tree).getByRole("button", { name: "App.css", exact: true }).tap();
+    await page.locator(SELECTORS.explorer.tree).getByRole("treeitem", { name: "App.css", exact: true }).tap();
     await page.waitForFunction(
       (sel) => document.querySelector(sel)?.getAttribute("aria-label") === "src/App.css",
       SELECTORS.editor.activeFile,

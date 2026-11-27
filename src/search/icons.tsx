@@ -1,8 +1,6 @@
-// The few stroke icons the editor and search use, drawn like the Circuit sprite: 24×24 paths whose
-// stroke and colour come from CSS (`.ico`).
+// Stroke icons for editor tabs, search, and quick open; file-type icons come from @shaulavo/workbench-icons.
 import type { ReactNode } from "react";
-import { fileKindOf } from "../explorer/file-types";
-import { FILE_ICONS, Icon as FileGlyph } from "../explorer/icons";
+import { FileTypeIcon } from "@shaulavo/workbench-icons/react";
 
 function Icon(props: { class?: string; children: ReactNode }) {
   return (
@@ -38,10 +36,17 @@ export function fileTone(path: string): string {
   return `ft-${(dot > 0 && TONES[name.slice(dot + 1).toLowerCase()]) || "other"}`;
 }
 
-/** A file's icon in a tab or a result row: the glyph the explorer gives that kind of file. */
+/** A file's icon in a tab or a result row: the stroke glyph from @shaulavo/workbench-icons. */
 export const FileIcon = (props: { path: string }) => {
-  const kind = fileKindOf(props.path.slice(props.path.lastIndexOf("/") + 1));
-  return <FileGlyph name={FILE_ICONS[kind.icon]} class={`ft ${fileTone(props.path)}`} />;
+  const name = props.path.slice(props.path.lastIndexOf("/") + 1);
+  return (
+    <FileTypeIcon
+      entry={{ name, type: "file" }}
+      preset="stroke"
+      sprite
+      className={`ico ft ${fileTone(props.path)}`}
+    />
+  );
 };
 
 export const CloseIcon = (props: { class?: string }) => (

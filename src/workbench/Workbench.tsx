@@ -9,6 +9,7 @@
 import { memo, useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { createMultiHotkeyHandler, detectPlatform } from "@shaulavo/hotkeys";
 import { useKeyboardInset, useLongPressContextMenu } from "@shaulavo/workbench-core/react";
+import { FileIconSprite } from "@shaulavo/workbench-icons/react";
 import { WorkbenchPortalProvider } from "@shaulavo/workbench-ui";
 import { debugHandle } from "../app/debug";
 import { navigate } from "../app/router";
@@ -548,6 +549,7 @@ function Frame(props: { frame: FrameState; children: ReactNode }) {
       data-terminal={layout.terminalOpen ? "open" : "closed"}
       style={frameStyle(layout, fitted)}
     >
+      <FileIconSprite preset="stroke" />
       <WorkbenchPortalProvider>{props.children}</WorkbenchPortalProvider>
     </main>
   );

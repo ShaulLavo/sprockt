@@ -87,32 +87,32 @@ test("explorer compacts single-child folders, shows indent guides, and supports 
   await runInTerminal(page, "mkdir -p src/app/ui && echo 'export const x = 1;' > src/app/ui/Button.tsx");
   await writeFile(page, "README.md", "# hi\n");
 
-  const chain = page.locator('[data-testid="tree-row"][data-path="src/app/ui"]');
+  const chain = page.locator('[data-wb-tree-row][data-path="src/app/ui"]');
   await expect(chain).toBeVisible();
-  await expect(chain.locator('[data-segment-path="src"]')).toHaveText("src");
-  await expect(chain.locator('[data-segment-path="src/app"]')).toHaveText("app");
-  await expect(chain.locator('[data-segment-path="src/app/ui"]')).toHaveText("ui");
+  await expect(chain.locator('[data-wb-drop-segment="src"]')).toHaveText("src");
+  await expect(chain.locator('[data-wb-drop-segment="src/app"]')).toHaveText("app");
+  await expect(chain.locator('[data-wb-drop-segment="src/app/ui"]')).toHaveText("ui");
 
-  const buttonRow = page.locator('[data-testid="tree-row"][data-path="src/app/ui/Button.tsx"]');
+  const buttonRow = page.locator('[data-wb-tree-row][data-path="src/app/ui/Button.tsx"]');
   await expect(buttonRow).toBeVisible();
-  await expect(buttonRow.locator(".row-guide")).toHaveCount(1);
+  await expect(buttonRow.locator(".wb-tree-guide")).toHaveCount(1);
 
   // Focus tree and trigger inline filter with Mod+F.
   await buttonRow.focus();
   await pressMod(page, "Mod+f");
-  const filterInput = page.getByTestId("tree-filter-input");
+  const filterInput = page.locator("[data-wb-filter-field] input");
   await expect(filterInput).toBeVisible();
   await filterInput.fill("Button");
   await expect(buttonRow).toBeVisible();
-  await expect(page.locator('[data-testid="tree-row"][data-path="README.md"]')).toHaveCount(0);
+  await expect(page.locator('[data-wb-tree-row][data-path="README.md"]')).toHaveCount(0);
 
   // Select All in a filtered tree selects matching files, never context-only ancestor folders.
   // Even with a context-only folder focused, Select All + Delete targets only the matching file.
-  const srcRow = page.locator('[data-testid="tree-row"][data-path="src"]');
+  const srcRow = page.locator('[data-wb-tree-row][data-path="src"]');
   await srcRow.focus();
   await pressMod(page, "Mod+a");
-  await expect(srcRow).not.toHaveClass(/is-selected/);
-  await expect(buttonRow).toHaveClass(/is-selected/);
+  await expect(srcRow).toHaveAttribute("data-selected", "false");
+  await expect(buttonRow).toHaveAttribute("data-selected", "true");
   await page.keyboard.press("Delete");
   const confirmDialog = page.getByTestId("wb-confirm-dialog");
   await expect(confirmDialog).toBeVisible();
@@ -124,18 +124,17 @@ test("explorer compacts single-child folders, shows indent guides, and supports 
   // Starting rename (F2) while filtered clears the filter and reveals the inline name box,
   // even when a grandparent folder was collapsed prior to filtering.
   await filterInput.press("Escape");
-  await expect(page.getByTestId("tree-filter")).toHaveCount(0);
+  await expect(filterInput).toHaveValue("");
   await chain.click(); // collapses `src` while leaving `src/app` expanded inside
   await expect(buttonRow).toHaveCount(0);
   await pressMod(page, "Mod+f");
-  await page.getByTestId("tree-filter-input").fill("Button");
+  await page.locator("[data-wb-filter-field] input").fill("Button");
   await expect(buttonRow).toBeVisible();
   await buttonRow.focus();
   await page.keyboard.press("F2");
-  await expect(page.getByTestId("tree-filter")).toHaveCount(0);
-  await expect(page.getByTestId("tree-input")).toBeVisible();
+  await expect(page.getByTestId("wb-tree-inline-input")).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.locator('[data-testid="tree-row"][data-path="README.md"]')).toBeVisible();
+  await expect(page.locator('[data-wb-tree-row][data-path="README.md"]')).toBeVisible();
 });
 
 test("terminal capture-phase context menu opens with Clear and Split actions", async ({ page }) => {
@@ -246,12 +245,12 @@ test.describe("mobile and hybrid touch tab activation", () => {
     await writeFile(page, "alpha.ts", "export const alpha = 1;\n");
     await writeFile(page, "beta.ts", "export const beta = 2;\n");
 
-    await page.getByTestId("file-tree").getByRole("button", { name: "alpha.ts", exact: true }).tap();
+    await page.getByTestId("file-tree").getByRole("treeitem", { name: "alpha.ts", exact: true }).tap();
     await expect.poll(() => editorText(page)).toBe("export const alpha = 1;\n");
     await expect.poll(() => editorHasFocus(page)).toBe(false);
 
     await page.getByTestId("pane-switcher").getByRole("button", { name: "Files" }).tap();
-    await page.getByTestId("file-tree").getByRole("button", { name: "beta.ts", exact: true }).tap();
+    await page.getByTestId("file-tree").getByRole("treeitem", { name: "beta.ts", exact: true }).tap();
     await expect.poll(() => editorText(page)).toBe("export const beta = 2;\n");
     await expect.poll(() => editorHasFocus(page)).toBe(false);
 
