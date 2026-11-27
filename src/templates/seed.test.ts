@@ -189,6 +189,33 @@ describe("seedWorkspace (via shared createWorkspaceWithFiles)", () => {
       "user edit",
     );
   });
+
+  test("seedWorkspace and retrySeedWorkspace preserve defaultName for unnamed blank workspaces", async () => {
+    const env = createFakeEnv();
+    const seeded = await seedWorkspace("blank", {}, env.seedDeps(["blank11111"]));
+    expect(seeded.meta.defaultName).toBe(true);
+
+    const partial = createWorkspaceMeta({
+      name: "workspace",
+      template: "blank",
+      defaultName: true,
+      state: INCOMPLETE,
+    });
+    env.stores.set(storageName("blank22222"), {
+      files: new Map([[WORKSPACE_META_PATH, serializeMeta(partial)]]),
+      locked: false,
+    });
+    const retried = await retrySeedWorkspace("blank22222", "blank", undefined, env.seedDeps());
+    expect(retried.status).toBe("seeded");
+    if (retried.status === "seeded") {
+      expect(retried.meta.name).toBe("workspace");
+      expect(retried.meta.defaultName).toBe(true);
+    }
+    expect(
+      parseWorkspaceMeta(env.stores.get(storageName("blank22222"))?.files.get(WORKSPACE_META_PATH) ?? "")
+        ?.defaultName,
+    ).toBe(true);
+  });
 });
 
 describe("renameWorkspace", () => {

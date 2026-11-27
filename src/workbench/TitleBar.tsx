@@ -213,8 +213,8 @@ export function TitleBar(props: TitleBarProps) {
     branch: session?.status.get(STATUS_SLOT.branch),
     actions: listCommands(session, ACTIONS),
   }));
-  // The name the workspace was given, shown once; its random id only when this browser has none.
-  const [name] = useState(() => workspaceName(props.workspaceId));
+  // Reactive so opening an existing workspace immediately replaces its random id once hydrated.
+  const name = useValue(() => workspaceName(props.workspaceId));
 
   return (
     <header className="wb-titlebar">

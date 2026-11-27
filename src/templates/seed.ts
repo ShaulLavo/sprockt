@@ -202,6 +202,7 @@ export async function seedWorkspace(
   const meta = createWorkspaceMeta({
     name: options.customName ?? template.defaultName,
     template: template.id,
+    defaultName: !options.customName && template.id === BLANK_TEMPLATE.id,
   });
   const id = await createWorkspaceWithFiles(template.files, meta, deps, { signal: options.signal });
   return { id, meta };
@@ -225,6 +226,7 @@ export async function retrySeedWorkspace(
   const meta = createWorkspaceMeta({
     name: customName ?? template.defaultName,
     template: template.id,
+    defaultName: !customName && template.id === BLANK_TEMPLATE.id,
   });
   try {
     await createWorkspaceWithFiles(template.files, meta, deps, { into: id });

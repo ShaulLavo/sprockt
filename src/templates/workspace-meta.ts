@@ -1,16 +1,25 @@
 // Metadata stored at /.sprockt/workspace.json inside each Waffle workspace.
 // Pure parsing, validation, and formatting: no Solid, no DOM, no Waffle imports.
 import {
+  deriveGitHubWorkspaceName,
   INCOMPLETE,
+  normalizeWorkspaceName,
   WORKSPACE_META_DIR,
   WORKSPACE_META_PATH,
   type WorkspaceMeta as ImporterWorkspaceMeta,
   type WorkspaceSource,
 } from "../importer/metadata";
 
-export { INCOMPLETE, WORKSPACE_META_DIR, WORKSPACE_META_PATH };
+export {
+  deriveGitHubWorkspaceName,
+  INCOMPLETE,
+  normalizeWorkspaceName,
+  WORKSPACE_META_DIR,
+  WORKSPACE_META_PATH,
+};
 
-const MAX_NAME_LENGTH = 64;
+const BLANK_DEFAULT_NAME = "workspace";
+const metaTextDecoder = new TextDecoder();
 
 export type WorkspaceState = typeof INCOMPLETE;
 
@@ -20,23 +29,76 @@ export interface WorkspaceMeta extends ImporterWorkspaceMeta {
   readonly source?: WorkspaceSource;
 }
 
-export function normalizeWorkspaceName(raw: string): string | undefined {
-  const collapsed = raw.trim().replace(/\s+/g, " ");
-  if (!collapsed) return undefined;
-  return collapsed.slice(0, MAX_NAME_LENGTH);
+/** Reads a clean project name from a root `package.json` string or UTF-8 bytes. */
+export function packageJsonName(raw: string | Uint8Array | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const text = typeof raw === "string" ? raw : metaTextDecoder.decode(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const name = (parsed as Record<string, unknown>).name;
+  return typeof name === "string" ? normalizeWorkspaceName(name) : undefined;
+}
+
+/**
+ * Derives a clean name when every uploaded item lives under a single top-level folder
+ * (a folder picker pick or a dropped directory). Loose files return `undefined`.
+ */
+export function deriveUploadFolderName(
+  items: readonly { readonly path: string; readonly hasData: boolean }[],
+): string | undefined {
+  if (items.length === 0) return undefined;
+  let folder: string | undefined;
+  let hasFolderEvidence = false;
+  for (const item of items) {
+    const slash = item.path.indexOf("/");
+    const head = slash === -1 ? item.path : item.path.slice(0, slash);
+    if (!head) return undefined;
+    if (folder === undefined) folder = head;
+    else if (folder !== head) return undefined;
+    if (slash !== -1 || !item.hasData) hasFolderEvidence = true;
+  }
+  return hasFolderEvidence && folder ? normalizeWorkspaceName(folder) : undefined;
+}
+
+/** Safe `.zip` filename derived from a workspace display name. */
+export function zipFilename(name: string): string {
+  // Replacing control characters is intentional so downloaded filenames are safe across OSes.
+  // oxlint-disable-next-line no-control-regex
+  const cleaned = name.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-").replace(/^[.\s-]+|[.\s-]+$/g, "");
+  return `${cleaned || BLANK_DEFAULT_NAME}.zip`;
+}
+
+/**
+ * Whether `meta.name` is a Sprockt-assigned placeholder that may be replaced by a real project name.
+ * Legacy workspaces without `defaultName` are never treated as placeholders, so pre-existing
+ * explicit renames (even to `"workspace"` or `"Shared workspace"`) are always preserved.
+ */
+export function isPlaceholderWorkspaceName(meta: WorkspaceMeta): boolean {
+  return meta.defaultName === true;
 }
 
 export function createWorkspaceMeta(input: {
   readonly name: string;
   readonly template: string;
+  readonly defaultName?: boolean;
   readonly now?: Date;
   readonly state?: WorkspaceState;
 }): WorkspaceMeta {
   const timestamp = (input.now ?? new Date()).toISOString();
-  const name = normalizeWorkspaceName(input.name) ?? "workspace";
-  return input.state
-    ? { name, template: input.template, created: timestamp, lastOpened: timestamp, state: input.state }
-    : { name, template: input.template, created: timestamp, lastOpened: timestamp };
+  const name = normalizeWorkspaceName(input.name) ?? BLANK_DEFAULT_NAME;
+  return {
+    name,
+    template: input.template,
+    created: timestamp,
+    lastOpened: timestamp,
+    ...(input.defaultName ? { defaultName: true } : {}),
+    ...(input.state ? { state: input.state } : {}),
+  };
 }
 
 function readStringField(record: Readonly<Record<string, unknown>>, key: string): string | undefined {
@@ -65,7 +127,23 @@ function readWorkspaceSource(record: Readonly<Record<string, unknown>>): Workspa
   return { kind: "github", owner, repo, ref, subdir, ...(commit ? { commit } : {}) };
 }
 
-export function parseWorkspaceMeta(raw: string): WorkspaceMeta | undefined {
+export interface PartialWorkspaceMeta {
+  readonly name?: string;
+  readonly defaultName?: boolean;
+  readonly template?: string;
+  readonly created?: string;
+  readonly lastOpened?: string;
+  readonly state?: WorkspaceState;
+  readonly source?: WorkspaceSource;
+}
+
+/**
+ * Extracts every individually valid metadata field from raw `workspace.json`, even when other
+ * fields (such as `created`) are missing. Used so partial recovery and renames never clobber
+ * valid fields like `name`, `template`, `lastOpened`, `state`, or `source`.
+ */
+export function parsePartialWorkspaceMeta(raw: string | undefined): PartialWorkspaceMeta | undefined {
+  if (!raw) return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -74,24 +152,91 @@ export function parseWorkspaceMeta(raw: string): WorkspaceMeta | undefined {
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
   const record = parsed as Record<string, unknown>;
-  const name = normalizeWorkspaceName(readStringField(record, "name") ?? "");
   const source = readWorkspaceSource(record);
-  const template = readStringField(record, "template") ?? (source?.kind === "github" ? "github" : "blank");
+  const name = normalizeWorkspaceName(readStringField(record, "name") ?? "");
+  const template = readStringField(record, "template") ?? (source?.kind === "github" ? "github" : undefined);
   const created = readStringField(record, "created") ?? readStringField(record, "createdAt");
   const lastOpened = readStringField(record, "lastOpened") ?? created;
-  if (!name || !created || !lastOpened) return undefined;
   const state = readStateField(record);
+  const defaultName = record.defaultName === true ? true : undefined;
   return {
-    name,
-    template,
-    created,
-    lastOpened,
+    ...(name ? { name } : {}),
+    ...(defaultName ? { defaultName } : {}),
+    ...(template ? { template } : {}),
+    ...(created ? { created } : {}),
+    ...(lastOpened ? { lastOpened } : {}),
     ...(state ? { state } : {}),
     ...(source ? { source } : {}),
   };
 }
 
-/** Updates only the workspace name while preserving any extra fields (e.g. importer source/detected). */
+export function parseWorkspaceMeta(raw: string): WorkspaceMeta | undefined {
+  const partial = parsePartialWorkspaceMeta(raw);
+  if (!partial) return undefined;
+  const { source } = partial;
+  const name =
+    partial.name ??
+    (source?.kind === "github" ? deriveGitHubWorkspaceName(source.repo, source.subdir) : undefined);
+  const template = partial.template ?? "blank";
+  const created = partial.created;
+  const lastOpened = partial.lastOpened ?? created;
+  if (!name || !created || !lastOpened) return undefined;
+  return {
+    name,
+    template,
+    created,
+    lastOpened,
+    ...(partial.defaultName ? { defaultName: true } : {}),
+    ...(partial.state ? { state: partial.state } : {}),
+    ...(source ? { source } : {}),
+  };
+}
+
+function mergeMetaJson(raw: string | undefined, meta: WorkspaceMeta): string {
+  if (!raw) return serializeWorkspaceMeta(meta);
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
+      const merged: Record<string, unknown> = {
+        ...record,
+        name: meta.name,
+        template: meta.template,
+        created: meta.created,
+        lastOpened: meta.lastOpened,
+        ...(meta.source && !readWorkspaceSource(record) ? { source: meta.source } : {}),
+      };
+      delete merged.defaultName;
+      return `${JSON.stringify(merged, null, 2)}\n`;
+    }
+  } catch {
+    // Fall through to clean serialized metadata.
+  }
+  return serializeWorkspaceMeta(meta);
+}
+
+function buildRecoveredMeta(
+  raw: string | undefined,
+  name: string,
+  timestamp: string,
+  preserveLastOpened: boolean,
+  fallbackHint?: WorkspaceMeta,
+): WorkspaceMeta {
+  const partial = parsePartialWorkspaceMeta(raw);
+  const source = partial?.source ?? fallbackHint?.source;
+  return {
+    name,
+    template: partial?.template ?? fallbackHint?.template ?? "blank",
+    created: partial?.created ?? fallbackHint?.created ?? timestamp,
+    lastOpened: preserveLastOpened
+      ? (partial?.lastOpened ?? fallbackHint?.lastOpened ?? timestamp)
+      : timestamp,
+    ...(partial?.state ? { state: partial.state } : {}),
+    ...(source ? { source } : {}),
+  };
+}
+
+/** Records an explicit user rename while preserving any valid fields (e.g. template, lastOpened, source, detected). */
 export function updateWorkspaceMetaName(
   raw: string | undefined,
   nextName: string,
@@ -100,24 +245,26 @@ export function updateWorkspaceMetaName(
   readonly json: string;
   readonly meta: WorkspaceMeta;
 } {
-  const existing = raw ? parseWorkspaceMeta(raw) : undefined;
   const timestamp = now.toISOString();
-  const meta: WorkspaceMeta = existing
-    ? { ...existing, name: nextName }
-    : { name: nextName, template: "blank", created: timestamp, lastOpened: timestamp };
+  const fallback = buildRecoveredMeta(raw, nextName, timestamp, true);
+  const json = mergeMetaJson(raw, fallback);
+  return { json, meta: parseWorkspaceMeta(json) ?? fallback };
+}
 
-  if (raw) {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const merged = { ...(parsed as Record<string, unknown>), name: nextName };
-        return { json: `${JSON.stringify(merged, null, 2)}\n`, meta };
-      }
-    } catch {
-      // Fall through to clean serialized metadata.
-    }
-  }
-  return { json: serializeWorkspaceMeta(meta), meta };
+/** Updates an auto-derived workspace name while preserving valid disk fields and falling back to known hint fields. */
+export function mergeDerivedWorkspaceName(
+  raw: string | undefined,
+  derivedName: string,
+  now = new Date(),
+  fallbackHint?: WorkspaceMeta,
+): {
+  readonly json: string;
+  readonly meta: WorkspaceMeta;
+} {
+  const timestamp = now.toISOString();
+  const fallback = buildRecoveredMeta(raw, derivedName, timestamp, false, fallbackHint);
+  const json = mergeMetaJson(raw, fallback);
+  return { json, meta: parseWorkspaceMeta(json) ?? fallback };
 }
 
 export function serializeWorkspaceMeta(meta: WorkspaceMeta): string {

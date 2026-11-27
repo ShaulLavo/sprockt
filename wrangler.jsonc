@@ -8,6 +8,7 @@
   "name": "sprockt",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-15",
+  "compatibility_flags": ["enable_request_signal"],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

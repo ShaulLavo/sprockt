@@ -3,17 +3,19 @@
  * repositories, which it cannot fetch directly because codeload.github.com
  * sends no CORS headers.
  *
- *   GET <prefix>/repo/<owner>/<repo>               -> minimal metadata from api.github.com
- *   GET <prefix>/refs/<owner>/<repo>/<segment>     -> branch and tag names starting with <segment>
- *   GET <prefix>/archive/<owner>/<repo>/<ref>      -> codeload tar.gz, streamed through
+ *   GET <prefix>/repo/<owner>/<repo>                        -> minimal metadata from api.github.com
+ *   GET <prefix>/refs/<owner>/<repo>/<segment>              -> branch and tag names starting with <segment>
+ *   GET <prefix>/archive/<owner>/<repo>/<ref>               -> codeload tar.gz, streamed through
+ *   GET <prefix>/release/<owner>/<repo>/<tag>/<asset>.tgz   -> public tagged GitHub Release .tgz, streamed through
  *
  * Nothing else is proxied: names are validated, upstream URLs are built from
  * fixed templates, and every redirect hop must stay on the route's own HTTPS
- * origin and path shape. Request headers and cookies from the browser are
+ * origin and path shape (or GitHub's official release-asset CDN hosts for
+ * release tarballs). Request headers and cookies from the browser are
  * never forwarded. The optional `GITHUB_TOKEN` raises the API rate limit; it
- * is attached only to validated api.github.com requests, never to codeload,
- * and private repositories are refused even when the token could read them,
- * so the proxy can only ever expose public code.
+ * is attached only to validated api.github.com requests, never to codeload or
+ * release downloads, and private repositories are refused even when the token
+ * could read them, so the proxy can only ever expose public code.
  */
 import type { GitHubErrorCode, ProxyErrorBody, RepoInfo } from "../src/importer/github/errors.ts";
 import {
@@ -22,6 +24,7 @@ import {
   isOwnerName,
   isRefComponent,
   isRefName,
+  isReleaseAssetName,
   isRepoName,
 } from "../src/importer/github/names.ts";
 import type { MatchingRefs } from "../src/importer/github/source.ts";
@@ -74,6 +77,18 @@ const USER_AGENT = "sprockt-github-proxy";
 
 const API_ORIGIN = "https://api.github.com";
 const CODELOAD_ORIGIN = "https://codeload.github.com";
+const GITHUB_ORIGIN = "https://github.com";
+const RELEASE_ASSET_ORIGINS = new Set([
+  "https://release-assets.githubusercontent.com",
+  "https://objects.githubusercontent.com",
+  "https://objects-origin.githubusercontent.com",
+]);
+const RELEASE_ASSET_PATH_PREFIX = "/github-production-release-asset";
+/** COEP-safe headers sent on every proxy response so same-origin browser fetches succeed under require-corp. */
+const SECURITY_HEADERS = {
+  "cross-origin-resource-policy": "same-origin",
+  "x-content-type-options": "nosniff",
+} as const;
 /** A repository by name, or by id as GitHub's redirect for a renamed repository points. */
 const API_REPO = String.raw`/(?:repos/[^/]+/[^/]+|repositories/\d+)`;
 const REPO_PATH = new RegExp(`^${API_REPO}$`);
@@ -95,8 +110,18 @@ export function createGitHubProxy(options: GitHubProxyOptions = {}) {
     const [route, owner = "", repo = "", ...rest] = segments;
     const invalid = validateNames(owner, repo);
     if (invalid) return invalid;
-    const context: UpstreamContext = { fetch: upstream, env, method: request.method };
+    const context: UpstreamContext = {
+      fetch: upstream,
+      env,
+      method: request.method,
+      signal: request.signal,
+    };
     if (route === "archive" && rest.length > 0) return archive(context, owner, repo, rest.join("/"));
+    if (route === "release" && rest.length >= 2) {
+      const asset = rest.at(-1) ?? "";
+      const tag = rest.slice(0, -1).join("/");
+      return releaseAsset(context, owner, repo, tag, asset);
+    }
     const isApiRoute = (route === "repo" && rest.length === 0) || (route === "refs" && rest.length === 1);
     if (!isApiRoute) return errorResponse(404, "not-found", "No such route.");
     if (!(await withinApiLimit(request, env))) {
@@ -126,6 +151,7 @@ interface UpstreamContext {
   readonly fetch: Fetch;
   readonly env: GitHubProxyEnv;
   readonly method: string;
+  readonly signal: AbortSignal;
 }
 
 function routeSegments(path: string): string[] | undefined {
@@ -185,7 +211,9 @@ async function repoInfo(context: UpstreamContext, owner: string, repo: string): 
     defaultBranch: body.default_branch ?? "main",
     sizeKiB: body.size ?? 0,
   };
-  return Response.json(info, { headers: { "cache-control": `public, max-age=${SHORT_CACHE}` } });
+  return Response.json(info, {
+    headers: { "cache-control": `public, max-age=${SHORT_CACHE}`, ...SECURITY_HEADERS },
+  });
 }
 
 /**
@@ -209,7 +237,9 @@ async function matchingRefs(
   if (branches instanceof Response) return branches;
   if (tags instanceof Response) return tags;
   const refs: MatchingRefs = { branches, tags };
-  return Response.json(refs, { headers: { "cache-control": `public, max-age=${SHORT_CACHE}` } });
+  return Response.json(refs, {
+    headers: { "cache-control": `public, max-age=${SHORT_CACHE}`, ...SECURITY_HEADERS },
+  });
 }
 
 async function refNames(
@@ -279,6 +309,7 @@ async function archive(
   const headers = new Headers({
     "content-type": "application/gzip",
     "cache-control": ttl === IMMUTABLE_CACHE ? `public, max-age=${ttl}, immutable` : `public, max-age=${ttl}`,
+    ...SECURITY_HEADERS,
   });
   if (context.method === "HEAD") {
     await response.body.cancel();
@@ -288,6 +319,132 @@ async function archive(
   // runtime keeps its length; only an unsized body needs the counting stream.
   const body = declared > 0 ? response.body : response.body.pipeThrough(byteLimit(limit));
   return new Response(body, { status: 200, headers });
+}
+
+async function buildReleaseResponse(
+  context: UpstreamContext,
+  response: Response,
+  asset: string,
+): Promise<Response> {
+  const limit = maxArchiveBytes(context.env);
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > limit) {
+    await response.body?.cancel();
+    return errorResponse(
+      413,
+      "too-large",
+      `${asset} is larger than the ${Math.round(limit / 1048576)} MiB download limit.`,
+    );
+  }
+  const headers = new Headers({
+    "content-type": "application/gzip",
+    "cache-control": `public, max-age=${SHORT_CACHE}`,
+    ...SECURITY_HEADERS,
+  });
+  if (context.method === "HEAD") {
+    await response.body?.cancel();
+    return new Response(null, { status: 200, headers });
+  }
+  // Always enforce the byte limit on release streams, even if upstream under-reports content-length.
+  const body = response.body?.pipeThrough(byteLimit(limit));
+  return new Response(body, { status: 200, headers });
+}
+
+async function releaseAsset(
+  context: UpstreamContext,
+  owner: string,
+  repo: string,
+  tag: string,
+  asset: string,
+): Promise<Response> {
+  if (!isRefName(tag)) return errorResponse(400, "invalid-source", `"${tag}" is not a valid release tag.`);
+  if (!isReleaseAssetName(asset)) {
+    return errorResponse(400, "invalid-source", `"${asset}" is not a valid .tgz release asset.`);
+  }
+  const url = `${GITHUB_ORIGIN}/${owner}/${repo}/releases/download/${encodeRefPath(tag)}/${encodeURIComponent(asset)}`;
+  const name = `${owner}/${repo}`;
+  try {
+    const response = await fetchReleaseUpstream(context, url);
+    if (!response) return errorResponse(502, "upstream", "GitHub redirected somewhere unexpected.");
+    if (response.status === 404) {
+      await response.body?.cancel().catch(() => undefined);
+      return errorResponse(
+        404,
+        "not-found",
+        `${name} has no release asset "${asset}" on "${tag}", or it is private.`,
+      );
+    }
+    if (!response.ok || !response.body) return await upstreamError(response, name);
+    return await buildReleaseResponse(context, response, asset);
+  } catch (error: unknown) {
+    if (context.signal.aborted) throw error;
+    return errorResponse(502, "upstream", `Could not reach GitHub for ${name}.`);
+  }
+}
+
+function parseUrl(input: string, base?: URL): URL | undefined {
+  try {
+    return new URL(input, base);
+  } catch {
+    return undefined;
+  }
+}
+
+function isAllowedGitHubReleasePath(pathname: string): boolean {
+  const segments = routeSegments(pathname);
+  if (!segments || segments.length < 6) return false;
+  const [owner = "", repo = "", releases, download, ...rest] = segments;
+  if (releases !== "releases" || download !== "download" || rest.length < 2) return false;
+  const asset = rest.at(-1) ?? "";
+  const tag = rest.slice(0, -1).join("/");
+  return isOwnerName(owner) && isRepoName(repo) && isRefName(tag) && isReleaseAssetName(asset);
+}
+
+function isAllowedReleaseAssetPath(pathname: string): boolean {
+  if (!pathname.startsWith(RELEASE_ASSET_PATH_PREFIX)) return false;
+  return !pathname.split("/").some((segment) => segment === "." || segment === "..");
+}
+
+function isAllowedReleaseHop(target: URL, onAssetHost: boolean): boolean {
+  if (
+    target.protocol !== "https:" ||
+    target.username !== "" ||
+    target.password !== "" ||
+    target.port !== ""
+  ) {
+    return false;
+  }
+  if (RELEASE_ASSET_ORIGINS.has(target.origin)) return isAllowedReleaseAssetPath(target.pathname);
+  if (onAssetHost || target.origin !== GITHUB_ORIGIN || target.search !== "") return false;
+  return isAllowedGitHubReleasePath(target.pathname);
+}
+
+/**
+ * Fetches a public GitHub release `.tgz` with manual redirects. Only `https://github.com` release
+ * download URLs and GitHub's official release-asset CDN hosts may be visited; no auth token or
+ * browser headers are ever sent, and signed redirects are not subrequest-cached.
+ */
+async function fetchReleaseUpstream(context: UpstreamContext, url: string): Promise<Response | undefined> {
+  let target = parseUrl(url);
+  let onAssetHost = false;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (!target || !isAllowedReleaseHop(target, onAssetHost)) return undefined;
+    const init: RequestInit = {
+      method: "GET",
+      redirect: "manual",
+      headers: { "user-agent": USER_AGENT },
+      signal: context.signal,
+    };
+    // Each hop depends on the Location of the one before it.
+    // oxlint-disable-next-line no-await-in-loop
+    const response = await context.fetch(target.toString(), init);
+    const location = response.headers.get("location");
+    if (response.status < 300 || response.status >= 400 || !location) return response;
+    void response.body?.cancel().catch(() => undefined);
+    onAssetHost = onAssetHost || RELEASE_ASSET_ORIGINS.has(target.origin);
+    target = parseUrl(location, target);
+  }
+  return undefined;
 }
 
 function maxArchiveBytes(env: GitHubProxyEnv): number {
@@ -365,6 +522,7 @@ async function fetchUpstream(
       method: "GET",
       redirect: "manual",
       headers: policy.headers,
+      signal: context.signal,
     };
     if (policy.cf) init.cf = policy.cf;
     // Each hop depends on the Location of the one before it.
@@ -469,5 +627,8 @@ function errorResponse(
   retryAfter?: number,
 ): Response {
   const body: ProxyErrorBody = retryAfter === undefined ? { error, message } : { error, message, retryAfter };
-  return Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
+  return Response.json(body, {
+    status,
+    headers: { "cache-control": "no-store", ...SECURITY_HEADERS, ...headers },
+  });
 }

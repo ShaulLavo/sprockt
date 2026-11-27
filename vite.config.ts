@@ -1,6 +1,7 @@
 import { defineConfig, type Connect, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { previewScripts } from "./src/preview/vite-plugin";
+import { createGitHubProxyMiddleware } from "./worker/github-proxy-middleware.ts";
 
 // Waffle shares process state through SharedArrayBuffer, so every response needs cross-origin
 // isolation. Production gets the same headers from public/_headers.
@@ -28,8 +29,18 @@ function crossOriginIsolation(): Plugin {
   };
 }
 
+/** Serves `/api/github/*` through the same Worker proxy in `vite dev` and `vite preview`. */
+function githubProxy(): Plugin {
+  const middleware = createGitHubProxyMiddleware();
+  return {
+    name: "sprockt:github-proxy",
+    configureServer: (server) => void server.middlewares.use(middleware),
+    configurePreviewServer: (server) => void server.middlewares.use(middleware),
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), crossOriginIsolation(), previewScripts()],
+  plugins: [react(), crossOriginIsolation(), githubProxy(), previewScripts()],
   resolve: {
     dedupe: ["react", "react-dom", "@shaulavo/hotkeys", "@base-ui/react"],
   },

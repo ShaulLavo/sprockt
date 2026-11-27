@@ -1,4 +1,5 @@
 // What the workbench shows while a workspace boots: its steps, done, running or waiting.
+import { useValue } from "../lib/react";
 import type { BootStage } from "../runtime/boot";
 import { fill } from "../ui/format";
 import { Icon } from "../ui/icons";
@@ -14,13 +15,14 @@ function StepIcon(props: { state: StepState }) {
 }
 
 export function BootProgress(props: { workspaceId: string; stage: BootStage; error?: string }) {
+  const name = useValue(() => workspaceName(props.workspaceId));
   return (
     <div className="wb-boot" data-testid="boot-progress">
       <div className="wb-boot-card" role="status" aria-live="polite">
         <span className="wb-boot-mark" aria-hidden="true">
           <Icon name="logo" />
         </span>
-        <p className="wb-boot-title">{workspaceName(props.workspaceId)}</p>
+        <p className="wb-boot-title">{name}</p>
         <ol className="wb-boot-steps">
           {bootSteps(props.stage, Boolean(props.error)).map((step) => (
             <li key={step.stage} data-state={step.state}>
