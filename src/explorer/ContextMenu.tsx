@@ -40,8 +40,8 @@ export function ContextMenu(props: {
       y={props.y}
       label={props.label}
       items={items}
-      onOpenChange={(open) => {
-        if (!open && !ranRef.current) props.onClose(true);
+      onOpenChange={(open, reason) => {
+        if (!open && !ranRef.current) props.onClose(reason === "escape-key");
       }}
     />
   );

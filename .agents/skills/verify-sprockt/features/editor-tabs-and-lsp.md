@@ -4,7 +4,7 @@ Singapore code editor (`src/editor/`) with multi-tab strip, syntax highlighting,
 
 ## Sub-features
 
-- Multi-tab strip (`editor-tabs`, `editor-tab`) with dirty dot (`editor-dirty`), drag reorder, close/close-others/close-all with staged unsaved-changes confirmation (`unsaved-dialog`).
+- Multi-tab strip (`editor-tabs`, `editor-tab`) with dirty dot (`editor-dirty`), drag reorder, close/close-others/close-all with staged unsaved-changes confirmation (`wb-unsaved-dialog`).
 - Syntax highlighting (lazy grammars, live light/dark theme sync), breadcrumbs (`editor-file`), status bar save state (`save-state`), and external-change conflict bar (`editor-conflict`).
 - Quick Open (`Mod+P`) and Command Palette (`Mod+Shift+P` or `Search files and commands` button).
 - TypeScript IntelliSense powered by `tsrs-lsp.wasm` (`src/lsp/project.ts`, `src/lsp/typescript.ts`), gated on direct `package.json` dependency installation so fresh starters open without false-alarm squiggles.

@@ -426,12 +426,6 @@
   outline-offset: 1px;
 }
 
-.unsaved-dialog-error {
-  margin: 0 0 12px;
-  color: var(--ed-danger);
-  font-size: var(--text-xs, 12px);
-}
-
 @media (max-width: 768px) {
   .editor-tabs {
     height: 44px;

@@ -128,7 +128,7 @@ describe("fitLayout", () => {
   });
 
   test("a wide explorer saved at 1440px leaves the editor its minimum at 800px", () => {
-    const wide = { ...DEFAULT_LAYOUT, explorer: 520 };
+    const wide = { ...DEFAULT_LAYOUT, explorer: 480 };
     // 800px window: minus the activity bar and three 6px gaps.
     const fitted = fitLayout(wide, { width: 736, height: 700 });
     const editor = 736 - fitted.explorer - fitted.preview;
@@ -136,7 +136,7 @@ describe("fitLayout", () => {
     expect(fitted.preview).toBeGreaterThanOrEqual(MIN_PX.preview);
     expect(fitted.explorer).toBeGreaterThanOrEqual(MIN_PX.explorer);
     // The saved layout is untouched, so the explorer grows back with the window.
-    expect(fitLayout(wide, { width: 1376, height: 700 }).explorer).toBe(520);
+    expect(fitLayout(wide, { width: 1376, height: 700 }).explorer).toBe(480);
   });
 
   test("when even the minimums do not fit, the editor keeps its width first", () => {

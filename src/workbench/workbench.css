@@ -1114,7 +1114,7 @@
     }
   }
 
-  .wb-menu-item {
+  .wb-menu-panel .wb-menu-item {
     display: flex;
     align-items: center;
     gap: var(--space-3);
@@ -1126,11 +1126,11 @@
     text-align: left;
   }
 
-  .wb-menu-item:active {
+  .wb-menu-panel .wb-menu-item:active {
     background: var(--bg-hover);
   }
 
-  .wb-menu-item .ico {
+  .wb-menu-panel .wb-menu-item .ico {
     width: 18px;
     height: 18px;
     color: var(--fg-muted);

@@ -1,7 +1,7 @@
 // The desktop pane layout as plain data: sizes, which panes are open, and the arithmetic that
 // drag handles and keyboard handles share. No Solid and no DOM here, so it is unit tested.
 
-import { LAYOUT_LIMITS } from "@shaulavo/workbench-core";
+import { fitPaneGeometry, LAYOUT_LIMITS } from "@shaulavo/workbench-core";
 
 /** A drag handle between two panes, named after the pane it resizes. */
 export type Splitter = "explorer" | "preview" | "terminal";
@@ -222,24 +222,17 @@ export interface Fitted {
   readonly terminal: number;
 }
 
-const atLeast = (value: number, floor: number) => Math.max(value, floor);
-
-/**
- * Fits a saved layout into the space there is. The editor keeps priority: when everything
- * cannot fit, the explorer and preview give up width first, down to their minimums and then
- * below, and the terminal gives up height. The saved layout is not changed, so the panes grow
- * back when the window does.
- */
 export function fitLayout(layout: PaneLayout, space: Space): Fitted {
-  const spare = atLeast(space.width - EDITOR_MIN_PX, 0);
-  const previewReserve = layout.previewOpen ? MIN_PX.preview : 0;
-  const explorerRoom = Math.min(atLeast(spare - previewReserve, MIN_PX.explorer), spare);
-  const explorer = layout.explorerOpen ? Math.min(layout.explorer, explorerRoom) : 0;
-  const area = space.width - explorer;
-  const previewMax = atLeast(area - EDITOR_MIN_PX, 0);
-  const previewMin = Math.min(MIN_PX.preview, previewMax);
-  const preview = layout.previewOpen ? clamp(layout.preview * area, previewMin, previewMax) : 0;
-  const terminalMax = atLeast(space.height - EDITOR_ROW_MIN_PX, 0);
-  const terminal = layout.terminalOpen ? Math.min(layout.terminal, terminalMax) : 0;
-  return { explorer: Math.round(explorer), preview: Math.round(preview), terminal: Math.round(terminal) };
+  const fitted = fitPaneGeometry(
+    {
+      explorerWidthPx: layout.explorer,
+      previewFraction: layout.preview,
+      terminalHeightPx: layout.terminal,
+      explorerOpen: layout.explorerOpen,
+      previewOpen: layout.previewOpen,
+      terminalOpen: layout.terminalOpen,
+    },
+    space,
+  );
+  return { explorer: fitted.explorerPx, preview: fitted.previewPx, terminal: fitted.terminalPx };
 }
