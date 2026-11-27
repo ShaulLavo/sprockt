@@ -19,7 +19,7 @@ export const PROBE = `(() => {
   });
 })();`;
 
-export const PREVIEW_FRAME = "[data-testid=preview-frame]";
+export const PREVIEW_FRAME = "[data-testid=wb-preview-iframe]";
 
 interface Reply {
   readonly value?: unknown;

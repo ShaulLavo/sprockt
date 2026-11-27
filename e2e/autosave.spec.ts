@@ -95,7 +95,7 @@ test.describe("on a phone", () => {
 
     await pane(page, "Preview").tap();
     await page.getByTestId("preview-start").tap();
-    const heading = page.frameLocator("[data-testid=preview-frame]").getByRole("heading");
+    const heading = page.frameLocator("[data-testid=wb-preview-iframe]").getByRole("heading");
     await expect(heading).toHaveText("Before");
 
     await pane(page, "Files").tap();

@@ -81,7 +81,7 @@ async function hostAGuest(page: Page, context: BrowserContext, server = SERVER):
   const id = await newWorkspace(page);
   await writeFile(page, "server.ts", server);
   await runInTerminal(page, "bun server.ts");
-  await expect(page.frameLocator("[data-testid=preview-frame]").getByRole("heading")).toHaveText(
+  await expect(page.frameLocator("[data-testid=wb-preview-iframe]").getByRole("heading")).toHaveText(
     "Guest page",
   );
   const address = `/__preview/${id}/3000/`;
@@ -160,7 +160,7 @@ test.describe("with a tab of the earlier build still open", () => {
     await writeFile(fresh, "server.ts", PROBED_SERVER);
     await runInTerminal(fresh, "bun server.ts");
     await expectPreviewText(fresh, "h1", "Guest page");
-    const address = new URL((await fresh.getByTestId("preview-frame").getAttribute("src")) ?? "");
+    const address = new URL((await fresh.getByTestId("wb-preview-iframe").getAttribute("src")) ?? "");
     expect(address.host).toMatch(/^[a-z2-7]{52}-3000-pv\.localhost:\d+$/);
     expect(await registrations(fresh)).toBe(0);
   });

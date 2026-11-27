@@ -10,25 +10,6 @@ function Stroke(props: { children: ReactNode }) {
   );
 }
 
-export const BackIcon = () => (
-  <Stroke>
-    <path d="M19 12H5.5M11 6l-6 6 6 6" />
-  </Stroke>
-);
-
-export const ForwardIcon = () => (
-  <Stroke>
-    <path d="M5 12h13.5M13 6l6 6-6 6" />
-  </Stroke>
-);
-
-export const ExternalIcon = () => (
-  <Stroke>
-    <path d="M14 4.5h5.5V10M19.5 4.5 11 13" />
-    <path d="M18 14v4.5a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1H10" />
-  </Stroke>
-);
-
 export const DesktopIcon = () => (
   <Stroke>
     <rect x="3" y="4.5" width="18" height="12" rx="1.5" />

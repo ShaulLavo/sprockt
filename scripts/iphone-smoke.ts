@@ -142,10 +142,10 @@ async function runInTerminal(driver: WebDriver, command: string): Promise<void> 
   await driver.script(
     `document.querySelector('[data-testid="pane-switcher"] [aria-controls="wb-slot-terminal"]')?.click(); return true;`,
   );
-  await driver.click(".terminal-host");
+  await driver.click(".wb-terminal-stage");
   // Keys typed before the terminal holds focus are lost, as on a real phone.
   await driver.until(
-    `document.querySelector(".terminal-host")?.contains(document.activeElement)`,
+    `document.querySelector(".wb-terminal-stage")?.contains(document.activeElement)`,
     "terminal focus",
   );
   await driver.type(command + ENTER);

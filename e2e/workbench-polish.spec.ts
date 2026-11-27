@@ -142,9 +142,9 @@ test("terminal capture-phase context menu opens with Clear and Split actions", a
   await newWorkspace(page);
   await expect(page.getByTestId("terminal-state")).toHaveText("ready");
 
-  await page.locator(".term-view .term-canvas").first().click({ button: "right" });
+  await page.locator(".wb-terminal-view .wb-terminal-canvas-host").first().click({ button: "right" });
   await expect(page.locator("[data-wb-point-context-menu]")).toBeVisible();
-  await expect(page.getByTestId("term-menu-clear")).toBeVisible();
+  await expect(page.getByTestId("wb-term-ctx-clear")).toBeVisible();
   await expect(page.getByTestId("term-menu-split")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator("[data-wb-point-context-menu]")).toHaveCount(0);
@@ -152,13 +152,13 @@ test("terminal capture-phase context menu opens with Clear and Split actions", a
 
 const terminalCanvasBackground = (page: Page) =>
   page.evaluate(() => {
-    const canvas = document.querySelector<HTMLCanvasElement>(".term-canvas canvas");
+    const canvas = document.querySelector<HTMLCanvasElement>(".wb-terminal-canvas-host canvas");
     return canvas?.parentElement ? getComputedStyle(canvas.parentElement).backgroundColor : "";
   });
 
 const terminalRootInlineBackground = (page: Page) =>
   page.evaluate(() => {
-    const canvas = document.querySelector<HTMLCanvasElement>(".term-canvas canvas");
+    const canvas = document.querySelector<HTMLCanvasElement>(".wb-terminal-canvas-host canvas");
     return canvas?.parentElement?.style.backgroundColor ?? "";
   });
 

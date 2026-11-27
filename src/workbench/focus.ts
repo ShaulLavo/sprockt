@@ -16,7 +16,7 @@ export function focusPane(pane: PhonePane): boolean {
   }
   if (pane === "terminal") {
     const target = slot.querySelector<HTMLElement>(
-      '.term-view:not([data-position="hidden"]) textarea, .terminal-host button, [data-testid="terminal-tab"]',
+      '.wb-terminal-view:not([data-position="hidden"]) textarea, .wb-terminal-stage button, [data-wb-term-session] button[role="tab"]',
     );
     if (target) {
       target.focus();

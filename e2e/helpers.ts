@@ -16,8 +16,8 @@ async function workbenchState(page: Page): Promise<string> {
       `asks=${document.querySelector("[data-testid=workspace-busy]") !== null}`,
     ];
     // The preview as the page has it: its port, where its frame points and what the frame shows.
-    const frame = document.querySelector<HTMLIFrameElement>("[data-testid=preview-frame]");
-    const port = document.querySelector<HTMLSelectElement>("[data-testid=preview-port]");
+    const frame = document.querySelector<HTMLIFrameElement>("[data-testid=wb-preview-iframe]");
+    const port = document.querySelector<HTMLSelectElement>("[data-testid=wb-preview-port-select]");
     const task = document.querySelector("[data-testid=preview-task]");
     const output = document.querySelector("[data-testid=preview-task-output]")?.textContent ?? "";
     const preview = [
@@ -124,7 +124,7 @@ export async function writeFile(page: Page, path: string, text: string): Promise
 /** Waits for the shell prompt, then types a command and presses Enter. */
 export async function runInTerminal(page: Page, command: string): Promise<void> {
   await expect(page.getByTestId("terminal-state")).toHaveText("ready");
-  await page.locator(".terminal-host").click();
+  await page.locator(".wb-terminal-stage").click();
   await page.keyboard.type(command);
   await page.keyboard.press("Enter");
 }

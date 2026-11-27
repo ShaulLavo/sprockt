@@ -20,7 +20,7 @@ async function writeFiles(page: Page, files: Record<string, string>): Promise<vo
   await page.evaluate((all) => globalThis.sprockt?.workspace?.files.writeMany(all), files);
 }
 
-const frame = (page: Page) => page.frameLocator("[data-testid=preview-frame]");
+const frame = (page: Page) => page.frameLocator("[data-testid=wb-preview-iframe]");
 
 test.beforeEach(({ browserName }) => {
   // Bun 1.4.5 runs servers in Playwright's WebKit, and both tests here pass there most of the
@@ -42,7 +42,7 @@ test("Vite hot reload: an edit shows in the preview and the page keeps its state
 
   // The pane's button finds the dev script, installs what is missing and starts the server.
   await page.getByTestId("preview-task").click();
-  await expect(page.getByTestId("preview-port")).toHaveValue("5173", patient);
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("5173", patient);
   await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "running");
   // The title bar's pill prints the port the way the picker does.
   await expect(page.getByTestId("dev-server")).toHaveText(":5173");
@@ -64,7 +64,7 @@ test("Vite hot reload: an edit shows in the preview and the page keeps its state
   // The pill's stop button stops the server the pane started, and the pill goes away.
   await page.getByTestId("dev-server").getByRole("button", { name: "Stop dev server" }).click();
   await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "stopped");
-  await expect(page.getByTestId("preview-port")).toHaveCount(0);
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveCount(0);
   await expect(page.getByTestId("dev-server")).toHaveCount(0);
 });
 
@@ -88,8 +88,8 @@ test.describe("on a preview origin of its own", () => {
     await writeFiles(page, { ...files, "index.html": html, "public/probe.js": PROBE });
 
     await page.getByTestId("preview-task").click();
-    await expect(page.getByTestId("preview-port")).toHaveValue("5173", patient);
-    const address = new URL((await page.getByTestId("preview-frame").getAttribute("src")) ?? "");
+    await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("5173", patient);
+    const address = new URL((await page.getByTestId("wb-preview-iframe").getAttribute("src")) ?? "");
     expect(address.host).toMatch(/^[a-z2-7]{52}-5173-pv\.localhost:\d+$/);
     await expectPreviewText(page, "h1", "Hello from bun.wasm", patient);
     // Vite was asked under the preview's host name and served its page at the root.

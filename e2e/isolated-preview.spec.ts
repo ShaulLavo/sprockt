@@ -75,8 +75,8 @@ Bun.serve({
 });
 `;
 
-const urlBar = (page: Page) => page.getByTestId("preview-url");
-const frameSrc = (page: Page) => page.getByTestId("preview-frame").getAttribute("src");
+const urlBar = (page: Page) => page.getByTestId("wb-preview-url-input");
+const frameSrc = (page: Page) => page.getByTestId("wb-preview-iframe").getAttribute("src");
 const heading = (page: Page, text: string, frame?: string) => expectPreviewText(page, "h1", text, { frame });
 
 /** The preview host of a port: 52 characters derived from the workspace, the port, the marker. */
@@ -92,7 +92,7 @@ async function serve(page: Page): Promise<string> {
   const id = await newWorkspace(page);
   await writeSite(page);
   await runInTerminal(page, "bun server.ts");
-  await expect(page.getByTestId("preview-port")).toHaveValue("3000");
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("3000");
   await heading(page, "Hello from Bun.serve");
   return id;
 }
@@ -176,7 +176,7 @@ test("open in new tab goes through a page of the IDE; the preview host refuses a
   const preview = new URL((await frameSrc(page)) ?? "");
 
   const opened = context.waitForEvent("page");
-  await page.getByTestId("preview-open").click();
+  await page.getByTestId("wb-preview-open-tab").click();
   const tab = await opened;
   await heading(tab, "About page", "iframe");
   // The tab is on the IDE's origin, names the preview it shows, and takes the preview's title.
@@ -312,7 +312,7 @@ test("a second tab of the workspace previews the first tab's server on the same 
 
   const second = await page.context().newPage();
   await second.goto(`/w/${id}`);
-  await expect(second.getByTestId("preview-port")).toHaveValue("3000");
+  await expect(second.getByTestId("wb-preview-port-select")).toHaveValue("3000");
   await heading(second, "Hello from Bun.serve");
   // Both tabs derive the same host from the workspace, and the second one's page is served by
   // the first tab's server, cookie and all.
@@ -355,7 +355,7 @@ test("the Vite + React catalog starter boots and renders on its own preview orig
   await writeFile(page, "public/probe.js", PROBE);
 
   await page.getByTestId("preview-task").click();
-  await expect(page.getByTestId("preview-port")).toHaveValue("5173", patient);
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("5173", patient);
   await expectPreviewText(page, "h1", "Hello from bun.wasm", patient);
   await clickInPreview(page, "button");
   await expectPreviewText(page, "button", "count is 1");

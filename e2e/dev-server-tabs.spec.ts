@@ -26,7 +26,7 @@ Bun.serve({
 });
 `;
 
-const frame = (page: Page) => page.frameLocator("[data-testid=preview-frame]");
+const frame = (page: Page) => page.frameLocator("[data-testid=wb-preview-iframe]");
 const task = (page: Page) => page.getByTestId("preview-task");
 const pill = (page: Page) => page.getByTestId("dev-server");
 
@@ -44,7 +44,7 @@ async function twoTabs(page: Page): Promise<Page> {
 
 test("a second tab previews the server the first tab runs, and cannot stop it", async ({ page }) => {
   const second = await twoTabs(page);
-  await expect(second.getByTestId("preview-port")).toHaveValue("3000");
+  await expect(second.getByTestId("wb-preview-port-select")).toHaveValue("3000");
   await expect(frame(second).getByRole("heading")).toHaveText("Shared server");
   await expect(task(second)).toHaveAttribute("data-status", "running");
   await expect(task(second)).toBeDisabled();
@@ -63,7 +63,7 @@ test("stopping the server in the tab that runs it stops it for both, and nobody 
   await pill(page).getByRole("button", { name: "Stop dev server" }).click();
   await expect(task(page)).toHaveAttribute("data-status", "stopped");
   await expect(task(second)).toHaveAttribute("data-status", "stopped");
-  await expect(second.getByTestId("preview-port")).toHaveCount(0);
+  await expect(second.getByTestId("wb-preview-port-select")).toHaveCount(0);
   // The first tab has let the server go by now; the second one still has not taken it over.
   await expect(task(page)).toBeEnabled();
   await expect(task(second)).toHaveAttribute("data-status", "stopped");
