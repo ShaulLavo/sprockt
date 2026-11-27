@@ -104,7 +104,7 @@ export const starterDevServerScenario: AgentScenario = {
     if (spec.entryFile) {
       await page
         .locator(SELECTORS.explorer.tree)
-        .getByRole("button", { name: spec.entryFile, exact: true })
+        .getByRole("treeitem", { name: spec.entryFile, exact: true })
         .click();
       await page.waitForFunction(
         ({ sel, name }) => document.querySelector(sel)?.getAttribute("aria-label")?.endsWith(name) ?? false,

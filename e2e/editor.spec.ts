@@ -36,7 +36,7 @@ const tab = (page: Page, path: string) => page.locator(`[data-testid="editor-tab
 const caret = (page: Page) => page.evaluate(() => globalThis.sprockt?.editorCaret?.());
 
 async function openFromTree(page: Page, name: string): Promise<void> {
-  await page.getByTestId("file-tree").getByRole("button", { name, exact: true }).click();
+  await page.getByTestId("file-tree").getByRole("treeitem", { name, exact: true }).click();
 }
 
 test("two files open in tabs, an edit is saved with the shortcut and survives a reload", async ({ page }) => {
@@ -166,7 +166,7 @@ test("a plugin provider registered through the mount hook mounts on the live edi
   expect(mounted).toBe("file:///workspace");
 });
 
-const treeRow = (page: Page, path: string) => page.locator(`[data-testid="tree-row"][data-path="${path}"]`);
+const treeRow = (page: Page, path: string) => page.locator(`[data-wb-tree-row][data-path="${path}"]`);
 const read = (page: Page, path: string) =>
   page.evaluate((file) => globalThis.sprockt?.workspace?.files.read(file), path);
 

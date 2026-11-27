@@ -100,7 +100,7 @@ export function editorText(page: Page): Promise<string | undefined> {
 
 /** Opens a file from the explorer and waits until the editor shows it. */
 export async function openFile(page: Page, name: string): Promise<void> {
-  await page.getByRole("button", { name, exact: true }).click();
+  await page.getByTestId("file-tree").getByRole("treeitem", { name, exact: true }).click();
   await expect(page.getByTestId("editor-file")).toHaveText(name);
 }
 

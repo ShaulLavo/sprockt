@@ -301,7 +301,7 @@ test.describe("on a phone", () => {
     await expect(page.getByTestId("terminal-state")).toHaveText("ready");
     await writeFile(page, "notes.txt", "hello\n");
     const switcher = page.getByTestId("pane-switcher");
-    const file = page.getByRole("button", { name: "notes.txt", exact: true });
+    const file = page.getByTestId("file-tree").getByRole("treeitem", { name: "notes.txt", exact: true });
     await file.click();
     await expect(page.locator("#wb-slot-code")).toBeVisible();
     await switcher.getByRole("button", { name: "Files" }).click();

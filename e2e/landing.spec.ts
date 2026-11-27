@@ -69,7 +69,7 @@ test("clicking a template creates a workspace whose files exist and survive relo
   await expect(tree).toContainText("App.tsx");
   await expect(page.getByTestId("save-state")).toHaveText("saved");
 
-  await tree.getByRole("button", { name: "App.tsx", exact: true }).click();
+  await tree.getByRole("treeitem", { name: "App.tsx", exact: true }).click();
   await expect(page.getByTestId("editor-file")).toHaveAttribute("aria-label", "src/App.tsx");
   await expect.poll(() => editorText(page)).toContain("Hello from bun.wasm");
 
@@ -77,7 +77,7 @@ test("clicking a template creates a workspace whose files exist and survive relo
   await page.reload();
   await expect(page.getByTestId("file-tree")).toContainText("App.tsx");
   await expect(page.getByTestId("file-tree")).toContainText("package.json");
-  await page.getByTestId("file-tree").getByRole("button", { name: "App.tsx", exact: true }).click();
+  await page.getByTestId("file-tree").getByRole("treeitem", { name: "App.tsx", exact: true }).click();
   await expect.poll(() => editorText(page)).toContain("Hello from bun.wasm");
 });
 

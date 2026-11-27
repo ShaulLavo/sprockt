@@ -25,7 +25,7 @@ export function focusPane(pane: PhonePane): boolean {
   }
   if (pane === "files") {
     const target = slot.querySelector<HTMLElement>(
-      '[data-testid="tree-row"][tabindex="0"], [data-testid="tree-row"], [data-testid="new-file"]',
+      '[data-wb-tree-row][tabindex="0"], [data-wb-tree-row], [data-testid="new-file"]',
     );
     if (target) {
       target.focus();

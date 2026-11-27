@@ -66,6 +66,8 @@ export interface FileService {
   readBytes(path: string): Promise<Uint8Array | undefined>;
   /** A file's size in bytes, without reading it; undefined when it is missing or not a file. */
   size(path: string): Promise<number | undefined>;
+  /** True when any entry (file, directory, symlink, or socket) occupies `path`. */
+  exists(path: string): Promise<boolean>;
   /** Creates missing parent directories. */
   write(path: string, content: string | Uint8Array): Promise<void>;
   /**

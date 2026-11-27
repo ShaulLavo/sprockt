@@ -10,7 +10,7 @@ test("a workspace boots, the shell runs, and files survive a reload", async ({ p
 
   await page.reload();
   await expect(page.getByTestId("file-tree")).toContainText("proof.txt");
-  await page.getByRole("button", { name: "proof.txt" }).click();
+  await page.getByTestId("file-tree").getByRole("treeitem", { name: "proof.txt" }).click();
   await expect(page.getByTestId("editor-file")).toHaveText("proof.txt");
   await expect.poll(() => editorText(page)).toBe("kept-across-reload\n");
 

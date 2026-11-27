@@ -14,12 +14,18 @@ export const workbenchTabsAndExplorerScenario: AgentScenario = {
     await page.waitForURL(/\/w\/[a-z0-9]+$/, { timeout: 30_000 });
     await waitForWorkbenchReady(page, args.timeoutMs);
 
-    await page.locator(SELECTORS.explorer.tree).getByRole("button", { name: "App.tsx", exact: true }).click();
+    await page
+      .locator(SELECTORS.explorer.tree)
+      .getByRole("treeitem", { name: "App.tsx", exact: true })
+      .click();
     await page.waitForFunction(
       (sel) => document.querySelector(sel)?.getAttribute("aria-label") === "src/App.tsx",
       SELECTORS.editor.activeFile,
     );
-    await page.locator(SELECTORS.explorer.tree).getByRole("button", { name: "App.tsx", exact: true }).focus();
+    await page
+      .locator(SELECTORS.explorer.tree)
+      .getByRole("treeitem", { name: "App.tsx", exact: true })
+      .focus();
     await page.keyboard.press("ControlOrMeta+f");
     await page.locator(SELECTORS.explorer.filterInput).fill("App.css");
     await page.waitForFunction(() => {
@@ -27,7 +33,10 @@ export const workbenchTabsAndExplorerScenario: AgentScenario = {
       const text = tree?.textContent ?? "";
       return text.includes("App.css") && !text.includes("package.json");
     });
-    await page.locator(SELECTORS.explorer.tree).getByRole("button", { name: "App.css", exact: true }).click();
+    await page
+      .locator(SELECTORS.explorer.tree)
+      .getByRole("treeitem", { name: "App.css", exact: true })
+      .click();
     await page.waitForFunction(
       (sel) => document.querySelector(sel)?.getAttribute("aria-label") === "src/App.css",
       SELECTORS.editor.activeFile,

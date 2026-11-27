@@ -793,3 +793,33 @@ test("a bulk write locks a 40-hop symlink chain and fails closed on a 41-hop cha
   await expect(failService.writeMany({ "chain/l1/notes.txt": "too deep" })).rejects.toThrow(/ELOOP/);
   expect(fortyOne.text("/workspace/target/notes.txt")).toBe("before");
 });
+
+test("exists detects occupied paths including Unix sockets omitted by readdir", async () => {
+  const memory = memoryFilesystem({
+    directories: ["/workspace/dest"],
+    files: { "/workspace/dest/file.txt": "ok" },
+  });
+  const fsWithSocket: ProjectFilesystem = {
+    ...memory.filesystem,
+    async resolvePath(path) {
+      if (path === "/workspace/dest/sock.txt") return { kind: "socket", path };
+      return memory.filesystem.resolvePath(path);
+    },
+    async lookup(path) {
+      if (path === "/workspace/dest/sock.txt") return { kind: "socket" };
+      const entry = await memory.filesystem.lookup(path);
+      if (path === "/workspace/dest" && entry?.kind === "dir") {
+        const children = new Map(entry.children);
+        children.set("file.txt", { kind: "file" });
+        children.set("sock.txt", { kind: "socket" });
+        return { kind: "dir", children };
+      }
+      return entry;
+    },
+  };
+  const files = createProjectFiles(fsWithSocket, noWatch);
+  expect((await files.readdir("dest"))?.map((e) => e.name)).toEqual(["file.txt"]);
+  expect(await files.exists("dest/file.txt")).toBe(true);
+  expect(await files.exists("dest/sock.txt")).toBe(true);
+  expect(await files.exists("dest/missing.txt")).toBe(false);
+});

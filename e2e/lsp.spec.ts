@@ -154,7 +154,7 @@ test("TypeScript diagnostics, hover, completion and go-to-definition come from t
   await expect(page.getByTestId("boot-stage")).toHaveText("Ready");
   await writeProject(page);
   const tree = page.getByTestId("file-tree");
-  await tree.getByRole("button", { name: "main.ts", exact: true }).click();
+  await tree.getByRole("treeitem", { name: "main.ts", exact: true }).click();
   await expect.poll(() => editorText(page)).toBe(MAIN);
   await page.getByTestId("editor").click();
   const mod = (await isMac(page)) ? "Meta" : "Control";
@@ -202,7 +202,7 @@ test("the server starts when the first TypeScript file arrives inside a moved di
   await writeProject(page, { "node_modules/prepared/main.ts": 'const broken: number = "text";\n' });
   // The move announces only the directory; its file is never named by an event.
   await page.evaluate(() => globalThis.sprockt?.workspace?.files.move("node_modules/prepared", "src"));
-  await page.getByTestId("file-tree").getByRole("button", { name: "main.ts", exact: true }).click();
+  await page.getByTestId("file-tree").getByRole("treeitem", { name: "main.ts", exact: true }).click();
   await expect.poll(() => editorText(page)).toBe('const broken: number = "text";\n');
   await expect.poll(() => errorRanges(page)).toEqual(["broken"]);
 });
@@ -242,7 +242,7 @@ test("the Vite + React starter stays clean before install, waits through partial
   await page.goto("/");
   await page.getByTestId("template-vite-react").click();
   await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
-  await page.getByTestId("file-tree").getByRole("button", { name: "App.tsx", exact: true }).click();
+  await page.getByTestId("file-tree").getByRole("treeitem", { name: "App.tsx", exact: true }).click();
   await expect.poll(() => editorText(page)).toContain("Hello from bun.wasm");
   // Before dependencies are installed, the status bar reports all 6 missing packages and
   // the editor stays free of false-alarm missing-module/JSX red squiggles.
