@@ -33,26 +33,78 @@ const dirname = (path: string): string => {
 
 const noop = (): void => {};
 
-function createReactiveSubscribable<T>(read: () => T): Subscribable<T> {
+function createReactiveSubscribable<T>(
+  read: () => T,
+  equals: (prev: T, next: T) => boolean = Object.is,
+): Subscribable<T> {
+  let hasValue = false;
+  let cached!: T;
+
+  const getSnapshot = (): T => {
+    const next = read();
+    if (hasValue && equals(cached, next)) return cached;
+    cached = next;
+    hasValue = true;
+    return cached;
+  };
+
   return {
-    getSnapshot: read,
+    getSnapshot,
     subscribe(listener) {
       let initialized = false;
       let dispose = noop;
       createRoot((cleanup) => {
         dispose = cleanup;
         createEffect(() => {
-          read();
+          const prev = cached;
+          const hadValue = hasValue;
+          const next = getSnapshot();
           if (!initialized) {
             initialized = true;
             return;
           }
+          if (hadValue && Object.is(prev, next)) return;
           listener();
         });
       });
       return dispose;
     },
   };
+}
+
+function sameTabDescriptor(a: EditorTabDescriptor, b: EditorTabDescriptor): boolean {
+  return (
+    a.id === b.id &&
+    a.documentId === b.documentId &&
+    a.kind === b.kind &&
+    a.path === b.path &&
+    a.label === b.label &&
+    a.hint === b.hint &&
+    a.title === b.title &&
+    a.tone === b.tone &&
+    a.preview === b.preview &&
+    a.dirty === b.dirty &&
+    a.missing === b.missing
+  );
+}
+
+function sameGroupSnapshot(a: EditorGroupsSnapshot, b: EditorGroupsSnapshot): boolean {
+  if (a.activeGroupId !== b.activeGroupId) return false;
+  const aRoot = a.root;
+  const bRoot = b.root;
+  if (aRoot.kind !== "group" || bRoot.kind !== "group") return false;
+  if (aRoot.id !== bRoot.id || aRoot.selectedTabId !== bRoot.selectedTabId) return false;
+  if (aRoot.tabs.length !== bRoot.tabs.length) return false;
+  return aRoot.tabs.every((tab, index) => {
+    const other = bRoot.tabs[index];
+    return other !== undefined && sameTabDescriptor(tab, other);
+  });
+}
+
+function sameConflict(a: DocumentConflict | undefined, b: DocumentConflict | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.documentId === b.documentId && a.path === b.path && a.diskText === b.diskText;
 }
 
 /** Projects Sprockt's open tabs and buffer dirty/missing flags into workbench tab descriptors. */
@@ -101,11 +153,10 @@ function buildGroupSnapshot(store: EditorStore): EditorGroupsSnapshot {
 
 /** Single-group `EditorGroupAdapter` backed by Sprockt's `EditorStore`. */
 export function createSprocktEditorGroupAdapter(store: EditorStore): EditorGroupAdapter {
-  let cached: EditorGroupsSnapshot = buildGroupSnapshot(store);
-  const groups = createReactiveSubscribable<EditorGroupsSnapshot>(() => {
-    cached = buildGroupSnapshot(store);
-    return cached;
-  });
+  const groups = createReactiveSubscribable<EditorGroupsSnapshot>(
+    () => buildGroupSnapshot(store),
+    sameGroupSnapshot,
+  );
 
   return {
     groups,
@@ -161,7 +212,7 @@ export function createSprocktEditorDocumentAdapter(
           path: originalPath(documentId),
           diskText: conflict.diskText,
         };
-      });
+      }, sameConflict);
     },
     async loadDocument(documentId: DocumentId): Promise<LoadedDocument | undefined> {
       const text = await files.read(documentId);

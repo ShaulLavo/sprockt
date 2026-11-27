@@ -27,20 +27,22 @@ function createMemoryStorage(): Storage {
   };
 }
 
-const originalLocalStorage = globalThis.localStorage;
+const originalLocalStorageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
 
 beforeEach(() => {
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
+    writable: true,
     value: createMemoryStorage(),
   });
 });
 
 afterEach(() => {
-  Object.defineProperty(globalThis, "localStorage", {
-    configurable: true,
-    value: originalLocalStorage,
-  });
+  if (originalLocalStorageDescriptor) {
+    Object.defineProperty(globalThis, "localStorage", originalLocalStorageDescriptor);
+    return;
+  }
+  delete (globalThis as { localStorage?: Storage }).localStorage;
 });
 
 function createMemoryFiles(initial: Readonly<Record<string, string>>) {
@@ -104,6 +106,11 @@ describe("Sprockt workbench editor adapters", () => {
       });
 
       expect(notifications).toBeGreaterThan(0);
+
+      // Snapshot contract: unchanged reads must return the same reference for useSyncExternalStore.
+      const snap1 = groupAdapter.groups.getSnapshot();
+      const snap2 = groupAdapter.groups.getSnapshot();
+      expect(snap1).toBe(snap2);
 
       const descriptors = buildSprocktEditorTabs(store);
       expect(descriptors.map((tab) => ({ id: tab.id, hint: tab.hint, tone: tab.tone }))).toEqual([

@@ -1,5 +1,6 @@
 // The open-file tabs rendered over @shaulavo/workbench-editor's EditorTabBar with Sprockt's
 // Sheet & Biro styling, file icons, context menu, and unsaved-close confirmation flow.
+import { dismissSoftKeyboardOnTouchActivation } from "@shaulavo/workbench-core";
 import { EditorTabBar } from "@shaulavo/workbench-editor";
 import { useRef, useState } from "react";
 import { ContextMenu, type MenuItem } from "../explorer/ContextMenu";
@@ -7,6 +8,7 @@ import { useValue } from "../lib/react";
 import { FileIcon } from "../search/icons";
 import { originalPath } from "./buffers";
 import { EDITOR_COPY } from "./copy";
+import { shouldAutoFocusEditor } from "./focus-policy";
 import type { EditorStore } from "./store";
 import { tabsToClose, type TabCloseScope } from "./tabs";
 import { buildSprocktEditorTabs, SPROCKT_EDITOR_GROUP_ID } from "./waffle-adapter";
@@ -94,7 +96,11 @@ export function TabBar(props: { store: EditorStore }) {
         dirtyTestId={(tab) => (tab.id === displayed ? "editor-dirty" : undefined)}
         onSelectTab={(_gid, tabId, focus) => {
           const found = store.tabs().find((candidate) => candidate.path === tabId);
-          store.open(tabId, { preview: found?.preview ?? false, focus: focus.shouldFocusEditor });
+          const shouldFocus = focus.shouldFocusEditor && shouldAutoFocusEditor(focus.origin);
+          if (!shouldFocus) {
+            dismissSoftKeyboardOnTouchActivation({ shouldFocusEditor: false, origin: focus.origin });
+          }
+          store.open(tabId, { preview: found?.preview ?? false, focus: shouldFocus });
         }}
         onCloseTab={(_gid, tabId) => requestClose(store, tabId)}
         onPinTab={(_gid, tabId) => store.pin(tabId)}

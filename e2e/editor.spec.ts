@@ -230,3 +230,38 @@ test("the status bar shows the caret position and the language of the open file"
   await expect(status).toContainText("Ln 2, Col 7");
   await expect(status).toContainText("TypeScript");
 });
+
+test("toggling a line comment in a shell script uses hash comments", async ({ page }) => {
+  await workspaceWith(page, { "setup.sh": "echo hello" });
+  await treeRow(page, "setup.sh").click();
+  await expect.poll(() => editorText(page)).toBe("echo hello");
+  await page.getByTestId("editor").click();
+  await press(page, "Mod+/");
+  await expect.poll(() => editorText(page)).toBe("# echo hello");
+});
+
+test("clicking another tab at phone width with a fine pointer keeps focus out of the editor", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await workspaceWith(page, { "a.txt": "alpha\n", "b.txt": "beta\n" });
+  const filesPaneButton = page.locator('[data-testid="pane-switcher"] [aria-controls="wb-slot-files"]');
+  await filesPaneButton.click();
+  await treeRow(page, "a.txt").click();
+  await expect.poll(() => editorText(page)).toBe("alpha\n");
+  await filesPaneButton.click();
+  await treeRow(page, "b.txt").click();
+  await expect.poll(() => editorText(page)).toBe("beta\n");
+
+  // Explicitly focus the editor on b.txt, then click the a.txt tab with a fine mouse pointer.
+  await page.getByTestId("editor").click();
+  await expect
+    .poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('[data-testid="editor"]'))))
+    .toBe(true);
+
+  await tab(page, "a.txt").locator('[role="tab"]').click();
+  await expect.poll(() => editorText(page)).toBe("alpha\n");
+  await expect
+    .poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('[data-testid="editor"]'))))
+    .toBe(false);
+});
