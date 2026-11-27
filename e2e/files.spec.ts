@@ -538,3 +538,47 @@ test("a file created in a second tab appears in the first tab's tree", async ({ 
   await runInTerminal(second, "echo from-the-second-tab > shared.txt");
   await expect(row(page, "shared.txt")).toBeVisible();
 });
+
+test("filtering finds files in unopened folders, batch drag preflights collisions, and reload restores scroll", async ({
+  page,
+}) => {
+  const id = await newWorkspace(page);
+  const filler = Array.from({ length: 100 }, (_, i) => `f-${String(i + 1).padStart(3, "0")}.txt`).join(" ");
+  await runInTerminal(
+    page,
+    `mkdir -p closed dest && touch closed/needle.txt a.txt b.txt dest/b.txt ${filler}`,
+  );
+  await expect(row(page, "closed")).toBeVisible();
+  await expect(row(page, "dest")).toBeVisible();
+  await expect(row(page, "f-001.txt")).toBeVisible();
+  await page.getByTestId("collapse-all").click();
+  await expect(row(page, "closed")).toHaveAttribute("aria-expanded", "false");
+  await expect(row(page, "dest")).toHaveAttribute("aria-expanded", "false");
+
+  // Filter finds closed/needle.txt even though closed was never opened.
+  await row(page, "closed").focus();
+  await page.keyboard.type("needle");
+  await expect(row(page, "closed/needle.txt")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // Multi-select drag of [a.txt, b.txt] into unopened dest (which already has b.txt) refuses before moving a.txt.
+  await row(page, "a.txt").click();
+  await row(page, "b.txt").click({ modifiers: ["Shift"] });
+  const transfer = await page.evaluateHandle(() => new DataTransfer());
+  await row(page, "a.txt").dispatchEvent("dragstart", { dataTransfer: transfer });
+  await row(page, "dest").dispatchEvent("dragover", { dataTransfer: transfer });
+  await row(page, "dest").dispatchEvent("drop", { dataTransfer: transfer });
+  await expect(page.getByTestId("tree-notice")).toContainText("b.txt");
+  await expect(row(page, "a.txt")).toBeVisible();
+
+  // Reloading restores the saved scroll offset once the 100 lazy root rows load.
+  const scroller = page.locator("[data-wb-tree-scroller]");
+  await scroller.evaluate((el) => {
+    el.scrollTop = 800;
+  });
+  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThanOrEqual(700);
+  await saved(page);
+  await page.goto(`/w/${id}`);
+  await expect(page.getByTestId("file-tree")).toBeVisible();
+  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThanOrEqual(700);
+});

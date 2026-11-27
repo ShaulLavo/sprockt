@@ -7,12 +7,14 @@ import type {
 } from "@shaulavo/workbench-core";
 import {
   ancestorsOf,
+  baseName,
   isSameOrInside,
   normalizeTreePath,
   parentOf,
   topLevelPaths,
 } from "@shaulavo/workbench-tree";
 import type { EditorStore } from "../editor/store";
+import { DestinationExistsError } from "../files/errors";
 import { rebase } from "../files/paths";
 import type { DirEntry, FileService } from "../files/service";
 import { createEffect, createRoot } from "../lib/reactive";
@@ -22,6 +24,7 @@ interface DirSlot {
   readonly listeners: Set<() => void>;
   readonly subscribable: Subscribable<DirectoryLoadState>;
   inFlight: Promise<void> | null;
+  generation: number;
 }
 
 export interface WaffleAdapterOptions {
@@ -38,6 +41,8 @@ export interface WaffleFileSystemHandle {
   seedDirectory(dirPath: string, entries: readonly DirEntry[]): void;
   /** Re-reads a directory from Waffle immediately. */
   refreshDirectory(dirPath: string): Promise<void>;
+  /** Preflights collisions across the batch, then moves each path under editor locks. */
+  movePaths(moves: readonly { readonly from: string; readonly to: string }[]): Promise<void>;
   /** Removes one or more paths cleanly, preserving unsaved tabs as missing. */
   removePaths(paths: readonly string[]): Promise<void>;
   /** Cleans up reactive subscriptions. */
@@ -81,6 +86,7 @@ export function createWaffleFileSystemAdapter(options: WaffleAdapterOptions): Wa
       state: { status: "idle" },
       listeners,
       inFlight: null,
+      generation: 0,
       subscribable: {
         getSnapshot: () => slot.state,
         subscribe(listener) {
@@ -100,9 +106,15 @@ export function createWaffleFileSystemAdapter(options: WaffleAdapterOptions): Wa
     for (const listener of slot.listeners) listener();
   }
 
+  function invalidateSlot(slot: DirSlot): void {
+    slot.generation += 1;
+    slot.inFlight = null;
+  }
+
   function seedDirectory(rawDir: string, entries: readonly DirEntry[]): void {
     const dir = normalizeTreePath(rawDir);
     const slot = ensureSlot(dir);
+    invalidateSlot(slot);
     setSlotState(slot, { status: "loaded", entries });
   }
 
@@ -117,15 +129,16 @@ export function createWaffleFileSystemAdapter(options: WaffleAdapterOptions): Wa
       setSlotState(slot, { status: "loading" });
     }
 
+    const gen = ++slot.generation;
     const request = (async () => {
       try {
         const raw = await files.readdir(dir);
-        if (disposed) return;
+        if (disposed || slot.generation !== gen) return;
         const list = raw ?? [];
         setSlotState(slot, { status: "loaded", entries: list });
         onDirectoryListed?.(dir, list);
       } catch (error) {
-        if (disposed) return;
+        if (disposed || slot.generation !== gen) return;
         setSlotState(slot, {
           status: "error",
           message: error instanceof Error ? error.message : String(error),
@@ -145,6 +158,7 @@ export function createWaffleFileSystemAdapter(options: WaffleAdapterOptions): Wa
   const unsubFiles = files.subscribe((change) => {
     if (disposed) return;
     if (change.reset) {
+      for (const slot of slots.values()) invalidateSlot(slot);
       const resetEvent: LazyInvalidationEvent = {
         reset: true,
         directories: [],
@@ -162,10 +176,14 @@ export function createWaffleFileSystemAdapter(options: WaffleAdapterOptions): Wa
         directories.add("");
         return;
       }
-      directories.add(parentOf(normalized));
+      const parent = parentOf(normalized);
+      directories.add(parent);
       if (slots.has(normalized)) directories.add(normalized);
+      if (!slots.has(parent)) directories.add("");
       for (const ancestor of ancestorsOf(normalized)) {
         if (slots.has(ancestor)) directories.add(ancestor);
+        const ancParent = parentOf(ancestor);
+        if (slots.has(ancParent)) directories.add(ancParent);
       }
     };
 
@@ -174,6 +192,11 @@ export function createWaffleFileSystemAdapter(options: WaffleAdapterOptions): Wa
     for (const m of change.moves) {
       markPathAndAncestors(m.from);
       markPathAndAncestors(m.to);
+    }
+
+    for (const dir of directories) {
+      const slot = slots.get(dir);
+      if (slot) invalidateSlot(slot);
     }
 
     if (directories.size === 0 && change.moves.length === 0 && change.removed.length === 0) return;
@@ -189,7 +212,7 @@ export function createWaffleFileSystemAdapter(options: WaffleAdapterOptions): Wa
   async function moveOne(rawFrom: string, rawTo: string): Promise<void> {
     const from = normalizeTreePath(rawFrom);
     const to = normalizeTreePath(rawTo);
-    const lock = await store.lockPaths([from]);
+    const lock = await store.lockPaths([from, to]);
     let moved = false;
     try {
       await files.move(from, to);
@@ -200,15 +223,48 @@ export function createWaffleFileSystemAdapter(options: WaffleAdapterOptions): Wa
     }
   }
 
+  async function movePaths(moves: readonly { readonly from: string; readonly to: string }[]): Promise<void> {
+    const normalized = moves
+      .map((move) => ({ from: normalizeTreePath(move.from), to: normalizeTreePath(move.to) }))
+      .filter((move) => move.from.length > 0 && move.to.length > 0);
+    if (normalized.length === 0) return;
+
+    const seenDestinations = new Set<string>();
+    for (const move of normalized) {
+      if (seenDestinations.has(move.to)) throw new DestinationExistsError(move.to);
+      seenDestinations.add(move.to);
+    }
+
+    const sourceSet = new Set(normalized.map((move) => move.from));
+    const destDirs = new Set(normalized.map((move) => parentOf(move.to)));
+    const existingByDir = new Map<string, Set<string>>();
+    await Promise.all(
+      Array.from(destDirs, async (dir) => {
+        const entries = (await files.readdir(dir)) ?? [];
+        existingByDir.set(dir, new Set(entries.map((entry) => entry.name)));
+      }),
+    );
+    for (const move of normalized) {
+      if (sourceSet.has(move.to)) continue;
+      const existing = existingByDir.get(parentOf(move.to));
+      if (existing?.has(baseName(move.to))) throw new DestinationExistsError(move.to);
+    }
+
+    for (const move of normalized) {
+      // oxlint-disable-next-line no-await-in-loop
+      await moveOne(move.from, move.to);
+    }
+  }
+
   async function removePaths(rawPaths: readonly string[]): Promise<void> {
     const roots = topLevelPaths(rawPaths.map(normalizeTreePath).filter(Boolean));
     for (const target of roots) {
+      // oxlint-disable-next-line no-await-in-loop
+      await files.remove(target);
       for (const tab of store.tabs()) {
         if (!isSameOrInside(tab.path, target)) continue;
         if (!store.hasUnsaved(tab.path)) store.close(tab.path);
       }
-      // oxlint-disable-next-line no-await-in-loop
-      await files.remove(target);
     }
   }
 
@@ -254,6 +310,7 @@ export function createWaffleFileSystemAdapter(options: WaffleAdapterOptions): Wa
     adapter,
     seedDirectory,
     refreshDirectory: (dirPath) => loadDirectory(dirPath, { force: true }),
+    movePaths,
     removePaths,
     dispose() {
       disposed = true;

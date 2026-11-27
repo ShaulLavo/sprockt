@@ -223,7 +223,7 @@ export function Explorer(props: { readonly store: EditorStore }) {
     const snap = model.getSnapshot();
     const target = snap.focusedPath ?? Array.from(snap.selected).at(-1);
     if (!target) return "";
-    const kind = model.index.getKind(target);
+    const kind = model.getEntryKind(target);
     return kind ? targetDirectory(target, kind) : "";
   }, [model]);
 
@@ -370,7 +370,7 @@ export function Explorer(props: { readonly store: EditorStore }) {
       };
     }
     const first = deletingPaths[0] ?? "";
-    const kind = model.index.getKind(first);
+    const kind = model.getEntryKind(first);
     const text = kind === "directory" ? copy.confirmFolder : copy.confirmFile;
     return { ...text, title: fill(text.title, { name: baseName(first) }) };
   })();
@@ -504,6 +504,10 @@ export function Explorer(props: { readonly store: EditorStore }) {
           onRequestDelete={(paths) => {
             stopAutoOpen();
             setDeletingPaths(paths);
+          }}
+          onMove={async (moves) => {
+            stopAutoOpen();
+            await waffle.movePaths(moves);
           }}
           onExternalDrop={handleExternalDrop}
           onError={(_message, error) => say(formatOperationError(error))}
