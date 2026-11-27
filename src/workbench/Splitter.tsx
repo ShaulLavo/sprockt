@@ -1,20 +1,26 @@
 // Resize handle between panes backed by `@shaulavo/workbench`'s WAI-ARIA `Splitter`.
 import { useEffect, useRef } from "react";
-import { DRAG_THRESHOLD_PX, type GlobalPaneGeometry, type Space } from "@shaulavo/workbench/core";
+import {
+  DRAG_THRESHOLD_PX,
+  dragPaneGeometry,
+  type GlobalPaneGeometry,
+  type Space,
+} from "@shaulavo/workbench/core";
 import { Splitter as WorkbenchSplitter } from "@shaulavo/workbench";
 import { useValue } from "../lib/react";
 import type { LayoutStore } from "./layout-store";
 import {
-  fitLayout,
   handleKeyOf,
   isOpen,
-  keyTo,
+  MIN_PX,
   setOpen,
   type PaneLayout,
-  type Room,
   type Splitter as SplitterName,
   type TerminalState,
 } from "./layout";
+
+const KEYBOARD_STEP_PX = 24;
+const KEYBOARD_BIG_STEP_PX = 96;
 
 export interface SplitterProps {
   readonly splitter: SplitterName;
@@ -43,6 +49,7 @@ function toGeometry(layout: PaneLayout): GlobalPaneGeometry {
 }
 
 interface TerminalDragContext {
+  readonly pointerId: number;
   readonly startState: TerminalState;
   readonly startY: number;
   latestY: number;
@@ -78,15 +85,6 @@ function fromGeometry(
   };
 }
 
-function splitterRoom(splitter: SplitterName, layout: PaneLayout, space: Space): Room {
-  if (splitter === "terminal") return { extent: space.height };
-  if (splitter === "preview") {
-    const fitted = fitLayout(layout, space);
-    return { extent: Math.max(1, space.width - fitted.explorer) };
-  }
-  return { extent: space.width };
-}
-
 function isExpanded(layout: PaneLayout, splitter: SplitterName): boolean {
   if (splitter === "terminal") return layout.terminalState === "open";
   return isOpen(layout, splitter);
@@ -98,22 +96,25 @@ export function Splitter(props: SplitterProps) {
   const draggingRef = useRef(false);
   const terminalDragRef = useRef<TerminalDragContext | undefined>(undefined);
 
-  // Track pointer drags on the terminal handle so a round-trip drag that starts from `collapsed`
-  // (or drags upward without reaching the open threshold) restores `collapsed` instead of hiding.
+  // Track the initiating pointer's drag on the terminal handle so a round-trip drag that starts
+  // from `collapsed` (or drags upward without reaching the open threshold) restores `collapsed`
+  // instead of hiding, unaffected by secondary pointers.
   useEffect(() => {
     if (splitter !== "terminal") return;
     const onPointerDown = (event: PointerEvent): void => {
-      if (event.button !== 0 || !(event.target instanceof Element)) return;
+      if (event.button !== 0 || terminalDragRef.current || !(event.target instanceof Element)) return;
       if (event.target.closest('[data-wb-splitter="terminal"]') === null) return;
       terminalDragRef.current = {
+        pointerId: event.pointerId,
         startState: store.layout().terminalState,
         startY: event.clientY,
         latestY: event.clientY,
       };
     };
     const onPointerMove = (event: PointerEvent): void => {
-      if (!draggingRef.current || !terminalDragRef.current) return;
-      terminalDragRef.current.latestY = event.clientY;
+      const drag = terminalDragRef.current;
+      if (!draggingRef.current || !drag || event.pointerId !== drag.pointerId) return;
+      drag.latestY = event.clientY;
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("pointermove", onPointerMove, true);
@@ -123,9 +124,9 @@ export function Splitter(props: SplitterProps) {
     };
   }, [splitter, store]);
 
-  // Handle `Home` consistently as "minimum open size" on every splitter (avoiding WorkbenchSplitter's
-  // close-on-Home behavior), and intercept grow/shrink on collapsed or hidden panes so keyboard
-  // expansion always opens cleanly instead of falling below the drag threshold.
+  // Handle `Home` consistently as "minimum open size" using Workbench's own `dragPaneGeometry`
+  // bounds so subsequent arrow steps never disagree with Home, and intercept grow/shrink on
+  // collapsed or hidden panes so keyboard expansion always opens cleanly.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!(event.target instanceof Element)) return;
@@ -135,8 +136,14 @@ export function Splitter(props: SplitterProps) {
         event.preventDefault();
         event.stopPropagation();
         const current = store.layout();
-        const room = splitterRoom(splitter, current, measureSpace());
-        store.set(keyTo(current, splitter, "min", room, event.shiftKey));
+        const minPx = MIN_PX[splitter];
+        const next = dragPaneGeometry(splitter, {
+          startGeometry: toGeometry(current),
+          startPx: minPx + DRAG_THRESHOLD_PX,
+          growth: -DRAG_THRESHOLD_PX,
+          space: measureSpace(),
+        });
+        store.set(fromGeometry(next, current, splitter, undefined));
         return;
       }
       const current = store.layout();
@@ -144,8 +151,14 @@ export function Splitter(props: SplitterProps) {
       if (action === "grow") {
         event.preventDefault();
         event.stopPropagation();
-        const room = splitterRoom(splitter, current, measureSpace());
-        store.set(keyTo(current, splitter, "grow", room, event.shiftKey));
+        const step = event.shiftKey ? KEYBOARD_BIG_STEP_PX : KEYBOARD_STEP_PX;
+        const next = dragPaneGeometry(splitter, {
+          startGeometry: toGeometry(current),
+          startPx: MIN_PX[splitter],
+          growth: step,
+          space: measureSpace(),
+        });
+        store.set(fromGeometry(next, current, splitter, undefined));
         return;
       }
       if (action === "shrink" && splitter === "terminal") {

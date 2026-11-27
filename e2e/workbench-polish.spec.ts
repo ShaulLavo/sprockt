@@ -181,7 +181,8 @@ test("terminal supports 3-state visibility, paired split tabs, and intact workbe
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
   await expect(page.locator(".wb-terminal-stage")).toBeVisible();
 
-  // Round-trip drag from collapsed: drag up until body opens, then return to start -> stays collapsed.
+  // Round-trip drag from collapsed: drag up until body opens, return to start (ignoring a
+  // stray secondary pointer moving downward), and release -> stays collapsed.
   await page.getByTestId("wb-term-collapse").click();
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "collapsed");
   const collapsedSplitter = await page.locator('[data-wb-splitter="terminal"]').boundingBox();
@@ -193,13 +194,22 @@ test("terminal supports 3-state visibility, paired split tabs, and intact workbe
   await page.mouse.move(cx, cy - 160, { steps: 6 });
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
   await page.mouse.move(cx, cy, { steps: 6 });
+  await page.evaluate(
+    ([x, y]) => {
+      window.dispatchEvent(
+        new PointerEvent("pointermove", { pointerId: 99, pointerType: "touch", clientX: x, clientY: y }),
+      );
+    },
+    [cx, cy + 120] as const,
+  );
   await page.mouse.up();
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "collapsed");
   await expect(page.locator(".wb-terminal-header")).toBeVisible();
   await page.getByTestId("wb-term-collapse").click();
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
 
-  // Repeated Home presses are idempotent (minimum open size, never toggling closed) on all 3 splitters.
+  // Repeated Home presses are idempotent (minimum open size, never toggling closed) on all 3
+  // splitters, and shrinking preview after Home on a wide viewport never grows it.
   async function assertHomeKeepsPaneOpen(splitterName: string, attr: string): Promise<void> {
     await page.locator(`[data-wb-splitter="${splitterName}"]`).focus();
     await page.keyboard.press("Home");
@@ -210,6 +220,16 @@ test("terminal supports 3-state visibility, paired split tabs, and intact workbe
   await assertHomeKeepsPaneOpen("explorer", "data-explorer");
   await assertHomeKeepsPaneOpen("preview", "data-preview");
   await assertHomeKeepsPaneOpen("terminal", "data-terminal");
+
+  await page.setViewportSize({ width: 2560, height: 900 });
+  await page.locator('[data-wb-splitter="preview"]').focus();
+  await page.keyboard.press("Home");
+  const previewAtHome = (await page.locator("#wb-slot-preview").boundingBox())?.width ?? 0;
+  expect(previewAtHome).toBeGreaterThanOrEqual(220);
+  await page.keyboard.press("ArrowRight");
+  const previewAfterShrink = (await page.locator("#wb-slot-preview").boundingBox())?.width ?? 0;
+  expect(previewAfterShrink).toBeLessThanOrEqual(previewAtHome);
+  await page.setViewportSize({ width: 1440, height: 900 });
 
   // State 1 -> 3: sidebar terminal button completely hides terminal, tab bar included (0px).
   await page.getByTestId("toggle-terminal").click();
