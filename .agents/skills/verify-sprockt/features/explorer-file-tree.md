@@ -6,8 +6,8 @@ Workspace file tree (`src/explorer/`) backed by Waffle's persistent FileService 
 
 - Expand/collapse folders, indent guides, file-type icons, and single/multi-select with keyboard navigation.
 - Inline filter box (`tree-filter-input`) showing matching files plus context-only ancestor folders.
-- Create file (`new-file`), create folder (`new-folder`), rename (`F2`), drag-and-drop move, delete with confirmation (`confirm-dialog`), upload files/folders, and ZIP download (`download-zip`).
-- Context menu (`tree-menu`) and dirty/unsaved protection before destructive operations.
+- Create file (`new-file`), create folder (`new-folder`), rename (`F2`), drag-and-drop move, delete with confirmation (`wb-confirm-dialog`), upload files/folders, and ZIP download (`download-zip`).
+- Context menu (`[data-wb-point-context-menu]`) and dirty/unsaved protection before destructive operations.
 
 ## How to get to it (user POV)
 

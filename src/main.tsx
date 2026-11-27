@@ -1,4 +1,7 @@
 import { createRoot } from "react-dom/client";
+import "@shaulavo/workbench-tokens/tokens.css";
+import "@shaulavo/workbench-tokens/themes/sprockt.css";
+import "@shaulavo/workbench-ui/ui.css";
 import { App } from "./app/App";
 import { registerLanguageServers } from "./lsp";
 import { retirePreviewsIfOff } from "./preview/startup";

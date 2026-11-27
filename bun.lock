@@ -5,9 +5,13 @@
     "": {
       "name": "sprockt",
       "dependencies": {
+        "@base-ui/react": "1.9.0",
         "@fontsource-variable/jetbrains-mono": "5.3.0",
         "@fontsource-variable/schibsted-grotesk": "5.3.0",
         "@shaulavo/hotkeys": "0.0.4",
+        "@shaulavo/workbench-core": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-core-0.0.1.tgz",
+        "@shaulavo/workbench-tokens": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-tokens-0.0.1.tgz",
+        "@shaulavo/workbench-ui": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-ui-0.0.1.tgz",
         "@singapore-editor/core": "0.2.13",
         "@singapore-editor/find": "0.2.13",
         "@singapore-editor/gutters": "0.2.13",
@@ -42,7 +46,19 @@
   "trustedDependencies": [
     "bun-wasm",
   ],
+  "overrides": {
+    "@shaulavo/workbench-core": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-core-0.0.1.tgz",
+    "@shaulavo/workbench-icons": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-icons-0.0.1.tgz",
+    "@shaulavo/workbench-tokens": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-tokens-0.0.1.tgz",
+    "@shaulavo/workbench-ui": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-ui-0.0.1.tgz",
+  },
   "packages": {
+    "@babel/runtime": ["@babel/runtime@8.1.3", "", {}, "sha512-tno/enifiFAE77kbJadRE5wKfmzxlYvdB5Dj8yqmWoT49mDJE+wvLgvJY/EKt/jQllv369GMxyyJ9tKfTL33Nw=="],
+
+    "@base-ui/react": ["@base-ui/react@1.9.0", "", { "dependencies": { "@babel/runtime": "^7.29.7 || ^8.0.0", "@base-ui/utils": "0.5.0", "@floating-ui/react-dom": "^2.1.9", "@floating-ui/utils": "^0.2.12", "use-sync-external-store": "^1.7.0" }, "peerDependencies": { "@date-fns/tz": "^1.2.0", "@types/react": "^17 || ^18 || ^19", "date-fns": "^4.0.0", "react": "^17 || ^18 || ^19", "react-dom": "^17 || ^18 || ^19" }, "optionalPeers": ["@date-fns/tz", "@types/react", "date-fns"] }, "sha512-S8CSYosASBKtpL8SWUfS78rFElfLijiCgA7oHOK22jCJ95FULsYyKwBNFOgudt0RA+/7yNc7F81bOvQnRgbBiQ=="],
+
+    "@base-ui/utils": ["@base-ui/utils@0.5.0", "", { "dependencies": { "@babel/runtime": "^7.29.7 || ^8.0.0", "@floating-ui/utils": "^0.2.12", "reselect": "^5.3.0", "use-sync-external-store": "^1.7.0" }, "peerDependencies": { "@types/react": "^17 || ^18 || ^19", "react": "^17 || ^18 || ^19", "react-dom": "^17 || ^18 || ^19" }, "optionalPeers": ["@types/react"] }, "sha512-dYGGcEttjkYiMoa5nHm8vLaJ2UcuTWxo3BFAwOYXeRg/q7UVVvA6cacEIXEs3FgBfK1CGtW1ptElqs7wsx+t9A=="],
+
     "@cloudflare/kv-asset-handler": ["@cloudflare/kv-asset-handler@0.5.0", "", {}, "sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg=="],
 
     "@cloudflare/unenv-preset": ["@cloudflare/unenv-preset@2.16.2", "", { "peerDependencies": { "unenv": "2.0.0-rc.24", "workerd": ">1.20260305.0 <2.0.0-0" }, "optionalPeers": ["workerd"] }, "sha512-JBP1+Z7ZSNG/d4mRP+y8VC5dka3tZVMLEZRvS+rzQ4DGV1EoxRFQckcJTTkXbHSQiTj0DtNI01Zwb/V2fX0mvQ=="],
@@ -116,6 +132,14 @@
     "@esbuild/win32-ia32": ["@esbuild/win32-ia32@0.28.2", "", { "os": "win32", "cpu": "ia32" }, "sha512-YmJbfTlvU7Sdn9BB+4PRES4oB6pxgS37MAONj+hBr/cpXS1aBPKXxNnDbu+QCWPj0o9dgyxeq79g6c5P8KeuYA=="],
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.28.2", "", { "os": "win32", "cpu": "x64" }, "sha512-5ebpxr3nWMzrL/rnUI755Jkuee0bHL/Gq0WTF9lvcpv73wAp5eu8MfBUgWK9bhWvZjj7yX8etf/8tI8Ney695g=="],
+
+    "@floating-ui/core": ["@floating-ui/core@1.8.0", "", { "dependencies": { "@floating-ui/utils": "^0.2.12" } }, "sha512-0CIZ5itps/8x7BG8dEIhs53BvCUH2PCoogtakwRTut+Arm58sJooJ0AuZhLw2HJYIR5cMLNPBSS728sPho2khQ=="],
+
+    "@floating-ui/dom": ["@floating-ui/dom@1.8.0", "", { "dependencies": { "@floating-ui/core": "^1.8.0", "@floating-ui/utils": "^0.2.12" } }, "sha512-yXSrzeHZBTZadLOlfyhCkJHNeLJnHRnRInwdZ40L7ZiaAtrBwoYlsDrX3v5zB1Utk7CLfzcOVnVVWoXEky7Ceg=="],
+
+    "@floating-ui/react-dom": ["@floating-ui/react-dom@2.1.9", "", { "dependencies": { "@floating-ui/dom": "^1.8.0" }, "peerDependencies": { "react": ">=16.8.0", "react-dom": ">=16.8.0" } }, "sha512-JDjEFGCpImxDCA7JJKviA0M9+RtmJdj0m/NVU5IMgBK+AmZouAQQ7/+2GLH0GXXY0YMw9oXPB8hKdbPYg5QLYg=="],
+
+    "@floating-ui/utils": ["@floating-ui/utils@0.2.12", "", {}, "sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww=="],
 
     "@fontsource-variable/jetbrains-mono": ["@fontsource-variable/jetbrains-mono@5.3.0", "", {}, "sha512-F32xpS2NsGYoQi2ADSkKTgpJj7ozajsGgDJ8woTnqjmIB+dxDIqImjl4pXZVEExu8UFZ2ndhmX18EBS/hdz3Lw=="],
 
@@ -305,6 +329,14 @@
 
     "@shaulavo/hotkeys": ["@shaulavo/hotkeys@0.0.4", "", { "dependencies": { "@tanstack/store": "^0.11.1" }, "peerDependencies": { "@tanstack/react-store": "^0.11.1", "react": ">=18", "react-dom": ">=18" }, "optionalPeers": ["@tanstack/react-store", "react", "react-dom"] }, "sha512-CFFlIU0zSouq7wmNRcB87MM6VNA4yaOXvN4ZaoZ+J2UZn6Erw180gV22uYOdsPvFH1Uw/QaLDg6SxpL75bOQ9w=="],
 
+    "@shaulavo/workbench-core": ["@shaulavo/workbench-core@https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-core-0.0.1.tgz", { "dependencies": { "@shaulavo/hotkeys": "0.0.4", "@shaulavo/workbench-tokens": "0.0.1" }, "peerDependencies": { "react": ">=19.2.0" }, "optionalPeers": ["react"] }, "sha512-qbelFXBnp2rr2ixkzkMcA+yAaKUD/x3Pc5M5yt2X0O5qpyYz6jwj6MTf884JtP3Gg0qT4qwQKMb4TEhYSY8CAg=="],
+
+    "@shaulavo/workbench-icons": ["@shaulavo/workbench-icons@https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-icons-0.0.1.tgz", { "peerDependencies": { "react": ">=19.2.0" }, "optionalPeers": ["react"] }, "sha512-vlFORrPgYQjvPlaTxiyp+tiOy7V/+uz9DS0cZkNSgerIrMWg57X6qQJMLxb5bMb77dUCiD/Lcw64XeNBr9gt2g=="],
+
+    "@shaulavo/workbench-tokens": ["@shaulavo/workbench-tokens@https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-tokens-0.0.1.tgz", {}, "sha512-+gVAzQZeNabLxvxHfiHDdamGRlWMAnpCX0sU8CoVEfdtnGkZWlCLehF37KD4n8DAqizKy4kkkCEWR36gCjtPZQ=="],
+
+    "@shaulavo/workbench-ui": ["@shaulavo/workbench-ui@https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-ui-0.0.1.tgz", { "dependencies": { "@shaulavo/workbench-core": "0.0.1", "@shaulavo/workbench-icons": "0.0.1", "@shaulavo/workbench-tokens": "0.0.1", "@tanstack/react-virtual": "3.14.28" }, "peerDependencies": { "@base-ui/react": ">=1.0.0", "react": ">=19.2.0", "react-dom": ">=19.2.0" } }, "sha512-hQ4iG0XNSqc9pF1+fsgT9Z9N2Wh4tCMmYO5ClJQLOSEd2cqKrTOcQimkS2XqELzV5D74f4Ov9y/KYRvvl6Puyw=="],
+
     "@shikijs/core": ["@shikijs/core@4.6.0", "", { "dependencies": { "@shikijs/primitive": "4.6.0", "@shikijs/types": "4.6.0", "@shikijs/vscode-textmate": "^10.1.0", "@types/hast": "^3.0.5", "hast-util-to-html": "^9.0.6" } }, "sha512-bfd4OKgvoyXYiYmMRuleA656P4V7M/Du9lcTl38Ngm6KszMj7bq4J1IGZwSYR4c95Tv5UQALtYNWUwaI9UT3xw=="],
 
     "@shikijs/engine-javascript": ["@shikijs/engine-javascript@4.6.0", "", { "dependencies": { "@shikijs/types": "4.6.0", "@shikijs/vscode-textmate": "^10.1.0", "oniguruma-to-es": "^4.3.6" } }, "sha512-K0oqxFoL+kEMdz89mHLFO15Tsbv3kFZ6WR1cXZKMvLSc+oqaM00A6pyga1qSeXB22dP0tTiSApRcGBaKWsEccg=="],
@@ -349,7 +381,11 @@
 
     "@speed-highlight/core": ["@speed-highlight/core@1.2.24", "", {}, "sha512-qeW2e1l78afw8VhRPfPQ1Gjj+KU5XFQ/OFV5ti6eTa9bruO7mJyZtA4vw0ofqmA3tKCkROE9xLk3VZoeRc98nw=="],
 
+    "@tanstack/react-virtual": ["@tanstack/react-virtual@3.14.28", "", { "dependencies": { "@tanstack/virtual-core": "3.19.13" }, "peerDependencies": { "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0", "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-zoM4eddIVUsOsunOe26ur+h6YJQbvdzU10a2tKzIovThu5P4SvEyQ+cRx0mbeKfgnR0Mz7KR/NwrZ3GzVnUF/g=="],
+
     "@tanstack/store": ["@tanstack/store@0.11.3", "", {}, "sha512-/Mt3h2Qe67HmRMc5SJ+8jM2Fp7O4fBbwOlS0ujUvx34KgAvkvdLSHrJatv0PJG5fbvlDsACTawMMY4ptCpVI8w=="],
+
+    "@tanstack/virtual-core": ["@tanstack/virtual-core@3.19.13", "", {}, "sha512-CyCvMm7m5JuvPW6eMPZkZBZk6diySrlUQNNRpQPiEnh2vakyghx82Hw3wW2THFUsl6xJ6uM4lSUaiA2T0oYW8w=="],
 
     "@tree-sitter-grammars/tree-sitter-lua": ["@tree-sitter-grammars/tree-sitter-lua@0.4.1", "", { "dependencies": { "node-addon-api": "^8.5.0", "node-gyp-build": "^4.8.4" }, "peerDependencies": { "tree-sitter": "^0.22.4" }, "optionalPeers": ["tree-sitter"], "hasInstallScript": true }, "sha512-EwagFaU6ZveVk18/Y8qUhZkkiBKnQ7dSCHbm//TUroLVKy3i1rOYGy/cNHtSkAb1eDvS1HhCLybH2S541Cya/g=="],
 
@@ -745,6 +781,8 @@
 
     "remark-stringify": ["remark-stringify@11.0.0", "", { "dependencies": { "@types/mdast": "^4.0.0", "mdast-util-to-markdown": "^2.0.0", "unified": "^11.0.0" } }, "sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw=="],
 
+    "reselect": ["reselect@5.3.0", "", {}, "sha512-XGoLeRAVzUTcJ1qkxPQhDJyIZ5d6zzZD9nT7AEZOaaU9UbWclhycElmhO+VD5bFeLuzhPBaOV2oXC8uG35ZSpg=="],
+
     "rolldown": ["rolldown@1.2.19", "", { "dependencies": { "@oxc-project/types": "=0.156.0", "@rolldown/pluginutils": "^1.0.0" }, "optionalDependencies": { "@rolldown/binding-android-arm-eabi": "1.2.19", "@rolldown/binding-android-arm64": "1.2.19", "@rolldown/binding-darwin-arm64": "1.2.19", "@rolldown/binding-darwin-x64": "1.2.19", "@rolldown/binding-freebsd-x64": "1.2.19", "@rolldown/binding-linux-arm-gnueabihf": "1.2.19", "@rolldown/binding-linux-arm64-gnu": "1.2.19", "@rolldown/binding-linux-arm64-musl": "1.2.19", "@rolldown/binding-linux-ppc64-gnu": "1.2.19", "@rolldown/binding-linux-s390x-gnu": "1.2.19", "@rolldown/binding-linux-x64-gnu": "1.2.19", "@rolldown/binding-linux-x64-musl": "1.2.19", "@rolldown/binding-openharmony-arm64": "1.2.19", "@rolldown/binding-wasm32-wasi": "1.2.19", "@rolldown/binding-win32-arm64-msvc": "1.2.19", "@rolldown/binding-win32-x64-msvc": "1.2.19" }, "bin": { "rolldown": "./bin/cli.mjs" } }, "sha512-QIiV1J9d0pzN4jeeTH4sjPy0AZ6cAy2cG0ExeoE1+U8Rvj+hR3gYkokx0YbeUNGlZqiQJJ2utcETe0oKXwzsuA=="],
 
     "safe-buffer": ["safe-buffer@5.2.1", "", {}, "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ=="],
@@ -844,6 +882,8 @@
     "unist-util-visit": ["unist-util-visit@5.2.0", "", { "dependencies": { "@types/unist": "^3.0.0", "unist-util-is": "^6.0.0", "unist-util-visit-parents": "^6.1.0" } }, "sha512-fpsYs/VVoZxfGY9/j3FQpZmN8wdLJaV1Pt38AaJNZu9uKIHcFU3halCdBveEq1HGKO1OEfJY65w1zvoFV1b3qQ=="],
 
     "unist-util-visit-parents": ["unist-util-visit-parents@6.1.0", "", { "dependencies": { "@types/unist": "^3.0.0", "unist-util-is": "^6.0.0" } }, "sha512-vKXxz6O38sKDj1mtx/k2cWvkkFBuYGx6uGrlzBkVeWCRF/F8sdI0j3Wbkz/5rVNRRuVc8UrgRdbCxNhmYXgP3w=="],
+
+    "use-sync-external-store": ["use-sync-external-store@1.7.0", "", { "peerDependencies": { "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-6L+EeigHMQhdaIPNIFUKwfWJSwWFQ8gJbJ2DLOs5sDIegTwR9fRxvnM3uciHKjIZhFz+KAv2emhWMRvDmMcY8A=="],
 
     "vfile": ["vfile@6.0.3", "", { "dependencies": { "@types/unist": "^3.0.0", "vfile-message": "^4.0.0" } }, "sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q=="],
 

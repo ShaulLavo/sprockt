@@ -21,9 +21,13 @@
     "agent:browser": "bun scripts/agent/browser.ts"
   },
   "dependencies": {
+    "@base-ui/react": "1.9.0",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@fontsource-variable/schibsted-grotesk": "5.3.0",
     "@shaulavo/hotkeys": "0.0.4",
+    "@shaulavo/workbench-core": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-core-0.0.1.tgz",
+    "@shaulavo/workbench-tokens": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-tokens-0.0.1.tgz",
+    "@shaulavo/workbench-ui": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-ui-0.0.1.tgz",
     "@singapore-editor/core": "0.2.13",
     "@singapore-editor/find": "0.2.13",
     "@singapore-editor/gutters": "0.2.13",
@@ -52,6 +56,12 @@
     "typescript": "7.0.2",
     "vite": "8.3.4",
     "wrangler": "4.151.0"
+  },
+  "overrides": {
+    "@shaulavo/workbench-core": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-core-0.0.1.tgz",
+    "@shaulavo/workbench-icons": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-icons-0.0.1.tgz",
+    "@shaulavo/workbench-tokens": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-tokens-0.0.1.tgz",
+    "@shaulavo/workbench-ui": "https://github.com/ShaulLavo/workbench/releases/download/v0.1.2/shaulavo-workbench-ui-0.0.1.tgz"
   },
   "trustedDependencies": [
     "bun-wasm"

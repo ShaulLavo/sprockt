@@ -58,14 +58,14 @@ test("closing a dirty tab opens the Sheet & Biro save dialog and tab context men
 
   // Close dirty tab -> custom dialog appears; Cancel keeps tab open.
   await page.getByRole("button", { name: "Close beta.ts" }).click();
-  await expect(page.getByTestId("unsaved-dialog")).toBeVisible();
-  await page.getByTestId("unsaved-cancel").click();
-  await expect(page.getByTestId("unsaved-dialog")).toHaveCount(0);
+  await expect(page.getByTestId("wb-unsaved-dialog")).toBeVisible();
+  await page.getByTestId("wb-unsaved-cancel").click();
+  await expect(page.getByTestId("wb-unsaved-dialog")).toHaveCount(0);
   await expect(page.locator('[data-testid="editor-tab"][data-path="beta.ts"]')).toBeVisible();
 
   // Save & Close persists the edit and closes the tab.
   await page.getByRole("button", { name: "Close beta.ts" }).click();
-  await page.getByTestId("unsaved-save").click();
+  await page.getByTestId("wb-unsaved-save").click();
   await expect(page.locator('[data-testid="editor-tab"][data-path="beta.ts"]')).toHaveCount(0);
   const disk = await page.evaluate(() => globalThis.sprockt?.workspace?.files.read("beta.ts"));
   expect(disk).toBe("export const b = 2;\n// edited");
@@ -114,7 +114,7 @@ test("explorer compacts single-child folders, shows indent guides, and supports 
   await expect(srcRow).not.toHaveClass(/is-selected/);
   await expect(buttonRow).toHaveClass(/is-selected/);
   await page.keyboard.press("Delete");
-  const confirmDialog = page.locator("dialog.tree-dialog[open]");
+  const confirmDialog = page.getByTestId("wb-confirm-dialog");
   await expect(confirmDialog).toBeVisible();
   await expect(confirmDialog).toContainText("Button.tsx");
   await expect(confirmDialog).not.toContainText("Delete src");
@@ -144,11 +144,11 @@ test("terminal capture-phase context menu opens with Clear and Split actions", a
   await expect(page.getByTestId("terminal-state")).toHaveText("ready");
 
   await page.locator(".term-view .term-canvas").first().click({ button: "right" });
-  await expect(page.getByTestId("tree-menu")).toBeVisible();
+  await expect(page.locator("[data-wb-point-context-menu]")).toBeVisible();
   await expect(page.getByTestId("term-menu-clear")).toBeVisible();
   await expect(page.getByTestId("term-menu-split")).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByTestId("tree-menu")).toHaveCount(0);
+  await expect(page.locator("[data-wb-point-context-menu]")).toHaveCount(0);
 });
 
 const terminalCanvasBackground = (page: Page) =>
