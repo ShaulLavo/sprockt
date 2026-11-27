@@ -396,12 +396,26 @@ test("hydrates project names for existing workspaces without localStorage hints"
   const id = await expectWorkspace(page);
   await expect(page.getByTestId("workspace-name")).toHaveText("demo");
 
-  // Simulate an existing workspace whose browser has no localStorage hint at all.
+  // Simulate an existing workspace whose browser has no localStorage hint at all, and record
+  // every title shown on the boot card so we verify hydration updates BootProgress before boot ends.
   await page.evaluate(() => localStorage.clear());
+  await page.addInitScript(() => {
+    const titles: string[] = [];
+    (globalThis as Record<string, unknown>).bootCardTitles = titles;
+    const record = () => {
+      const text = document.querySelector('[data-testid="boot-progress"] .wb-boot-title')?.textContent;
+      if (text && titles.at(-1) !== text) titles.push(text);
+    };
+    const observer = new MutationObserver(record);
+    observer.observe(document, { childList: true, subtree: true, characterData: true });
+  });
   await page.goto(`/w/${id}`);
   await expect(page.getByTestId("save-state")).toHaveText("saved");
   await expect(page.getByTestId("workspace-name")).toHaveText("demo");
   await expect(page.getByTestId("explorer-workspace-name")).toHaveText("demo");
+  expect(
+    await page.evaluate(() => (globalThis as Record<string, unknown>).bootCardTitles as string[]),
+  ).toContain("demo");
 
   // An existing workspace with no workspace.json hydrates from its root package.json.
   await page.goto("/w/legacyproj");
@@ -417,6 +431,9 @@ test("hydrates project names for existing workspaces without localStorage hints"
   await expect(page.getByTestId("save-state")).toHaveText("saved");
   await expect(page.getByTestId("workspace-name")).toHaveText("hydrated-pkg");
   await expect(page.getByTestId("explorer-workspace-name")).toHaveText("hydrated-pkg");
+  expect(
+    await page.evaluate(() => (globalThis as Record<string, unknown>).bootCardTitles as string[]),
+  ).toContain("hydrated-pkg");
 });
 
 /** A valid npm `.tgz` tarball (`package/...`), as published on GitHub Releases. */
