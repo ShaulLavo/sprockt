@@ -398,7 +398,7 @@ test("a folder holding unsaved edits can be renamed, moved and deleted; the edit
   await page.getByRole("button", { name: "Delete folder" }).click();
   await expect(row(page, "other/renamed")).toHaveCount(0);
   const tab = page.locator('[data-testid="editor-tab"][data-path="other/renamed/a.txt"]');
-  await expect(tab).toHaveClass(/is-missing/);
+  await expect(tab).toHaveAttribute("data-missing", "true");
   await expect(page.getByTestId("editor-dirty")).toBeVisible();
   expect(await editorText(page)).toBe("hello\nunsaved");
   expect(await readFile(page, "other/renamed/a.txt")).toBeUndefined();

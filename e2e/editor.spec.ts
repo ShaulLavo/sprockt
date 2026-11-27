@@ -46,24 +46,26 @@ test("two files open in tabs, an edit is saved with the shortcut and survives a 
   await openFromTree(page, "notes.txt");
   await openFromTree(page, "todo.md");
   await expect(page.getByTestId("editor-tab")).toHaveCount(2);
-  await expect(tab(page, "todo.md")).toHaveAttribute("aria-selected", "true");
+  await expect(tab(page, "todo.md")).toHaveAttribute("data-active", "true");
+  await expect(tab(page, "todo.md").locator('[role="tab"]')).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => editorText(page)).toBe("# Todo\n");
 
   await tab(page, "notes.txt").click();
-  await expect(tab(page, "notes.txt")).toHaveAttribute("aria-selected", "true");
+  await expect(tab(page, "notes.txt")).toHaveAttribute("data-active", "true");
+  await expect(tab(page, "notes.txt").locator('[role="tab"]')).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => editorText(page)).toBe("first file\n");
 
   await page.getByTestId("editor").click();
   await caretToEnd(page);
   await page.keyboard.type("saved line");
-  await expect(tab(page, "notes.txt")).toHaveClass(/is-dirty/);
+  await expect(tab(page, "notes.txt")).toHaveAttribute("data-dirty", "true");
   await press(page, "Mod+s");
-  await expect(tab(page, "notes.txt")).not.toHaveClass(/is-dirty/);
+  await expect(tab(page, "notes.txt")).not.toHaveAttribute("data-dirty", "true");
   await expect(page.getByTestId("save-state")).toHaveText("saved");
 
   await page.reload();
   await expect(page.getByTestId("editor-tab")).toHaveCount(2);
-  await expect(tab(page, "notes.txt")).toHaveAttribute("aria-selected", "true");
+  await expect(tab(page, "notes.txt")).toHaveAttribute("data-active", "true");
   await expect.poll(() => editorText(page)).toBe("first file\nsaved line");
 });
 
@@ -98,7 +100,11 @@ test("quick open finds a file by a fuzzy name and opens it", async ({ page }) =>
   );
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("quick-open")).toHaveCount(0);
-  await expect(tab(page, "src/components/CounterButton.tsx")).toHaveAttribute("aria-selected", "true");
+  await expect(tab(page, "src/components/CounterButton.tsx")).toHaveAttribute("data-active", "true");
+  await expect(tab(page, "src/components/CounterButton.tsx").locator('[role="tab"]')).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect.poll(() => editorText(page)).toBe("export const CounterButton = () => null;\n");
 });
 
@@ -115,7 +121,8 @@ test("project search finds text and opens the file at the matching line", async 
   await expect(page.getByTestId("search-file")).toHaveAttribute("data-path", "src/two.ts");
 
   await page.getByTestId("search-result").first().click();
-  await expect(tab(page, "src/two.ts")).toHaveAttribute("aria-selected", "true");
+  await expect(tab(page, "src/two.ts")).toHaveAttribute("data-active", "true");
+  await expect(tab(page, "src/two.ts").locator('[role="tab"]')).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => caret(page)).toEqual({ path: "src/two.ts", line: 3, column: 14 });
 });
 
@@ -127,7 +134,7 @@ test("a shell edit reloads a clean buffer and puts a conflict on a dirty one", a
   await expect.poll(() => editorText(page)).toBe("before\n");
   await runInTerminal(page, "echo after-the-shell > shell.txt");
   await expect.poll(() => editorText(page)).toBe("after-the-shell\n");
-  await expect(tab(page, "shell.txt")).not.toHaveClass(/is-dirty/);
+  await expect(tab(page, "shell.txt")).not.toHaveAttribute("data-dirty", "true");
 
   await openFromTree(page, "mine.txt");
   await page.getByTestId("editor").click();
@@ -141,7 +148,7 @@ test("a shell edit reloads a clean buffer and puts a conflict on a dirty one", a
   await page.getByRole("button", { name: "Reload from disk" }).click();
   await expect(page.getByTestId("editor-conflict")).toHaveCount(0);
   await expect.poll(() => editorText(page)).toBe("from-outside\n");
-  await expect(tab(page, "mine.txt")).not.toHaveClass(/is-dirty/);
+  await expect(tab(page, "mine.txt")).not.toHaveAttribute("data-dirty", "true");
 });
 
 test("a plugin provider registered through the mount hook mounts on the live editor", async ({ page }) => {
@@ -176,17 +183,18 @@ test("folders moved and deleted from the terminal leave open files open, marked 
   await withoutAutosave(page);
   await workspaceWith(page, { "docs/a.txt": "hello\n", "notes/b.txt": "bee\n" });
   await treeRow(page, "docs/a.txt").click();
-  await expect(tab(page, "docs/a.txt")).toHaveAttribute("aria-selected", "true");
+  await expect(tab(page, "docs/a.txt")).toHaveAttribute("data-active", "true");
+  await expect(tab(page, "docs/a.txt").locator('[role="tab"]')).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => editorText(page)).toBe("hello\n");
   await page.getByTestId("editor").click();
   await caretToEnd(page);
   await page.keyboard.type("unsaved");
-  await expect(tab(page, "docs/a.txt")).toHaveClass(/is-dirty/);
+  await expect(tab(page, "docs/a.txt")).toHaveAttribute("data-dirty", "true");
 
   // The shell gives no move information: the file is gone from its path, so the tab says so.
   await runInTerminal(page, "mv docs moved");
-  await expect(tab(page, "docs/a.txt")).toHaveClass(/is-missing/);
-  await expect(tab(page, "docs/a.txt")).toHaveClass(/is-dirty/);
+  await expect(tab(page, "docs/a.txt")).toHaveAttribute("data-missing", "true");
+  await expect(tab(page, "docs/a.txt")).toHaveAttribute("data-dirty", "true");
   expect(await editorText(page)).toBe("hello\nunsaved");
   expect(await read(page, "moved/a.txt")).toBe("hello\n");
 
@@ -194,13 +202,13 @@ test("folders moved and deleted from the terminal leave open files open, marked 
   await treeRow(page, "notes/b.txt").click();
   await expect.poll(() => editorText(page)).toBe("bee\n");
   await runInTerminal(page, "rm -r notes");
-  await expect(tab(page, "notes/b.txt")).toHaveClass(/is-missing/);
+  await expect(tab(page, "notes/b.txt")).toHaveAttribute("data-missing", "true");
 
   // Saving the deleted file writes it again, with the unsaved text.
   await tab(page, "docs/a.txt").click();
   await press(page, "Mod+s");
-  await expect(tab(page, "docs/a.txt")).not.toHaveClass(/is-dirty/);
-  await expect(tab(page, "docs/a.txt")).not.toHaveClass(/is-missing/);
+  await expect(tab(page, "docs/a.txt")).not.toHaveAttribute("data-dirty", "true");
+  await expect(tab(page, "docs/a.txt")).not.toHaveAttribute("data-missing", "true");
   expect(await read(page, "docs/a.txt")).toBe("hello\nunsaved");
 
   // FileService measures files without reading them; search uses that to skip big ones.
@@ -221,4 +229,39 @@ test("the status bar shows the caret position and the language of the open file"
   const status = page.getByTestId("status-bar");
   await expect(status).toContainText("Ln 2, Col 7");
   await expect(status).toContainText("TypeScript");
+});
+
+test("toggling a line comment in a shell script uses hash comments", async ({ page }) => {
+  await workspaceWith(page, { "setup.sh": "echo hello" });
+  await treeRow(page, "setup.sh").click();
+  await expect.poll(() => editorText(page)).toBe("echo hello");
+  await page.getByTestId("editor").click();
+  await press(page, "Mod+/");
+  await expect.poll(() => editorText(page)).toBe("# echo hello");
+});
+
+test("clicking another tab at phone width with a fine pointer keeps focus out of the editor", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await workspaceWith(page, { "a.txt": "alpha\n", "b.txt": "beta\n" });
+  const filesPaneButton = page.locator('[data-testid="pane-switcher"] [aria-controls="wb-slot-files"]');
+  await filesPaneButton.click();
+  await treeRow(page, "a.txt").click();
+  await expect.poll(() => editorText(page)).toBe("alpha\n");
+  await filesPaneButton.click();
+  await treeRow(page, "b.txt").click();
+  await expect.poll(() => editorText(page)).toBe("beta\n");
+
+  // Explicitly focus the editor on b.txt, then click the a.txt tab with a fine mouse pointer.
+  await page.getByTestId("editor").click();
+  await expect
+    .poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('[data-testid="editor"]'))))
+    .toBe(true);
+
+  await tab(page, "a.txt").locator('[role="tab"]').click();
+  await expect.poll(() => editorText(page)).toBe("alpha\n");
+  await expect
+    .poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('[data-testid="editor"]'))))
+    .toBe(false);
 });

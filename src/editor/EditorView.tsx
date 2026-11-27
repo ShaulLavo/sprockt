@@ -1,20 +1,18 @@
-// One Singapore editor for the whole pane. Tabs do not get editors of their own: switching tabs
-// attaches that file's buffer session, which carries its text, undo history and carets.
+// One persistent Singapore editor over @shaulavo/workbench-editor's EditorSessionView.
+// Switching tabs attaches that file's buffer session, preserving text, undo history, carets, and scroll.
 import {
-  createBracketMatchPlugin,
-  createDocumentLinkPlugin,
-  createOccurrenceHighlightPlugin,
-} from "@singapore-editor/core";
-import type { Editor } from "@singapore-editor/core/editor";
+  EditorSessionView,
+  languageIdForPath,
+  languageLabelForPath,
+  type EditorRevealTarget,
+  type EditorSessionAttachment,
+} from "@shaulavo/workbench-editor";
+import type { Editor, EditorScrollPosition } from "@singapore-editor/core/editor";
 import { createPlugin } from "@singapore-editor/core/extensions";
 import "@singapore-editor/core/style.css";
-import { createEditorFindPlugin } from "@singapore-editor/find";
 import "@singapore-editor/find/style.css";
-import { createFoldGutterPlugin, createLineGutterPlugin } from "@singapore-editor/gutters";
-import { createHighlightingPlugin } from "@singapore-editor/highlighting";
-import { createTouchSelectionPlugin } from "@singapore-editor/plugin-ui/touch-selection-plugin";
-import { useEditor } from "@singapore-editor/react";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -26,20 +24,15 @@ import {
 } from "react";
 import { debugHandle } from "../app/debug";
 import { ContextMenu, type MenuItem } from "../explorer/ContextMenu";
-import { useScope, useValue } from "../lib/react";
-import { untrack } from "../lib/reactive";
+import { useValue } from "../lib/react";
 import { STATUS_SLOT, type StatusItems } from "../workbench/slots";
-import { colorScheme } from "../workbench/theme";
 import { PROJECT_ROOT, projectRelative } from "../workspace/paths";
 import { useWorkspace } from "../workspace/session";
-import { isDetached, type Buffer } from "./buffers";
+import { isDetached, originalPath, type Buffer } from "./buffers";
 import { EDITOR_COPY, fill } from "./copy";
 import { shouldAutoFocusEditor } from "./focus-policy";
-import { languageName, languageOf } from "./languages";
 import { mountEditorPlugins } from "./plugins";
-import { clampRestoredScroll } from "./scroll-position";
-import type { EditorStore, RevealRequest } from "./store";
-import { createColorScheme, editorTheme } from "./theme";
+import type { EditorStore } from "./store";
 
 declare module "../app/debug" {
   interface SprocktDebug {
@@ -57,29 +50,18 @@ const CURSOR_LINE_HIGHLIGHT = {
   rowBackground: true,
 } as const;
 
-/** Fold markers are chevrons like the explorer's, down for an open region and right for a folded one. */
-const FOLD_OPEN = {
-  kind: "svg",
-  viewBox: "0 0 16 16",
-  path: "M3.2 5.6 8 10.4l4.8-4.8 1 1L8 12.4 2.2 6.6z",
-} as const;
-const FOLD_CLOSED = {
-  kind: "svg",
-  viewBox: "0 0 16 16",
-  path: "M5.6 3.2 10.4 8l-4.8 4.8 1 1L12.4 8 6.6 2.2z",
-} as const;
-
-/** Phones wrap long lines to the screen instead of scrolling sideways. */
-function useNarrow(): boolean {
-  const [media] = useState(() => matchMedia("(max-width: 768px)"));
-  const [narrow, setNarrow] = useState(media.matches);
-  useEffect(() => {
-    const update = () => setNarrow(media.matches);
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, [media]);
-  return narrow;
-}
+const FOLD_ICONS = {
+  expandedIcon: {
+    kind: "svg" as const,
+    viewBox: "0 0 16 16",
+    path: "M3.2 5.6 8 10.4l4.8-4.8 1 1L8 12.4 2.2 6.6z",
+  },
+  collapsedIcon: {
+    kind: "svg" as const,
+    viewBox: "0 0 16 16",
+    path: "M5.6 3.2 10.4 8l-4.8 4.8 1 1L12.4 8 6.6 2.2z",
+  },
+};
 
 type InputCommandRunner = (command: "copy" | "cut" | "paste") => void | Promise<void>;
 
@@ -93,46 +75,30 @@ function createClipboardBridgePlugin(onReady: (runner: InputCommandRunner | unde
   });
 }
 
-function createPlugins(narrow: boolean, onClipboardReady: (runner: InputCommandRunner | undefined) => void) {
-  return [
-    createLineGutterPlugin(),
-    // A phone has no room for a fold column; its markers are hidden there too (editor.css).
-    createFoldGutterPlugin({
-      width: narrow ? 0 : 16,
-      expandedIcon: FOLD_OPEN,
-      collapsedIcon: FOLD_CLOSED,
-    }),
-    createHighlightingPlugin(),
-    createEditorFindPlugin(),
-    createBracketMatchPlugin(),
-    createOccurrenceHighlightPlugin(),
-    createDocumentLinkPlugin(),
-    createTouchSelectionPlugin(),
-    createClipboardBridgePlugin(onClipboardReady),
-  ];
+function useNarrow(): boolean {
+  const [media] = useState(() => matchMedia("(max-width: 768px)"));
+  const [narrow, setNarrow] = useState(media.matches);
+  useEffect(() => {
+    const update = () => setNarrow(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [media]);
+  return narrow;
 }
 
-interface Shown {
+interface ShownBuffer {
   readonly buffer: Buffer;
-  /** The path it was attached under; a rename changes the buffer's path and needs a re-attach. */
+  /** The path under which the buffer was attached; a rename updates buffer.path and re-attaches. */
   readonly path: string;
 }
 
-function caretOf(shown: Shown, editor: Editor) {
+function caretOf(shown: ShownBuffer, editor: Editor) {
   const head = editor.getSelections()[0]?.headOffset ?? 0;
   const snapshot = shown.buffer.session.getTextSnapshot();
   const line = snapshot.lineAt(head);
   return { path: shown.path, line: line + 1, column: head - snapshot.lineStart(line) + 1 };
 }
 
-function revealOffset(buffer: Buffer, request: RevealRequest & { line: number }): number {
-  const snapshot = buffer.session.getTextSnapshot();
-  const row = Math.max(0, Math.min(request.line - 1, snapshot.lineCount - 1));
-  const range = snapshot.lineRange(row);
-  return Math.min(range.start + Math.max(0, (request.column ?? 1) - 1), range.end);
-}
-
-/** Opens an absolute project path in a tab, at a 1-based position when given. */
 function openProjectFile(
   store: EditorStore,
   path: string,
@@ -144,149 +110,143 @@ function openProjectFile(
   return true;
 }
 
-/** Which buffer session the editor shows, and the status bar items that follow it. */
-class SessionBinding {
-  shown: Shown | undefined;
-  private handledReveal = 0;
+function updateStatusBar(status: StatusItems, shown: ShownBuffer | undefined, editor: Editor | null): void {
+  const position = shown && editor ? caretOf(shown, editor) : undefined;
+  status.set(
+    STATUS_SLOT.cursor,
+    position ? { text: fill(EDITOR_COPY.cursorPosition, position), side: "end", order: 10 } : undefined,
+  );
+  status.set(
+    STATUS_SLOT.language,
+    shown ? { text: languageLabelForPath(originalPath(shown.path)), side: "end", order: 11 } : undefined,
+  );
+}
 
-  constructor(
-    private readonly store: EditorStore,
-    private readonly status: StatusItems,
-    private readonly onShown: (shown: Shown | undefined) => void,
-  ) {}
-
-  /** Cursor position and language in the status bar, for the file on screen. */
-  refresh(instance: Editor | null): void {
-    const current = this.shown;
-    const position = current && instance ? caretOf(current, instance) : undefined;
-    this.status.set(
-      STATUS_SLOT.cursor,
-      position ? { text: fill(EDITOR_COPY.cursorPosition, position), side: "end", order: 10 } : undefined,
-    );
-    this.status.set(
-      STATUS_SLOT.language,
-      current ? { text: languageName(current.path), side: "end", order: 11 } : undefined,
-    );
-  }
-
-  clearStatus(): void {
-    this.status.set(STATUS_SLOT.cursor, undefined);
-    this.status.set(STATUS_SLOT.language, undefined);
-  }
-
-  private setShown(next: Shown | undefined): void {
-    this.shown = next;
-    this.onShown(next);
-  }
-
-  attach(instance: Editor, buffer: Buffer, hostHeight: number): void {
-    const current = this.shown;
-    if (current?.buffer === buffer && current.path === buffer.path) return;
-    if (current) current.buffer.scroll = instance.getScrollPosition();
-    const savedScroll = buffer.scroll;
-    instance.attachSession(buffer.session, {
-      // A detached draft has no file, so no document id: language servers leave it alone.
-      documentId: isDetached(buffer.path) ? null : `${PROJECT_ROOT}/${buffer.path}`,
-      languageId: languageOf(buffer.path),
-      scrollPosition: savedScroll,
+function buildEditorMenuItems(
+  editor: Editor,
+  writable: boolean,
+  runInputCommand: InputCommandRunner | undefined,
+): MenuItem[] {
+  const runClipboard = (command: "cut" | "copy" | "paste") => {
+    if (runInputCommand) void Promise.resolve(runInputCommand(command)).catch(() => {});
+    else editor.dispatchCommand(command);
+    editor.focus();
+  };
+  const items: MenuItem[] = [];
+  if (writable) {
+    items.push({
+      label: EDITOR_COPY.editorMenu.cut,
+      testId: "editor-menu-cut",
+      run: () => runClipboard("cut"),
     });
-    // Clamp once against the attached document's real wrapped height so long wrapped lines keep their offset.
-    if (savedScroll?.top !== undefined) {
-      const clamped = clampRestoredScroll(savedScroll, instance.getContentHeight(), hostHeight);
-      if (clamped && clamped.top !== instance.getScrollPosition().top) instance.setScrollPosition(clamped);
-    }
-    this.setShown({ buffer, path: buffer.path });
-    this.refresh(instance);
-    this.store.setDisplayed(buffer.path);
   }
-
-  detach(instance: Editor): void {
-    const current = this.shown;
-    if (!current) return;
-    current.buffer.scroll = instance.getScrollPosition();
-    instance.detachSession();
-    this.setShown(undefined);
-    this.refresh(instance);
-    this.store.setDisplayed(undefined);
+  items.push({
+    label: EDITOR_COPY.editorMenu.copy,
+    testId: "editor-menu-copy",
+    run: () => runClipboard("copy"),
+  });
+  if (writable) {
+    items.push({
+      label: EDITOR_COPY.editorMenu.paste,
+      testId: "editor-menu-paste",
+      run: () => runClipboard("paste"),
+    });
   }
-
-  async show(instance: Editor, path: string, hostHeight: number): Promise<void> {
-    const buffer = await this.store.buffers.load(path);
-    // The user may have moved on, or closed the tab, while the file was being read.
-    if (this.store.active() !== path) return this.store.releaseClosed();
-    if (buffer) this.attach(instance, buffer, hostHeight);
-    else this.store.close(path);
-  }
-
-  reveal(instance: Editor, request: RevealRequest): void {
-    const current = this.shown;
-    if (!current || current.path !== request.path || request.seq === this.handledReveal) return;
-    this.handledReveal = request.seq;
-    if (request.line !== undefined) {
-      const offset = revealOffset(current.buffer, { ...request, line: request.line });
-      instance.jumpTo(offset, undefined, "go-to-line");
-    }
-    if (request.focus ?? shouldAutoFocusEditor()) instance.focus();
-  }
+  items.push(
+    {
+      label: EDITOR_COPY.editorMenu.selectAll,
+      testId: "editor-menu-select-all",
+      run: () => {
+        editor.dispatchCommand("selectAll");
+        editor.focus();
+      },
+    },
+    {
+      label: EDITOR_COPY.editorMenu.find,
+      testId: "editor-menu-find",
+      run: () => void editor.openFind(),
+    },
+    {
+      label: EDITOR_COPY.editorMenu.goToDefinition,
+      testId: "editor-menu-definition",
+      run: () => {
+        editor.dispatchCommand("editor.action.goToDefinition");
+        editor.focus();
+      },
+    },
+  );
+  return items;
 }
 
 export function EditorView(props: { store: EditorStore; onEditor?: (editor: Editor) => void }) {
   const { store, onEditor } = props;
   const workspace = useWorkspace();
-  const schemeAccessor = useScope(createColorScheme);
-  const scheme = useValue(() => schemeAccessor?.() ?? colorScheme());
   const narrow = useNarrow();
   const writable = useValue(workspace.files.writable);
   const active = useValue(store.active);
   const reveal = useValue(store.reveal);
-  const theme = useMemo(() => editorTheme(scheme), [scheme]);
   const runInputCommand = useRef<InputCommandRunner>(undefined);
-  // Created once: a new array would make the editor replace its plugins.
-  const [plugins] = useState(() =>
-    createPlugins(narrow, (runner) => {
+  const [extraPlugins] = useState(() => [
+    createClipboardBridgePlugin((runner) => {
       runInputCommand.current = runner;
     }),
-  );
-  const [shown, setShown] = useState<Shown>();
+  ]);
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const editorRef = useRef<Editor | null>(null);
+  const [loaded, setLoaded] = useState<ShownBuffer>();
+  const shownRef = useRef<ShownBuffer | undefined>(undefined);
   const [menu, setMenu] = useState<{ x: number; y: number }>();
-  const hostEl = useRef<HTMLDivElement | null>(null);
-  const [binding] = useState(() => new SessionBinding(store, workspace.status, setShown));
   const unmountPlugins = useRef<() => void>(undefined);
 
-  const controller = useEditor({
-    theme,
-    plugins,
-    fontFamily: MONO,
-    fontSize: 13,
-    lineHeight: 20,
-    gutterLeadingInset: 8,
-    scrollPastEnd: true,
-    cursorLineHighlight: CURSOR_LINE_HIGHLIGHT,
-    wordWrap: narrow,
-    wordWrapBreak: "word",
-    // Once another tab owns the workspace, this tab can read but no longer write.
-    editability: writable ? "editable" : "readonly",
-    storeSync: "none",
-    // Every edit and every caret move: the status bar shows where the caret is.
-    onChange: () => untrack(() => binding.refresh(controller.getEditor())),
-  });
-  const { ref } = controller;
-  const editor = controller.useEditorInstance();
-
-  // Remeasure once JetBrains Mono Variable finishes loading so glyph widths match the rendered face.
+  // Load the active file's buffer, guarding against stale loads when tabs change mid-read.
   useEffect(() => {
-    if (!editor || typeof document.fonts?.ready?.then !== "function") return;
-    let disposed = false;
-    void (async () => {
-      await document.fonts.ready;
-      if (!disposed) editor.setFontFamily(MONO);
-    })();
+    if (active === undefined) {
+      setLoaded(undefined);
+      return;
+    }
+    let cancelled = false;
+    const target = active;
+    async function loadActive(): Promise<void> {
+      const buffer = await store.buffers.load(target);
+      if (cancelled || store.active() !== target) {
+        store.releaseClosed();
+        return;
+      }
+      if (!buffer) {
+        store.close(target);
+        return;
+      }
+      setLoaded({ buffer, path: buffer.path });
+    }
+    void loadActive();
     return () => {
-      disposed = true;
+      cancelled = true;
     };
-  }, [editor]);
+  }, [active, store]);
 
-  // A layout effect, so its cleanup runs before the controller disposes the editor.
+  const attachment = useMemo((): EditorSessionAttachment | null => {
+    if (!loaded || active === undefined) return null;
+    const path = loaded.path;
+    return {
+      session: loaded.buffer.session,
+      // A detached draft has no file on disk, so no document id: language servers leave it alone.
+      documentId: isDetached(path) ? null : `${PROJECT_ROOT}/${path}`,
+      languageId: languageIdForPath(originalPath(path)),
+      scrollPosition: loaded.buffer.scroll,
+    };
+  }, [active, loaded]);
+
+  const revealTarget = useMemo((): EditorRevealTarget | null => {
+    if (!reveal || !loaded || loaded.path !== reveal.path) return null;
+    return {
+      line: reveal.line,
+      column: reveal.column,
+      focus: reveal.focus ?? shouldAutoFocusEditor(),
+      seq: reveal.seq,
+    };
+  }, [loaded, reveal]);
+
+  // Layout effect so LSP cleanup runs before the controller disposes Singapore's editor.
   useLayoutEffect(() => {
     if (!editor) return;
     const unmount = mountEditorPlugins(
@@ -316,26 +276,56 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
   }, [editor, onEditor]);
 
   useEffect(() => {
-    if (!editor) return;
-    if (active === undefined) binding.detach(editor);
-    else void binding.show(editor, active, hostEl.current?.clientHeight ?? 0);
-  }, [binding, editor, active]);
-
-  useEffect(() => {
-    if (editor && reveal) binding.reveal(editor, reveal);
-  }, [binding, editor, reveal, shown]);
-
-  useEffect(() => () => binding.clearStatus(), [binding]);
+    return () => {
+      workspace.status.set(STATUS_SLOT.cursor, undefined);
+      workspace.status.set(STATUS_SLOT.language, undefined);
+    };
+  }, [workspace.status]);
 
   useEffect(() => {
     const debug = debugHandle();
-    debug.editorText = () => binding.shown?.buffer.session.materializeFullText() ?? "";
+    debug.editorText = () => shownRef.current?.buffer.session.materializeFullText() ?? "";
     debug.editorCaret = () => {
-      const current = binding.shown;
-      const instance = controller.getEditor();
+      const current = shownRef.current;
+      const instance = editorRef.current;
       return current && instance ? caretOf(current, instance) : undefined;
     };
-  }, [binding, controller]);
+  }, []);
+
+  const handleEditorReady = useCallback((instance: Editor | null) => {
+    editorRef.current = instance;
+    setEditor(instance);
+  }, []);
+
+  const handleBeforeDetach = useCallback((_prev: EditorSessionAttachment, scroll: EditorScrollPosition) => {
+    if (shownRef.current) shownRef.current.buffer.scroll = scroll;
+  }, []);
+
+  const handleAttached = useCallback(
+    (instance: Editor) => {
+      if (!loaded) return;
+      shownRef.current = loaded;
+      updateStatusBar(workspace.status, loaded, instance);
+      store.setDisplayed(loaded.path);
+    },
+    [loaded, store, workspace.status],
+  );
+
+  const handleDetached = useCallback(
+    (instance: Editor) => {
+      shownRef.current = undefined;
+      updateStatusBar(workspace.status, undefined, instance);
+      store.setDisplayed(undefined);
+    },
+    [store, workspace.status],
+  );
+
+  const handleChange = useCallback(
+    (_state: unknown, instance: Editor) => {
+      updateStatusBar(workspace.status, shownRef.current, instance);
+    },
+    [workspace.status],
+  );
 
   // Leaving the editor (a tap on the preview, the terminal, the tree) autosaves at once.
   const onFocusOut = (event: FocusEvent<HTMLDivElement>) => {
@@ -345,12 +335,12 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
   };
 
   function openMenuAt(x: number, y: number): void {
-    if (!editor || !shown) return;
+    if (!editor || !shownRef.current) return;
     setMenu({ x, y });
   }
 
   function onContextMenu(event: ReactMouseEvent<HTMLDivElement>): void {
-    if (!editor || !shown) return;
+    if (!editor || !shownRef.current) return;
     event.preventDefault();
     event.stopPropagation();
     openMenuAt(event.clientX, event.clientY);
@@ -358,92 +348,57 @@ export function EditorView(props: { store: EditorStore; onEditor?: (editor: Edit
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
     if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
-    if (!editor || !shown) return;
+    if (!editor || !shownRef.current) return;
     event.preventDefault();
     const anchor = editor.getInputElement().getBoundingClientRect();
     openMenuAt(anchor.left + 12, anchor.bottom + 4);
   }
 
-  function editorMenuItems(): MenuItem[] {
-    if (!editor) return [];
-    const instance = editor;
-    const runClipboard = (command: "cut" | "copy" | "paste") => {
-      const runner = runInputCommand.current;
-      if (runner) void Promise.resolve(runner(command)).catch(() => {});
-      else instance.dispatchCommand(command);
-      instance.focus();
-    };
-    const items: MenuItem[] = [];
-    if (writable) {
-      items.push({
-        label: EDITOR_COPY.editorMenu.cut,
-        testId: "editor-menu-cut",
-        run: () => runClipboard("cut"),
-      });
-    }
-    items.push({
-      label: EDITOR_COPY.editorMenu.copy,
-      testId: "editor-menu-copy",
-      run: () => runClipboard("copy"),
-    });
-    if (writable) {
-      items.push({
-        label: EDITOR_COPY.editorMenu.paste,
-        testId: "editor-menu-paste",
-        run: () => runClipboard("paste"),
-      });
-    }
-    items.push(
-      {
-        label: EDITOR_COPY.editorMenu.selectAll,
-        testId: "editor-menu-select-all",
-        run: () => {
-          instance.dispatchCommand("selectAll");
-          instance.focus();
-        },
-      },
-      {
-        label: EDITOR_COPY.editorMenu.find,
-        testId: "editor-menu-find",
-        run: () => void instance.openFind(),
-      },
-      {
-        label: EDITOR_COPY.editorMenu.goToDefinition,
-        testId: "editor-menu-definition",
-        run: () => {
-          instance.dispatchCommand("editor.action.goToDefinition");
-          instance.focus();
-        },
-      },
-    );
-    return items;
-  }
-
-  const hostRef = (element: HTMLDivElement | null) => {
-    hostEl.current = element;
-    return ref(element);
-  };
-
   return (
     <>
-      <div
-        className="editor-host"
-        data-testid="editor"
-        ref={hostRef}
+      <EditorSessionView
+        attachment={attachment}
+        readOnly={!writable}
+        fontFamily={MONO}
+        fontSize={13}
+        lineHeight={20}
+        gutterLeadingInset={8}
+        scrollPastEnd
+        wordWrap={narrow}
+        wordWrapBreak="word"
+        cursorLineHighlight={CURSOR_LINE_HIGHLIGHT}
+        narrowViewport={narrow}
+        useDefaultHighlighting
+        foldIcons={FOLD_ICONS}
+        includeMergeConflict={false}
+        extraPlugins={extraPlugins}
+        reveal={revealTarget}
+        onBeforeDetach={handleBeforeDetach}
+        onAttached={handleAttached}
+        onDetached={handleDetached}
+        onEditorReady={handleEditorReady}
+        onChange={handleChange}
         onBlur={onFocusOut}
         onContextMenu={onContextMenu}
         onKeyDown={onKeyDown}
+        hostClassName="editor-host"
+        hostTestId="editor"
+        emptyState={
+          <p className="editor-empty" data-testid="editor-empty">
+            {EDITOR_COPY.noOpenEditor}
+          </p>
+        }
       />
-      {menu ? (
+      {menu && editor ? (
         <ContextMenu
           key={`${menu.x}:${menu.y}`}
           x={menu.x}
           y={menu.y}
           label={EDITOR_COPY.editorMenu.label}
-          items={editorMenuItems()}
+          items={buildEditorMenuItems(editor, writable, runInputCommand.current)}
           onClose={(escaped) => {
             setMenu(undefined);
-            if (escaped) editor?.focus();
+            if (escaped) editor.focus();
           }}
         />
       ) : null}
