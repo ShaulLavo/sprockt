@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { DirectoryLoadState } from "@shaulavo/workbench-core";
+import type { DirectoryLoadState } from "@shaulavo/workbench/core";
 import type { EditorStore } from "../editor/store";
 import { DestinationExistsError } from "../files/errors";
 import type { DirEntry, FileChange, FileService } from "../files/service";

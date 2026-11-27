@@ -1,7 +1,7 @@
 // The page-side wiring between the Singapore editor and a language server process on Waffle,
-// bridged onto @shaulavo/workbench-editor/lsp's createWorkbenchLspPlugin.
-import type { LspServerStatus, Subscribable } from "@shaulavo/workbench-core";
-import { createWorkbenchLspPlugin, type SingaporeLspAdapter } from "@shaulavo/workbench-editor/lsp";
+// bridged onto @shaulavo/workbench/editor/lsp's createWorkbenchLspPlugin.
+import type { LspServerStatus, Subscribable } from "@shaulavo/workbench/core";
+import { createWorkbenchLspPlugin, type SingaporeLspAdapter } from "@shaulavo/workbench/editor/lsp";
 import {
   LspServerExitedError,
   createStdioLspTransport,

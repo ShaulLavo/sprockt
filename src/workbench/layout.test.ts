@@ -8,26 +8,44 @@ import {
   EDITOR_ROW_MIN_PX,
   fitLayout,
   handleKeyOf,
+  isOpen,
   keyTo,
   MIN_PX,
   parseLayout,
   serializeLayout,
+  setOpen,
   STEP_PX,
+  toggleTerminalCollapsed,
 } from "./layout";
 
 const room = { extent: 1000 };
 
 describe("parseLayout", () => {
-  test("round-trips a stored layout", () => {
-    const layout = { ...DEFAULT_LAYOUT, explorer: 300, preview: 0.5, terminal: 320, previewOpen: false };
-    expect(parseLayout(serializeLayout(layout))).toEqual(layout);
+  test("round-trips a stored layout including 3-state terminal visibility", () => {
+    const collapsed = {
+      ...DEFAULT_LAYOUT,
+      explorer: 300,
+      preview: 0.5,
+      terminal: 320,
+      previewOpen: false,
+      terminalState: "collapsed" as const,
+    };
+    expect(parseLayout(serializeLayout(collapsed))).toEqual(collapsed);
+
+    const hidden = { ...collapsed, terminalState: "hidden" as const };
+    expect(parseLayout(serializeLayout(hidden))).toEqual(hidden);
+  });
+
+  test("migrates legacy terminalOpen: false to hidden", () => {
+    expect(parseLayout('{"terminalOpen":false}').terminalState).toBe("hidden");
+    expect(parseLayout('{"terminalOpen":true}').terminalState).toBe("open");
   });
 
   test("falls back to the default for missing, malformed or hostile input", () => {
     expect(parseLayout(null)).toEqual(DEFAULT_LAYOUT);
     expect(parseLayout("{not json")).toEqual(DEFAULT_LAYOUT);
     expect(parseLayout("42")).toEqual(DEFAULT_LAYOUT);
-    expect(parseLayout('{"explorer":"wide","terminalOpen":"yes"}')).toEqual(DEFAULT_LAYOUT);
+    expect(parseLayout('{"explorer":"wide","terminalState":"bogus"}')).toEqual(DEFAULT_LAYOUT);
   });
 
   test("clamps sizes that would hide or swamp a pane", () => {
@@ -57,6 +75,29 @@ describe("dragTo", () => {
     const reopened = dragTo(closed, "explorer", MIN_PX.explorer / 2 + 1, room);
     expect(reopened.explorerOpen).toBe(true);
     expect(reopened.explorer).toBe(MIN_PX.explorer);
+
+    const hiddenTerminal = dragTo(DEFAULT_LAYOUT, "terminal", MIN_PX.terminal / 2 - 1, room);
+    expect(hiddenTerminal.terminalState).toBe("hidden");
+    const reopenedTerminal = dragTo(hiddenTerminal, "terminal", MIN_PX.terminal / 2 + 1, room);
+    expect(reopenedTerminal.terminalState).toBe("open");
+    expect(reopenedTerminal.terminal).toBe(MIN_PX.terminal);
+  });
+});
+
+describe("3-state terminal transitions", () => {
+  test("chevron toggles open <-> collapsed while sidebar toggle hides/shows completely", () => {
+    const collapsed = toggleTerminalCollapsed(DEFAULT_LAYOUT);
+    expect(collapsed.terminalState).toBe("collapsed");
+    expect(isOpen(collapsed, "terminal")).toBe(true);
+    expect(toggleTerminalCollapsed(collapsed).terminalState).toBe("open");
+
+    const hiddenFromCollapsed = setOpen(collapsed, "terminal", false);
+    expect(hiddenFromCollapsed.terminalState).toBe("hidden");
+    expect(isOpen(hiddenFromCollapsed, "terminal")).toBe(false);
+
+    const reopened = setOpen(hiddenFromCollapsed, "terminal", true);
+    expect(reopened.terminalState).toBe("open");
+    expect(isOpen(reopened, "terminal")).toBe(true);
   });
 });
 
@@ -80,11 +121,16 @@ describe("keyboard", () => {
     expect(keyTo(DEFAULT_LAYOUT, "preview", "toggle", room).previewOpen).toBe(false);
   });
 
-  test("growing a closed pane opens it at its minimum plus one step", () => {
-    const closed = { ...DEFAULT_LAYOUT, terminalOpen: false };
-    const grown = keyTo(closed, "terminal", "grow", room);
-    expect(grown.terminalOpen).toBe(true);
+  test("growing a hidden or collapsed terminal opens it at its minimum plus one step", () => {
+    const hidden = { ...DEFAULT_LAYOUT, terminalState: "hidden" as const };
+    const grown = keyTo(hidden, "terminal", "grow", room);
+    expect(grown.terminalState).toBe("open");
     expect(grown.terminal).toBe(MIN_PX.terminal + STEP_PX);
+
+    const collapsed = { ...DEFAULT_LAYOUT, terminalState: "collapsed" as const };
+    const grownFromCollapsed = keyTo(collapsed, "terminal", "grow", room);
+    expect(grownFromCollapsed.terminalState).toBe("open");
+    expect(grownFromCollapsed.terminal).toBe(MIN_PX.terminal + STEP_PX);
   });
 
   test("reports the size on screen, 0 to 100, to assistive technology", () => {
@@ -145,8 +191,19 @@ describe("fitLayout", () => {
     expect(400 - fitted.terminal).toBeGreaterThanOrEqual(EDITOR_ROW_MIN_PX);
   });
 
-  test("closed panes take no space", () => {
-    const closed = { ...DEFAULT_LAYOUT, explorerOpen: false, previewOpen: false, terminalOpen: false };
-    expect(fitLayout(closed, { width: 1000, height: 800 })).toEqual({ explorer: 0, preview: 0, terminal: 0 });
+  test("closed and collapsed panes take no expanded space", () => {
+    const hidden = {
+      ...DEFAULT_LAYOUT,
+      explorerOpen: false,
+      previewOpen: false,
+      terminalState: "hidden" as const,
+    };
+    expect(fitLayout(hidden, { width: 1000, height: 800 })).toEqual({ explorer: 0, preview: 0, terminal: 0 });
+    const collapsed = { ...hidden, terminalState: "collapsed" as const };
+    expect(fitLayout(collapsed, { width: 1000, height: 800 })).toEqual({
+      explorer: 0,
+      preview: 0,
+      terminal: 0,
+    });
   });
 });

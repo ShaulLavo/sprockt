@@ -1,5 +1,5 @@
 // The phone tab bar that picks which pane fills the screen, dismissing open touch keyboards on switch.
-import { dismissSoftKeyboardOnTouchActivation, resolveActivationFocus } from "@shaulavo/workbench-core";
+import { dismissSoftKeyboardOnTouchActivation, resolveActivationFocus } from "@shaulavo/workbench/core";
 import type { MouseEvent } from "react";
 import { Icon, type IconName } from "../ui/icons";
 import { ui } from "./copy";

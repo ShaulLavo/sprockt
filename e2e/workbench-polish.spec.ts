@@ -27,9 +27,11 @@ test("workbench hotkeys toggle panes and Mod+Shift+P opens command mode", async 
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-explorer", "open");
 
   await pressMod(page, "Mod+j");
-  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "closed");
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "hidden");
+  await expect(page.locator("#wb-slot-terminal")).toBeHidden();
   await pressMod(page, "Mod+j");
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
+  await expect(page.locator("#wb-slot-terminal")).toBeVisible();
 
   await pressMod(page, "Mod+Shift+p");
   await expect(page.getByTestId("quick-open")).toBeVisible();
@@ -138,6 +140,97 @@ test("explorer compacts single-child folders, shows indent guides, and supports 
   await expect(page.getByTestId("wb-tree-inline-input")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-wb-tree-row][data-path="README.md"]')).toBeVisible();
+});
+
+test("terminal supports 3-state visibility, paired split tabs, and intact workbench button padding", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await newWorkspace(page);
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+
+  // CSS layer check: Sprockt's @layer base reset must not wipe out @layer workbench .wb-tab-trigger padding.
+  const tabPaddingLeft = await page
+    .locator("[data-wb-term-session] .wb-tab-trigger")
+    .first()
+    .evaluate((el) => Number.parseFloat(getComputedStyle(el).paddingLeft));
+  expect(tabPaddingLeft).toBeGreaterThanOrEqual(8);
+
+  // State 1 -> 2: minimize chevron collapses body while keeping tab bar visible.
+  const expandedHeight = (await page.locator("#wb-slot-terminal").boundingBox())?.height ?? 0;
+  expect(expandedHeight).toBeGreaterThan(100);
+  await page.getByTestId("wb-term-collapse").click();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "collapsed");
+  await expect(page.locator("#wb-slot-terminal")).toBeVisible();
+  await expect(page.locator(".wb-terminal-header")).toBeVisible();
+  await expect(page.locator(".wb-terminal-stage")).toBeHidden();
+  const collapsedHeight = (await page.locator("#wb-slot-terminal").boundingBox())?.height ?? 0;
+  expect(collapsedHeight).toBeGreaterThanOrEqual(30);
+  expect(collapsedHeight).toBeLessThan(60);
+
+  // Chevron expands back to open.
+  await page.getByTestId("wb-term-collapse").click();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
+  await expect(page.locator(".wb-terminal-stage")).toBeVisible();
+
+  // State 1 -> 3: sidebar terminal button completely hides terminal, tab bar included (0px).
+  await page.getByTestId("toggle-terminal").click();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "hidden");
+  await expect(page.locator("#wb-slot-terminal")).toBeHidden();
+  await expect(page.getByTestId("toggle-terminal")).toHaveAttribute("aria-pressed", "false");
+
+  // Sidebar terminal button shows it again.
+  await page.getByTestId("toggle-terminal").click();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
+  await expect(page.locator("#wb-slot-terminal")).toBeVisible();
+  await expect(page.getByTestId("toggle-terminal")).toHaveAttribute("aria-pressed", "true");
+
+  // Dragging the terminal resize handle down past the bottom threshold snaps it completely hidden.
+  const splitterBox = await page.locator('[data-wb-splitter="terminal"]').boundingBox();
+  if (!splitterBox) throw new Error("terminal splitter not found");
+  const sx = splitterBox.x + splitterBox.width / 2;
+  const sy = splitterBox.y + splitterBox.height / 2;
+  await page.mouse.move(sx, sy);
+  await page.mouse.down();
+  await page.mouse.move(sx, sy + expandedHeight - 10, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "hidden");
+  await expect(page.locator("#wb-slot-terminal")).toBeHidden();
+
+  // Dragging the bottom splitter back up reopens the terminal.
+  const bottomBox = await page.locator('[data-wb-splitter="terminal"]').boundingBox();
+  if (!bottomBox) throw new Error("hidden terminal splitter not found");
+  const bx = bottomBox.x + bottomBox.width / 2;
+  const by = bottomBox.y + bottomBox.height / 2;
+  await page.mouse.move(bx, by);
+  await page.mouse.down();
+  await page.mouse.move(bx, by - 180, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "open");
+  await expect(page.locator("#wb-slot-terminal")).toBeVisible();
+
+  // Paired split-pane terminal tabs: Split button creates a paired side-by-side split.
+  await page.getByTestId("wb-term-split").click();
+  await expect(page.locator("[data-wb-term-split-group]")).toHaveCount(1);
+  await expect(page.locator('.wb-terminal-view[data-position="left"]')).toBeVisible();
+  await expect(page.locator('.wb-terminal-view[data-position="right"]')).toBeVisible();
+  await expect(page.locator('.wb-terminal-view[data-position="right"]')).toHaveAttribute(
+    "data-split-focused",
+    "true",
+  );
+
+  // Clicking the left split tab switches focus without collapsing the split.
+  await page.locator('[data-wb-term-split-group] [data-split-pane="left"] [role="tab"]').click();
+  await expect(page.locator('.wb-terminal-view[data-position="left"]')).toHaveAttribute(
+    "data-split-focused",
+    "true",
+  );
+  await expect(page.locator("[data-wb-term-split-group]")).toHaveCount(1);
+
+  // Unsplit keeps the focused left terminal and ends the split pair.
+  await page.getByTestId("wb-term-split").click();
+  await expect(page.locator("[data-wb-term-split-group]")).toHaveCount(0);
+  await expect(page.locator('.wb-terminal-view[data-position="single"]')).toBeVisible();
 });
 
 test("terminal capture-phase context menu opens with Clear and Split actions", async ({ page }) => {

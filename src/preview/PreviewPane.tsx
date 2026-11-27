@@ -1,8 +1,7 @@
-// Preview pane: wraps @shaulavo/workbench-preview's PreviewPane over Sprockt's Waffle
+// Preview pane: wraps @shaulavo/workbench/preview's PreviewPane over Sprockt's Waffle
 // PreviewTransport and dev-server lifecycle.
 import { useEffect, useMemo, useState } from "react";
-import { PreviewPane as WorkbenchPreviewPane, type PreviewViewportPreset } from "@shaulavo/workbench-preview";
-import "@shaulavo/workbench-preview/preview.css";
+import { PreviewPane as WorkbenchPreviewPane, type PreviewViewportPreset } from "@shaulavo/workbench/preview";
 import { onCleanup } from "../lib/reactive";
 import { Scope, useValue } from "../lib/react";
 import { createDevServer, type DevServer } from "../tasks/dev-server";
@@ -112,11 +111,13 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
       urlLabel={ui.url}
       viewportLabels={{ responsive: ui.desktop, tablet: ui.tablet, mobile: ui.phone }}
       renderViewportIcon={viewportIcon}
-      openInTabLabel={ui.openInTab}
-      onOpenInTab={(url) => void window.open(url, "_blank", "noopener")}
+      openInTab={{
+        label: ui.openInTab,
+        onOpen: (url) => void window.open(url, "_blank", "noopener"),
+      }}
       onActivePortChange={setActivePort}
       toolbarScrollRef={fadeScroller}
-      toolbarTrailing={
+      toolbarActions={
         <button
           type="button"
           className="icon-button preview-task"

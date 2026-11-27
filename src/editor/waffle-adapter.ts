@@ -14,7 +14,7 @@ import type {
   TabId,
   TabPlacement,
   WriteOutcome,
-} from "@shaulavo/workbench-core";
+} from "@shaulavo/workbench/core";
 import type { FileService } from "../files/service";
 import { createEffect, createRoot } from "../lib/reactive";
 import { fileTabTone } from "../ui/tab-colors";

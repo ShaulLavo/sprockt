@@ -1,10 +1,9 @@
-// The terminal panel: wraps @shaulavo/workbench-terminal's TerminalPanel over Sprockt's
+// The terminal panel: wraps @shaulavo/workbench/terminal's TerminalPanel over Sprockt's
 // Waffle/bash-web session adapter while preserving Sprockt's status telemetry, paste fallback
 // notice, diagnostics handle, and phone accessory bar.
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { TerminalPanel as WorkbenchTerminalPanel } from "@shaulavo/workbench-terminal";
-import "@shaulavo/workbench-terminal/terminal.css";
-import type { ContextMenuItem } from "@shaulavo/workbench-ui";
+import { useViewportMode, type ContextMenuItem } from "@shaulavo/workbench";
+import { TerminalPanel as WorkbenchTerminalPanel } from "@shaulavo/workbench/terminal";
 import { debugHandle } from "../app/debug";
 import { useValue } from "../lib/react";
 import type { Accessor } from "../lib/reactive";
@@ -31,14 +30,10 @@ function fadeStrip(element: HTMLDivElement | null): (() => void) | undefined {
   return element ? trackOverflowFade(element) : undefined;
 }
 
-function isPhoneViewport(): boolean {
-  return typeof matchMedia === "function" && matchMedia("(max-width: 768px)").matches;
-}
-
 export function TerminalPanel(props: TerminalPanelProps) {
   const workspace = useWorkspace();
   const { terminals } = workspace;
-  const [phone, setPhone] = useState(isPhoneViewport);
+  const phone = useViewportMode() === "phone";
   const [notice, setNotice] = useState<string>();
   const noticeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const wantsFocus = useRef<string | undefined>(undefined);
@@ -58,13 +53,6 @@ export function TerminalPanel(props: TerminalPanelProps) {
     return { tabs, focusedState: tabs.focused ? terminals.stateOf(tabs.focused) : "exited" };
   });
   const { tabs, focusedState } = view;
-
-  useEffect(() => {
-    const media = matchMedia("(max-width: 768px)");
-    const update = () => setPhone(media.matches);
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
 
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
 
@@ -140,14 +128,14 @@ export function TerminalPanel(props: TerminalPanelProps) {
         onToggleCollapsed={props.onToggleCollapsed}
         keepAlive
         splitCreatesSession
-        themeOverride={themeOverride}
-        desktopFontSize={13}
+        theme={themeOverride}
+        fontSize={13}
         mobileFontSize={12}
         backgroundOpacity={1}
         cursorInactiveStyle="auto"
         padding={{ top: 6, right: 6, bottom: 6, left: 14 }}
         showAccessoryBar={phone && props.shown && !props.collapsed}
-        tabStripRef={fadeStrip}
+        stripRef={fadeStrip}
         headerTrailing={
           <>
             <span className="term-state" data-state={focusedState} data-testid="terminal-state">

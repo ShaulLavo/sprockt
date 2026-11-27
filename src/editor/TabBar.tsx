@@ -1,7 +1,7 @@
-// The open-file tabs rendered over @shaulavo/workbench-editor's EditorTabBar with Sprockt's
+// The open-file tabs rendered over @shaulavo/workbench/editor's EditorTabBar with Sprockt's
 // Sheet & Biro styling, file icons, context menu, and unsaved-close confirmation flow.
-import { dismissSoftKeyboardOnTouchActivation } from "@shaulavo/workbench-core";
-import { EditorTabBar } from "@shaulavo/workbench-editor";
+import { dismissSoftKeyboardOnTouchActivation } from "@shaulavo/workbench/core";
+import { EditorTabBar } from "@shaulavo/workbench/editor";
 import { useRef, useState } from "react";
 import { ContextMenu, type MenuItem } from "../explorer/ContextMenu";
 import { useValue } from "../lib/react";

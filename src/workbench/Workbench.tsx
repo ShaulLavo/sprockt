@@ -8,9 +8,12 @@
 // editor's "show what opened" effect) reads it, and components read it with `useValue`.
 import { memo, useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { createMultiHotkeyHandler, detectPlatform } from "@shaulavo/hotkeys";
-import { useKeyboardInset, useLongPressContextMenu } from "@shaulavo/workbench-core/react";
-import { FileIconSprite } from "@shaulavo/workbench-icons/react";
-import { WorkbenchPortalProvider } from "@shaulavo/workbench-ui";
+import {
+  FileIconSprite,
+  useKeyboardInset,
+  useLongPressContextMenu,
+  WorkbenchPortalProvider,
+} from "@shaulavo/workbench";
 import { debugHandle } from "../app/debug";
 import { navigate } from "../app/router";
 import { EditorPane } from "../editor/EditorPane";
@@ -37,12 +40,15 @@ import {
   fitLayout,
   isOpen,
   setOpen,
+  setTerminalState,
+  toggleTerminalCollapsed,
   ariaValue,
   type Fitted,
   type PaneLayout,
   type Room,
   type Space,
   type Splitter as SplitterName,
+  type TerminalState,
 } from "./layout";
 import { createLayoutStore, type LayoutStore } from "./layout-store";
 import { PaneSwitcher, type PhonePane } from "./PaneSwitcher";
@@ -87,20 +93,26 @@ function createPaneSpace(): Accessor<Space> {
   return space;
 }
 
+function terminalRowSize(layout: PaneLayout, fitted: Fitted): string {
+  if (layout.terminalState === "open") return `${fitted.terminal}px`;
+  if (layout.terminalState === "collapsed") return "var(--tab-h)";
+  return "0px";
+}
+
 /** The frame's grid sizes as CSS custom properties: the saved layout, fitted to the window. */
 function frameStyle(layout: PaneLayout, fitted: Fitted): CSSProperties {
   return {
     "--explorer-col": `${fitted.explorer}px`,
     "--preview-col": `${fitted.preview}px`,
-    "--terminal-row": layout.terminalOpen ? `${fitted.terminal}px` : "var(--tab-h)",
+    "--terminal-row": terminalRowSize(layout, fitted),
   } as CSSProperties;
 }
 
 /** What the frame shares with the panes of an open workspace. */
 interface FrameState {
   readonly layout: LayoutStore;
-  /** The terminal's open state alone, so readers skip the drag frames that do not change it. */
-  readonly terminalOpen: Accessor<boolean>;
+  /** The terminal's visibility state alone, so readers skip drag frames that do not change it. */
+  readonly terminalState: Accessor<TerminalState>;
   readonly phone: Accessor<boolean>;
   readonly pane: Accessor<PhonePane>;
   readonly stage: Accessor<BootStage>;
@@ -123,7 +135,7 @@ function createFrame(workspaceId: string): FrameState {
   const space = createPaneSpace();
   return {
     layout,
-    terminalOpen: createMemo(() => layout.layout().terminalOpen),
+    terminalState: createMemo(() => layout.layout().terminalState),
     phone: createMediaQuery(PHONE_QUERY),
     pane,
     stage,
@@ -144,7 +156,7 @@ interface PaneScope {
   readonly slotRef: Readonly<Record<PhonePane, (element: HTMLElement | null) => void>>;
   measure(splitter: SplitterName): Room;
   shownSize(splitter: SplitterName): number;
-  toggleTerminal(): void;
+  toggleTerminalCollapsed(): void;
 }
 
 function createPanes(session: WorkspaceSession, frame: FrameState): PaneScope {
@@ -178,8 +190,8 @@ function createPanes(session: WorkspaceSession, frame: FrameState): PaneScope {
       frame.layout.set(setOpen(frame.layout.layout(), "explorer", true));
     } else if (pane === "preview" && !frame.layout.layout().previewOpen) {
       frame.layout.set(setOpen(frame.layout.layout(), "preview", true));
-    } else if (pane === "terminal" && !frame.layout.layout().terminalOpen) {
-      frame.layout.set(setOpen(frame.layout.layout(), "terminal", true));
+    } else if (pane === "terminal" && frame.layout.layout().terminalState !== "open") {
+      frame.layout.set(setTerminalState(frame.layout.layout(), "open"));
     }
     queueMicrotask(() => {
       if (pane === "terminal") {
@@ -327,16 +339,18 @@ function createPanes(session: WorkspaceSession, frame: FrameState): PaneScope {
       }
       return { extent: innerWidth };
     },
-    /** A pane's size on screen; 0 when closed (a closed terminal still shows its tab strip). */
+    /** A pane's size on screen; 0 when closed or minimized. */
     shownSize(splitter) {
-      if (!isOpen(frame.layout.layout(), splitter)) return 0;
+      const current = frame.layout.layout();
+      if (splitter === "terminal") {
+        return current.terminalState === "open" ? (rect("terminal")?.height ?? 0) : 0;
+      }
+      if (!isOpen(current, splitter)) return 0;
       if (splitter === "explorer") return rect("files")?.width ?? 0;
-      if (splitter === "preview") return rect("preview")?.width ?? 0;
-      return rect("terminal")?.height ?? 0;
+      return rect("preview")?.width ?? 0;
     },
-    toggleTerminal() {
-      const layout = frame.layout.layout();
-      frame.layout.set(setOpen(layout, "terminal", !layout.terminalOpen));
+    toggleTerminalCollapsed() {
+      frame.layout.set(toggleTerminalCollapsed(frame.layout.layout()));
     },
   };
 }
@@ -376,7 +390,7 @@ function PanesBody(props: { session: WorkspaceSession; frame: FrameState; panes:
   const { session, frame, panes } = props;
   const phone = useValue(frame.phone);
   const pane = useValue(frame.pane);
-  const terminalOpen = useValue(frame.terminalOpen);
+  const terminalState = useValue(frame.terminalState);
 
   const slot = (name: PhonePane) => ({
     id: `wb-slot-${name}`,
@@ -405,9 +419,9 @@ function PanesBody(props: { session: WorkspaceSession; frame: FrameState; panes:
       <div className="wb-slot wb-terminal wb-card" {...slot("terminal")}>
         <TerminalPanel
           scheme={colorScheme}
-          collapsed={!terminalOpen && !phone}
-          shown={!phone || pane === "terminal"}
-          onToggleCollapsed={panes.toggleTerminal}
+          collapsed={terminalState === "collapsed" && !phone}
+          shown={phone ? pane === "terminal" : terminalState !== "hidden"}
+          onToggleCollapsed={panes.toggleTerminalCollapsed}
           onOpenFile={(path, location) =>
             panes.explorerStore.open(path, { ...location, focus: shouldAutoFocusEditor() })
           }
@@ -547,7 +561,7 @@ function Frame(props: { frame: FrameState; children: ReactNode }) {
       data-pane={pane}
       data-explorer={layout.explorerOpen ? "open" : "closed"}
       data-preview={layout.previewOpen ? "open" : "closed"}
-      data-terminal={layout.terminalOpen ? "open" : "closed"}
+      data-terminal={layout.terminalState}
       style={frameStyle(layout, fitted)}
     >
       <FileIconSprite />

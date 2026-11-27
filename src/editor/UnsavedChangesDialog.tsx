@@ -1,5 +1,5 @@
-// Three-way unsaved changes dialog backed by `@shaulavo/workbench-ui`'s Base UI `UnsavedChangesDialog`.
-import { UnsavedChangesDialog as WorkbenchUnsavedChangesDialog } from "@shaulavo/workbench-ui";
+// Three-way unsaved changes dialog backed by `@shaulavo/workbench`'s Base UI `UnsavedChangesDialog`.
+import { UnsavedChangesDialog as WorkbenchUnsavedChangesDialog } from "@shaulavo/workbench";
 import { originalPath } from "./buffers";
 import { EDITOR_COPY } from "./copy";
 

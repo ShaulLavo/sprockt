@@ -121,6 +121,10 @@
   .workbench[data-preview="closed"] .wb-preview {
     display: none;
   }
+
+  .workbench[data-terminal="hidden"] .wb-terminal {
+    display: none;
+  }
 }
 
 /* ───────────── Drag handles ───────────── */
