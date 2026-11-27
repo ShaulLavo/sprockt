@@ -1,16 +1,23 @@
 // Metadata stored at /.sprockt/workspace.json inside each Waffle workspace.
 // Pure parsing, validation, and formatting: no Solid, no DOM, no Waffle imports.
 import {
+  deriveGitHubWorkspaceName,
   INCOMPLETE,
+  normalizeWorkspaceName,
   WORKSPACE_META_DIR,
   WORKSPACE_META_PATH,
   type WorkspaceMeta as ImporterWorkspaceMeta,
   type WorkspaceSource,
 } from "../importer/metadata";
 
-export { INCOMPLETE, WORKSPACE_META_DIR, WORKSPACE_META_PATH };
+export {
+  deriveGitHubWorkspaceName,
+  INCOMPLETE,
+  normalizeWorkspaceName,
+  WORKSPACE_META_DIR,
+  WORKSPACE_META_PATH,
+};
 
-const MAX_NAME_LENGTH = 64;
 const BLANK_DEFAULT_NAME = "workspace";
 const metaTextDecoder = new TextDecoder();
 
@@ -20,23 +27,6 @@ export interface WorkspaceMeta extends ImporterWorkspaceMeta {
   readonly template: string;
   readonly lastOpened: string;
   readonly source?: WorkspaceSource;
-}
-
-export function normalizeWorkspaceName(raw: string): string | undefined {
-  const collapsed = raw.trim().replace(/\s+/g, " ");
-  if (!collapsed) return undefined;
-  return collapsed.slice(0, MAX_NAME_LENGTH);
-}
-
-/** Derives a clean display name for a GitHub import: subdir basename when set, otherwise repo name. */
-export function deriveGitHubWorkspaceName(repo: string, subdir = ""): string {
-  const segments = subdir.split("/").filter((segment) => segment !== "");
-  const leaf = segments.at(-1);
-  if (leaf) {
-    const normalized = normalizeWorkspaceName(leaf);
-    if (normalized) return normalized;
-  }
-  return normalizeWorkspaceName(repo) ?? BLANK_DEFAULT_NAME;
 }
 
 /** Reads a clean project name from a root `package.json` string or UTF-8 bytes. */

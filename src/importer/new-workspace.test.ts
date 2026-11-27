@@ -485,4 +485,37 @@ describe("bulk imports over 1,024 files", () => {
     const metaBytes = metered.files.get(WORKSPACE_META_PATH);
     expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
   });
+
+  test("Retry accepts an incomplete GitHub import whose workspace.json omits name", async () => {
+    const namelessIncomplete = JSON.stringify({
+      state: INCOMPLETE,
+      created: "2026-04-01T00:00:00.000Z",
+      source: { kind: "github", owner: "acme", repo: "demo", ref: "main", subdir: "apps/web" },
+    });
+    expect(parseMeta(namelessIncomplete)).toMatchObject({ name: "web", state: INCOMPLETE });
+
+    const metered = meteredProjectFilesystem({
+      [WORKSPACE_META_PATH]: namelessIncomplete,
+      [`${PROJECT_ROOT}/stale.txt`]: "old",
+    });
+    const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
+    const deps: NewWorkspaceDeps = {
+      exists: async () => true,
+      remove: async () => "deleted",
+      open: async () => ({
+        files: projectFiles,
+        runtime: { filesystem: metered.filesystem },
+        dispose: async () => projectFiles.dispose(),
+      }),
+    };
+
+    const id = await createWorkspaceWithFiles({ "index.ts": "export const ok = 1;\n" }, META, deps, {
+      into: "nameless1",
+    });
+    expect(id).toBe("nameless1");
+    expect(metered.files.has(`${PROJECT_ROOT}/stale.txt`)).toBe(false);
+    expect(metered.files.has(`${PROJECT_ROOT}/index.ts`)).toBe(true);
+    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
+    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))).toEqual(META);
+  });
 });

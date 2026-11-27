@@ -105,12 +105,18 @@ export function readWorkspaceHint(id: string): WorkspaceMeta | undefined {
 }
 
 export function saveWorkspaceHint(id: string, meta: WorkspaceMeta): void {
-  if (!isPlaceholderWorkspaceName(meta)) clearPendingWorkspaceName(id);
+  const pending = readPendingWorkspaceName(id);
   try {
     localStorage.setItem(WORKSPACE_HINT_PREFIX + id, serializeWorkspaceMeta(meta));
     fallbackHints.delete(id);
+    if (!isPlaceholderWorkspaceName(meta)) clearPendingWorkspaceName(id);
   } catch {
     fallbackHints.set(id, meta);
+    // Keep a matching pending name in localStorage until either the full hint or workspace.json
+    // is stored durably; clear it immediately only when replaced by a different explicit name.
+    if (!isPlaceholderWorkspaceName(meta) && pending !== meta.name) {
+      clearPendingWorkspaceName(id);
+    }
   }
   bumpHints();
 }
@@ -245,12 +251,17 @@ function newerTimestamp(a: string | undefined, b: string | undefined): string | 
 }
 
 async function persistDerivedMeta(
+  id: string,
   deps: HydrateWorkspaceNameDeps,
   state: WorkspaceMeta["state"],
   json: string,
 ): Promise<void> {
   if (!deps.writeMeta || state === INCOMPLETE) return;
-  await deps.writeMeta(json).catch(() => undefined);
+  const written = await deps.writeMeta(json).then(
+    () => true,
+    () => false,
+  );
+  if (written) clearPendingWorkspaceName(id);
 }
 
 async function deriveNameFromWorkspace(
@@ -308,6 +319,7 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
       if (fileMeta && !isPlaceholderWorkspaceName(fileMeta)) {
         const lastOpened =
           newerTimestamp(newerTimestamp(fileMeta.lastOpened, hint?.lastOpened), nowIso) ?? nowIso;
+        clearPendingWorkspaceName(id);
         saveWorkspaceHint(id, { ...fileMeta, lastOpened });
         return fileMeta.name;
       }
@@ -315,6 +327,7 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
       // Preserve any non-placeholder saved name on disk (along with its valid template/source/state)
       // even if `workspace.json` lacks timestamps.
       if (partial?.name && !partial.defaultName) {
+        clearPendingWorkspaceName(id);
         saveWorkspaceHint(id, hintFromPartial(partial, partial.name, hint, nowIso));
         return partial.name;
       }
@@ -325,7 +338,7 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
         const { json, meta } = mergeDerivedWorkspaceName(rawMeta, hint.name, now);
         const lastOpened = newerTimestamp(hint.lastOpened, nowIso) ?? nowIso;
         saveWorkspaceHint(id, { ...meta, lastOpened });
-        if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
+        if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(id, deps, partial?.state, json);
         return hint.name;
       }
 
@@ -338,7 +351,7 @@ export function hydrateWorkspaceName(id: string, deps: HydrateWorkspaceNameDeps)
       if (derived) {
         const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
         saveWorkspaceHint(id, meta);
-        if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
+        if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(id, deps, partial?.state, json);
         return derived;
       }
 
@@ -426,7 +439,7 @@ export function adoptUploadedWorkspaceName(
       const now = deps.now ? deps.now() : new Date();
       const { json, meta } = mergeDerivedWorkspaceName(rawMeta, derived, now);
       saveWorkspaceHint(id, meta);
-      if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(deps, partial?.state, json);
+      if (canMergeMetaRaw(rawMeta)) await persistDerivedMeta(id, deps, partial?.state, json);
       return derived;
     },
     deps.signal,

@@ -647,4 +647,49 @@ describe("workspace name hydration and reactivity", () => {
 
     expect(workspaceName(diskNamedId)).toBe("existing-project");
   });
+
+  test("keeps pending folder name in localStorage when full hint hits quota and metadata write fails", async () => {
+    const id = "quotapend1";
+    let storedMeta = serializeWorkspaceMeta(
+      createWorkspaceMeta({ name: "workspace", template: "blank", defaultName: true }),
+    );
+    saveWorkspaceHint(id, createWorkspaceMeta({ name: "workspace", template: "blank", defaultName: true }));
+
+    // Simulate tight storage quota: accepts the short pending-name string, rejects the larger JSON hint.
+    const originalSetItem = localStorage.setItem.bind(localStorage);
+    let rejectLargeWrites = true;
+    localStorage.setItem = (key: string, value: string) => {
+      if (rejectLargeWrites && value.length > 40) throw new Error("QuotaExceededError");
+      originalSetItem(key, value);
+    };
+
+    try {
+      const adopted = await adoptUploadedWorkspaceName(
+        id,
+        [{ path: "tight-quota-folder/index.ts", data: new Blob(["1"]) }],
+        {
+          readMeta: async () => storedMeta,
+          writeMeta: () => Promise.reject(new Error("transient write failure")),
+          readPackageJson: async () => undefined,
+        },
+      );
+      expect(adopted).toBe("tight-quota-folder");
+      expect(workspaceName(id)).toBe("tight-quota-folder");
+
+      // Simulate a page reload dropping in-memory fallbackHints while localStorage keeps only what fit.
+      handleHintStorageEvent(WORKSPACE_HINT_PREFIX + id);
+      rejectLargeWrites = false;
+
+      const reopened = await hydrateWorkspaceName(id, {
+        readMeta: async () => storedMeta,
+        writeMeta: async (json: string) => void (storedMeta = json),
+        readPackageJson: async () => undefined,
+      });
+      expect(reopened).toBe("tight-quota-folder");
+      expect(workspaceName(id)).toBe("tight-quota-folder");
+      expect(JSON.parse(storedMeta)).toMatchObject({ name: "tight-quota-folder" });
+    } finally {
+      localStorage.setItem = originalSetItem;
+    }
+  });
 });

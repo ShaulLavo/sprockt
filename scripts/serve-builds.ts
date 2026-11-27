@@ -18,7 +18,10 @@
 //
 //   bun scripts/serve-builds.ts --port 4174
 import { extname, join, normalize, sep } from "node:path";
+import { createGitHubProxy, GITHUB_PROXY_PREFIX } from "../worker/github-proxy.ts";
 import { handlePreviewHostRequest, type PreviewHostsEnv } from "../worker/preview.ts";
+
+const githubProxy = createGitHubProxy();
 
 export const BUILD_COOKIE = "sprockt-build";
 
@@ -94,6 +97,9 @@ export function previewHostsEnv(base: string, port: number): PreviewHostsEnv {
 
 async function respond(request: Request, base: string): Promise<Response> {
   const { pathname } = new URL(request.url);
+  if (pathname === GITHUB_PROXY_PREFIX || pathname.startsWith(`${GITHUB_PROXY_PREFIX}/`)) {
+    return githubProxy(request, { GITHUB_TOKEN: process.env.GITHUB_TOKEN });
+  }
   const root = join(base, ROOTS[buildFor(deployFor(request.headers.get("cookie")), pathname)]);
   const named = fileFor(root, pathname);
   if (named === undefined) return new Response("Bad path\n", { status: 400, headers: HEADERS });
