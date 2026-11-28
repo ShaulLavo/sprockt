@@ -38,8 +38,7 @@ export const LANDING_COPY = {
   altBlank: "New blank workspace",
   templatesTitle: "Seven starters, or a public GitHub repo",
   templatesTitleMuted: "open straight into the workbench",
-  templatesNote:
-    "When an imported workspace first opens, Sprockt runs bun install if package.json exists and starts a dev command if it finds one.",
+  templatesNote: "On first open, Sprockt can run bun install and starts a dev command when it finds one.",
   templatesError: "Could not create workspace: {message}",
   templateAction: "Create",
   templateCreating: "Creating...",

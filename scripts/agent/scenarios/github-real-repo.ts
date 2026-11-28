@@ -67,9 +67,9 @@ async function serveImportedViteApp(page: Page, baseUrl: string, timeout: number
 }
 
 export async function importRealRepo(page: Page, baseUrl: string, timeout: number) {
-  const catalogs = await installCatalogWorkspace(page, baseUrl, timeout);
-  const preview = await serveImportedViteApp(page, baseUrl, timeout);
-  return { catalogs, preview };
+  const coldCatalogImport = await installCatalogWorkspace(page, baseUrl, timeout);
+  const vitePreviewInReusedContext = await serveImportedViteApp(page, baseUrl, timeout);
+  return { coldCatalogImport, vitePreviewInReusedContext };
 }
 
 export const githubRealRepoScenario: AgentScenario = {
