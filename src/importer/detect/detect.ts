@@ -122,14 +122,18 @@ const SERVER_ENTRIES = [
 ];
 
 export interface WorkspaceTarget {
-  /** Stable id: `<script>` for root, or `<dir>:<script>` for a workspace package. */
+  /** Stable id: `<script>`, `entry:<path>`, `framework:<id>`, or `<dir>:<script>`. */
   readonly id: string;
-  /** Package display name (from `package.json` `name`, or its relative directory). */
+  /** Package display name (from `package.json` `name`, its relative directory, or `"root"`). */
   readonly name: string;
   /** Relative package directory (`""` for root, e.g. `"apps/web"`). */
   readonly dir: string;
-  /** The `package.json` script name (`"dev"`, `"start"`, `"serve"`). */
-  readonly script: string;
+  /** The `package.json` script name (`"dev"`, `"start"`, `"serve"`), or `undefined` for entry/default targets. */
+  readonly script: string | undefined;
+  /** Short human-readable action label (script name, entry filename, or framework tool). */
+  readonly action: string;
+  /** True for a bare server entry (`bun server.ts`) that needs auto-restart on edit. */
+  readonly bareEntry: boolean;
   readonly framework: FrameworkId | undefined;
   readonly port: number | undefined;
   readonly command: Command;
@@ -138,6 +142,8 @@ export interface WorkspaceTarget {
 export interface ProjectTargetsDetection {
   readonly detection: ProjectDetection;
   readonly targets: readonly WorkspaceTarget[];
+  /** The id of the target that matches `detection.dev` (the default Start/import target). */
+  readonly defaultTargetId: string | undefined;
 }
 
 interface PackageJson {
@@ -163,10 +169,15 @@ function scopedFiles(files: ProjectFiles, dir: string): ProjectFiles {
   };
 }
 
+function packageLabel(pkg: PackageJson | undefined, dir: string): string {
+  if (typeof pkg?.name === "string" && pkg.name.trim()) return pkg.name.trim();
+  return dir || "root";
+}
+
 function packageTargets(dir: string, pkg: PackageJson | undefined, files: ProjectFiles): WorkspaceTarget[] {
   const scripts = pkg?.scripts;
   if (!scripts) return [];
-  const label = typeof pkg.name === "string" && pkg.name.trim() ? pkg.name.trim() : dir || "root";
+  const label = packageLabel(pkg, dir);
   const localFiles = scopedFiles(files, dir);
   const targets: WorkspaceTarget[] = [];
   for (const script of DEV_SCRIPTS) {
@@ -182,6 +193,8 @@ function packageTargets(dir: string, pkg: PackageJson | undefined, files: Projec
       name: label,
       dir,
       script,
+      action: script,
+      bareEntry: false,
       framework,
       port,
       command,
@@ -220,21 +233,61 @@ function workspacePatternsFrom(pkg: PackageJson | undefined, files: ProjectFiles
   return Array.from(new Set(fromPkg.concat(fromPnpm)));
 }
 
+function rootEntryTarget(
+  pkg: PackageJson | undefined,
+  entry: string,
+  framework: FrameworkId | undefined,
+  port: number | undefined,
+): WorkspaceTarget {
+  // A bare entry file is run as it is (`bun --hot` in bun-wasm refuses a file without an import
+  // or export and a server with routes or WebSocket handlers); the dev-server task restarts it on edit.
+  return {
+    id: `entry:${entry}`,
+    name: packageLabel(pkg, ""),
+    dir: "",
+    script: undefined,
+    action: entry,
+    bareEntry: true,
+    framework,
+    port,
+    command: { command: "bun", args: [entry] },
+  };
+}
+
+function rootFrameworkFallbackTarget(
+  pkg: PackageJson | undefined,
+  framework: FrameworkId | undefined,
+  port: number | undefined,
+): WorkspaceTarget | undefined {
+  if (!framework || framework === "hono" || framework === "bun-serve") return undefined;
+  const args = DEFAULT_DEV[framework];
+  return {
+    id: `framework:${framework}`,
+    name: packageLabel(pkg, ""),
+    dir: "",
+    script: undefined,
+    action: args.join(" "),
+    bareEntry: false,
+    framework,
+    port,
+    command: { command: "bunx", args },
+  };
+}
+
 export function detectProjectTargets(files: ProjectFiles): ProjectTargetsDetection {
   const paths = new Set(files.paths);
   const pkgText = paths.has("package.json") ? files.read("package.json") : undefined;
   const pkg = parsePackageJson(pkgText);
   const lock = LOCKFILES.find(([name]) => paths.has(name));
-  const devScript = DEV_SCRIPTS.find((name) => typeof pkg?.scripts?.[name] === "string");
-  const scriptText = devScript ? (pkg?.scripts?.[devScript] ?? "") : "";
-  const declared = frameworkFromDeps(pkg) ?? frameworkFromScript(scriptText);
+  const rootTargets = packageTargets("", pkg, files);
+  const primaryRootScript = rootTargets[0];
+  const rootScriptText = primaryRootScript?.script ? (pkg?.scripts?.[primaryRootScript.script] ?? "") : "";
+  const declared = frameworkFromDeps(pkg) ?? frameworkFromScript(rootScriptText);
   // Hono apps often `export default app`, which no pattern recognizes, so any entry file will do.
   const entry = serverEntry(paths, files, pkg) ?? (declared === "hono" ? firstEntry(paths, pkg) : undefined);
-  const framework = declared ?? (entry ? "bun-serve" : undefined);
-  const rootDev = devCommand(devScript, framework, entry);
-  const rootPort = detectPort(scriptText, framework, files, entry);
+  const rootFramework = declared ?? (entry ? "bun-serve" : undefined);
+  const rootPort = detectPort(rootScriptText, rootFramework, files, entry);
 
-  const rootTargets = packageTargets("", pkg, files);
   const workspacePatterns = workspacePatternsFrom(pkg, files);
   const workspaceDirs = matchWorkspaceDirs(paths, workspacePatterns);
   const workspaceTargets: WorkspaceTarget[] = [];
@@ -242,21 +295,34 @@ export function detectProjectTargets(files: ProjectFiles): ProjectTargetsDetecti
     const subPkg = parsePackageJson(files.read(`${dir}/package.json`));
     workspaceTargets.push(...packageTargets(dir, subPkg, files));
   }
-  const targets = rootTargets.concat(workspaceTargets);
 
-  // When a monorepo root has no root dev script or entry file, fall back to its best workspace app.
-  const fallback = rootDev ? undefined : pickDefaultWorkspaceTarget(workspaceTargets);
+  // Explicit root targets (scripts, or a real root server entry file) take precedence over
+  // workspace apps; an inferred root framework guess (`bunx vite` from shared root
+  // devDependencies) is used only when no workspace apps were discovered.
+  const entryTarget =
+    !primaryRootScript && entry ? rootEntryTarget(pkg, entry, rootFramework, rootPort) : undefined;
+  const explicitRootTargets = entryTarget ? rootTargets.concat(entryTarget) : rootTargets;
+  const defaultWorkspace = pickDefaultWorkspaceTarget(workspaceTargets);
+  const inferredRoot =
+    explicitRootTargets.length === 0 && !defaultWorkspace
+      ? rootFrameworkFallbackTarget(pkg, rootFramework, rootPort)
+      : undefined;
+
+  const targets = inferredRoot ? [inferredRoot] : explicitRootTargets.concat(workspaceTargets);
+  const chosen = explicitRootTargets[0] ?? defaultWorkspace ?? inferredRoot;
+  const chosenFromWorkspace = chosen !== undefined && chosen.dir !== "";
+
   const detection: ProjectDetection = {
     hasPackageJson: pkgText !== undefined,
     packageManager: lock?.[1],
     lockfile: lock?.[0],
-    framework: framework ?? fallback?.framework,
+    framework: chosenFromWorkspace ? chosen.framework : (chosen?.framework ?? rootFramework),
     install: pkgText === undefined ? undefined : { command: "bun", args: ["install"] },
-    devScript: devScript ?? fallback?.script,
-    dev: rootDev ?? fallback?.command,
-    port: rootPort ?? fallback?.port,
+    devScript: chosen?.script,
+    dev: chosen?.command,
+    port: chosenFromWorkspace ? chosen.port : (chosen?.port ?? rootPort),
   };
-  return { detection, targets };
+  return { detection, targets, defaultTargetId: chosen?.id };
 }
 
 export function detectProject(files: ProjectFiles): ProjectDetection {
@@ -380,20 +446,6 @@ function entryCandidates(pkg: PackageJson | undefined): string[] {
 function looksLikeServer(text: string | undefined): boolean {
   if (text === undefined) return false;
   return /\bBun\.serve\s*\(/.test(text) || /export\s+default\s*\{[^}]*\bfetch\b/.test(text);
-}
-
-function devCommand(
-  devScript: string | undefined,
-  framework: FrameworkId | undefined,
-  entry: string | undefined,
-): Command | undefined {
-  if (devScript) return { command: "bun", args: ["run", devScript] };
-  // A bare entry file is run as it is. `bun --hot` in bun-wasm refuses a file without an import
-  // or export and a server with routes or WebSocket handlers, and there is no `--watch`; the
-  // dev-server task restarts the file itself when the source changes (tasks/restarting.ts).
-  if (entry) return { command: "bun", args: [entry] };
-  if (!framework || framework === "hono" || framework === "bun-serve") return undefined;
-  return { command: "bunx", args: DEFAULT_DEV[framework] };
 }
 
 function detectPort(

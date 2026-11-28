@@ -47,7 +47,7 @@ export async function detectWorkspace(files: FileService): Promise<ProjectDetect
   return (await detectWorkspaceTargets(files)).detection;
 }
 
-const shellWord = (word: string) =>
+export const shellWord = (word: string) =>
   /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 
 /** How the dev-server task starts a project. */
@@ -59,6 +59,8 @@ export interface DevStart {
    * itself. Undefined when it does (a dev script: Vite, `bun --hot`, whatever the project chose).
    */
   readonly rerun: string | undefined;
+  /** Stable id of the target this command runs, carried across tab handovers. */
+  readonly targetId?: string;
 }
 
 function startCommandText(command: ProjectDetection["dev"]): string | undefined {
@@ -92,15 +94,19 @@ export function devStart(detection: ProjectDetection, hasNodeModules: boolean): 
   return { script: install ? `bun install && ${start}` : start, rerun: bareEntry ? start : undefined };
 }
 
-/** How to start one chosen monorepo/workspace target (or script). */
+/** How to start one chosen monorepo/workspace target (or root entry / script). */
 export function devStartForTarget(
   detection: ProjectDetection,
   target: WorkspaceTarget,
   hasNodeModules: boolean,
 ): DevStart {
-  const start = target.dir
-    ? `(cd ${shellWord(target.dir)} && bun run ${shellWord(target.script)})`
-    : `bun run ${shellWord(target.script)}`;
+  const start =
+    startCommandText(target.command) ??
+    [target.command.command].concat(target.command.args).map(shellWord).join(" ");
   const install = detection.install && !hasNodeModules;
-  return { script: install ? `bun install && ${start}` : start, rerun: undefined };
+  return {
+    script: install ? `bun install && ${start}` : start,
+    rerun: target.bareEntry ? start : undefined,
+    targetId: target.id,
+  };
 }

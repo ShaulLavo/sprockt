@@ -253,7 +253,8 @@ describe("detectProjectInFs", () => {
       { id: "apps/api:dev", name: "@mono/api", port: 3102, dir: "apps/api" },
       { id: "apps/web:dev", name: "@mono/web", port: 5174, dir: "apps/web" },
     ]);
-    // Root has no dev script, so fallback picks the Vite app in apps/web.
+    // Root has no dev script, so fallback picks the Vite app in apps/web and exposes its id.
+    expect(result.defaultTargetId).toBe("apps/web:dev");
     expect(result.detection).toMatchObject({
       hasPackageJson: true,
       framework: "vite",
@@ -275,7 +276,112 @@ describe("detectProjectInFs", () => {
       },
     });
     expect(pnpm.targets.map((t) => t.id)).toEqual(["apps/site:dev", "apps/site:start"]);
+    expect(pnpm.defaultTargetId).toBe("apps/site:dev");
     expect(pnpm.detection.dev).toEqual({ command: "bun", args: ["run", "--cwd", "apps/site", "dev"] });
     expect(pnpm.detection.port).toBe(4321);
+  });
+
+  test("prefers workspace apps over inferred root framework devDependencies", async () => {
+    const fs = new MemoryFs();
+    await writeFiles(fs, [
+      {
+        path: "package.json",
+        bytes: textEncoder.encode(
+          JSON.stringify({
+            name: "mono",
+            private: true,
+            workspaces: ["apps/*"],
+            devDependencies: { vite: "^7" },
+          }),
+        ),
+      },
+      {
+        path: "apps/web/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "web", scripts: { dev: "vite --port 5175" } })),
+      },
+    ]);
+    const result = await detectProjectTargetsInFs(fs);
+    expect(result.defaultTargetId).toBe("apps/web:dev");
+    expect(result.detection).toMatchObject({
+      framework: "vite",
+      devScript: "dev",
+      dev: { command: "bun", args: ["run", "--cwd", "apps/web", "dev"] },
+      port: 5175,
+    });
+  });
+
+  test("includes a runnable root server entry alongside workspace apps in targets", async () => {
+    const fs = new MemoryFs();
+    await writeFiles(fs, [
+      {
+        path: "package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "mono", workspaces: ["apps/*"] })),
+      },
+      {
+        path: "server.ts",
+        bytes: textEncoder.encode("Bun.serve({ port: 3000, fetch: () => new Response('root') })"),
+      },
+      {
+        path: "apps/web/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "web", scripts: { dev: "vite" } })),
+      },
+    ]);
+    const result = await detectProjectTargetsInFs(fs);
+    expect(result.targets.map((t) => t.id)).toEqual(["entry:server.ts", "apps/web:dev"]);
+    expect(result.defaultTargetId).toBe("entry:server.ts");
+    expect(result.targets[0]?.bareEntry).toBe(true);
+    expect(result.detection.dev).toEqual({ command: "bun", args: ["server.ts"] });
+  });
+
+  test("supports deep explicit workspace paths, brace/class/? globs, and order-independent exclusions", async () => {
+    const fs = new MemoryFs();
+    await writeFiles(fs, [
+      {
+        path: "package.json",
+        bytes: textEncoder.encode(
+          JSON.stringify({
+            name: "deep-mono",
+            workspaces: [
+              "!apps/skip",
+              "apps/frontends/customer/web",
+              "{apps,packages}/[a-s]*",
+              "tools/cli-?",
+            ],
+          }),
+        ),
+      },
+      {
+        path: "apps/frontends/customer/web/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "customer-web", scripts: { dev: "vite" } })),
+      },
+      {
+        path: "apps/skip/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "skip", scripts: { dev: "vite" } })),
+      },
+      {
+        path: "packages/admin/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "admin", scripts: { dev: "vite" } })),
+      },
+      {
+        path: "packages/zebra/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "zebra", scripts: { dev: "vite" } })),
+      },
+      {
+        path: "tools/cli-1/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "cli-1", scripts: { start: "bun index.ts" } })),
+      },
+      {
+        path: "tools/cli-10/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "cli-10", scripts: { start: "bun index.ts" } })),
+      },
+    ]);
+
+    const result = await detectProjectTargetsInFs(fs);
+    expect(result.targets.map((t) => t.dir)).toEqual([
+      "apps/frontends/customer/web",
+      "packages/admin",
+      "tools/cli-1",
+    ]);
+    expect(result.defaultTargetId).toBe("apps/frontends/customer/web:dev");
   });
 });

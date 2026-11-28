@@ -17,6 +17,8 @@ export type DevServerStatus = "stopped" | "starting" | "running";
 export interface ServerProcess {
   /** The command that runs, for display. */
   readonly command: string;
+  /** The workspace target id this server runs, carried across tab takeover. */
+  readonly targetId?: string;
   /** Resolves when the process has ended, by itself or after `stop`. Never rejects. */
   readonly exited: Promise<void>;
   /** Asks the process to end. */
@@ -36,13 +38,15 @@ export interface LineState {
   readonly owned: boolean;
   /** Ports of a server another tab runs. Empty when this tab runs it: its ports are local. */
   readonly remotePorts: readonly number[];
+  /** Target id of a server another tab runs, so this tab shows and takes over the same app. */
+  readonly remoteTargetId?: string;
 }
 
 export interface DevServerLineOptions<Command> {
   readonly coordinator: DevServerCoordinator;
   readonly ports: LocalPorts;
-  /** What starts the project's server, or nothing when it has none. */
-  command(): Promise<Command | undefined>;
+  /** What starts the project's server, or nothing when it has none. `preferredTargetId` is set on takeover. */
+  command(preferredTargetId?: string): Promise<Command | undefined>;
   /**
    * Runs `command` in this tab. `signal` is the lease's: once it is aborted the server is no
    * longer wanted, and whatever is still being created has to end at once.
@@ -91,18 +95,26 @@ export function createDevServerLine<Command>(options: DevServerLineOptions<Comma
   let generation = 0;
   /** The command a start found, for the lease that start is about to get. */
   let found: Command | undefined;
+  /** The target id the previous owner ran, carried forward if this tab takes over. */
+  let followedTargetId: string | undefined;
 
   function state(): LineState {
     const current = coordinator.current();
     if (!current || current.phase === "down") {
       // A start this tab asked for is this tab's to stop, before it has a lease too.
-      return { status: requested ? "starting" : "stopped", owned: requested, remotePorts: [] };
+      return {
+        status: requested ? "starting" : "stopped",
+        owned: requested,
+        remotePorts: [],
+        remoteTargetId: undefined,
+      };
     }
     const owned = coordinator.role() === "owner";
     return {
       status: current.phase === "up" ? "running" : "starting",
       owned,
       remotePorts: owned ? [] : current.ports,
+      remoteTargetId: owned ? undefined : current.targetId,
     };
   }
 
@@ -114,6 +126,7 @@ export function createDevServerLine<Command>(options: DevServerLineOptions<Comma
   function leaveLine(): void {
     requested = false;
     found = undefined;
+    followedTargetId = undefined;
     leave?.();
     leave = undefined;
   }
@@ -123,7 +136,12 @@ export function createDevServerLine<Command>(options: DevServerLineOptions<Comma
     const publish = () => {
       const listening = ports.current();
       const phase = listening.length > 0 ? "up" : "starting";
-      current.announce({ phase, ports: listening, command: process.command });
+      current.announce({
+        phase,
+        ports: listening,
+        command: process.command,
+        ...(process.targetId ? { targetId: process.targetId } : {}),
+      });
     };
     publish();
     const unsubscribe = ports.subscribe(publish);
@@ -138,11 +156,14 @@ export function createDevServerLine<Command>(options: DevServerLineOptions<Comma
   async function own(current: DevServerLease): Promise<void> {
     requested = false;
     lease = current;
-    // A tab that takes the server over was never asked to start it, and looks the command up now.
+    // A tab that takes the server over was never asked to start it, and looks the command up now,
+    // preserving the target the previous owner ran.
     const known = found;
+    const inheritedTargetId = followedTargetId;
     found = undefined;
+    followedTargetId = undefined;
     try {
-      const command = known ?? (await options.command());
+      const command = known ?? (await options.command(inheritedTargetId));
       // Stopped or closed while the command was looked up: nothing is created at all.
       if (current.signal.aborted) return;
       // The process is this lease's from here on: `serve` stops it if the lease ended meanwhile.
@@ -171,7 +192,10 @@ export function createDevServerLine<Command>(options: DevServerLineOptions<Comma
   }
 
   function follow(current: DevServerState): void {
-    if (current.phase !== "down") return standBy();
+    if (current.phase !== "down") {
+      if (current.command !== undefined) followedTargetId = current.targetId;
+      return standBy();
+    }
     // Once per lease: a later `start` here stands in line again while that lease winds down.
     if (downLease === current.lease) return;
     downLease = current.lease;

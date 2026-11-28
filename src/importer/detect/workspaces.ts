@@ -1,10 +1,11 @@
-// Monorepo workspace pattern parsing and directory matching for `package.json` `workspaces`
-// and `pnpm-workspace.yaml`. Pure functions with no filesystem or UI dependencies.
+// Monorepo workspace pattern parsing, Bun-compatible glob matching, and prefix-guided
+// directory discovery for `package.json` `workspaces` and `pnpm-workspace.yaml`.
 import { joinPath, normalizePath } from "../../lib/fs/path.ts";
 import type { ProjectFs } from "../../lib/fs/types.ts";
 
 const IGNORED_DIRS = new Set(["node_modules", ".git", ".sprockt", "dist", "build", ".next", ".nuxt"]);
-const MAX_WALK_DEPTH = 3;
+const MAX_BRACE_EXPANSIONS = 256;
+const MAX_GLOBSTAR_DEPTH = 12;
 
 function stripInlineComment(line: string): string {
   let quote: "'" | '"' | undefined;
@@ -109,38 +110,259 @@ export function parsePnpmWorkspaceYaml(text: string | undefined): string[] {
   return patterns;
 }
 
-function escapeRegex(text: string): string {
-  return text.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function globToRegExp(pattern: string): RegExp {
-  const segments = pattern.split("/");
-  const regexParts: string[] = [];
-  for (const segment of segments) {
-    if (segment === "**") {
-      regexParts.push("(?:.+)?");
+/** Splits a top-level brace body (`a,b,{c,d}`) on unescaped commas outside nested braces/brackets. */
+function splitBraceOptions(body: string): string[] {
+  const options: string[] = [];
+  let braceDepth = 0;
+  let inClass = false;
+  let start = 0;
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (ch === "\\") {
+      i += 1;
       continue;
     }
-    const piece = segment.split("*").map(escapeRegex).join("[^/]*");
-    regexParts.push(piece);
+    if (ch === "[" && !inClass) inClass = true;
+    else if (ch === "]" && inClass) inClass = false;
+    else if (!inClass && ch === "{") braceDepth += 1;
+    else if (!inClass && ch === "}" && braceDepth > 0) braceDepth -= 1;
+    else if (!inClass && braceDepth === 0 && ch === ",") {
+      options.push(body.slice(start, i));
+      start = i + 1;
+    }
   }
-  // Collapse `/**/` cleanly so `packages/**` matches both `packages/a` and `packages/a/b`.
-  const source = regexParts
-    .join("/")
-    .replaceAll("/(?:.+)?/", "(?:/.*)?/")
-    .replace(/\/\(\?:\.\+\)\?$/, "(?:/.*)?");
-  return new RegExp(`^${source}$`);
+  options.push(body.slice(start));
+  return options;
 }
 
-function matchesWorkspacePatterns(dir: string, patterns: readonly string[]): boolean {
-  let matched = false;
+/** Finds the first balanced `{...}` group containing at least one top-level comma. */
+function findBraceGroup(pattern: string): { readonly open: number; readonly close: number } | undefined {
+  let inClass = false;
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === "\\") {
+      i += 1;
+      continue;
+    }
+    if (ch === "[" && !inClass) {
+      inClass = true;
+      continue;
+    }
+    if (ch === "]" && inClass) {
+      inClass = false;
+      continue;
+    }
+    if (inClass || ch !== "{") continue;
+    const close = findMatchingBrace(pattern, i);
+    if (close !== undefined && splitBraceOptions(pattern.slice(i + 1, close)).length > 1) {
+      return { open: i, close };
+    }
+  }
+  return undefined;
+}
+
+function findMatchingBrace(pattern: string, openIndex: number): number | undefined {
+  let depth = 0;
+  let inClass = false;
+  for (let i = openIndex; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === "\\") {
+      i += 1;
+      continue;
+    }
+    if (ch === "[" && !inClass) inClass = true;
+    else if (ch === "]" && inClass) inClass = false;
+    else if (!inClass && ch === "{") depth += 1;
+    else if (!inClass && ch === "}") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return undefined;
+}
+
+/** Expands Bun-style brace alternatives (`{apps,packages}/*`, nested braces) up to a safe cap. */
+export function expandBraces(pattern: string): string[] {
+  const queue = [pattern];
+  const expanded: string[] = [];
+  while (queue.length > 0 && expanded.length < MAX_BRACE_EXPANSIONS) {
+    const current = queue.shift() ?? "";
+    const group = findBraceGroup(current);
+    if (!group) {
+      expanded.push(current);
+      continue;
+    }
+    const prefix = current.slice(0, group.open);
+    const suffix = current.slice(group.close + 1);
+    const options = splitBraceOptions(current.slice(group.open + 1, group.close));
+    for (const option of options) {
+      if (expanded.length + queue.length >= MAX_BRACE_EXPANSIONS) break;
+      queue.push(`${prefix}${option}${suffix}`);
+    }
+  }
+  return expanded;
+}
+
+function escapeRegexChar(ch: string): string {
+  return /[.+^${}()|[\]\\]/.test(ch) ? `\\${ch}` : ch;
+}
+
+/** Reads a glob character class `[abc]`, `[!a-z]`, or `[^a-z]` starting at `startIndex`. */
+function readCharClass(
+  segment: string,
+  startIndex: number,
+): { readonly regex: string; readonly end: number } {
+  let index = startIndex + 1;
+  let content = "";
+  if (segment[index] === "!" || segment[index] === "^") {
+    content += "^";
+    index += 1;
+  }
+  if (segment[index] === "]") {
+    content += "\\]";
+    index += 1;
+  }
+  while (index < segment.length) {
+    const ch = segment[index] ?? "";
+    if (ch === "\\") {
+      const next = segment[index + 1];
+      if (next !== undefined) content += `\\${next}`;
+      index += 2;
+      continue;
+    }
+    if (ch === "]") return { regex: `[${content}]`, end: index };
+    content += ch === "/" ? "" : escapeRegexChar(ch);
+    index += 1;
+  }
+  return { regex: "\\[", end: startIndex };
+}
+
+/** Compiles one non-`**` glob path segment (supporting `*`, `?`, and `[...]` classes). */
+function compileSegment(segment: string): RegExp {
+  let source = "^";
+  for (let i = 0; i < segment.length; i += 1) {
+    const ch = segment[i] ?? "";
+    if (ch === "\\") {
+      const next = segment[i + 1];
+      if (next !== undefined) source += escapeRegexChar(next);
+      i += 1;
+      continue;
+    }
+    if (ch === "*") source += "[^/]*";
+    else if (ch === "?") source += "[^/]";
+    else if (ch === "[") {
+      const parsed = readCharClass(segment, i);
+      source += parsed.regex;
+      i = parsed.end;
+    } else source += escapeRegexChar(ch);
+  }
+  return new RegExp(`${source}$`);
+}
+
+interface CompiledSegment {
+  readonly globstar: boolean;
+  readonly raw: string;
+  readonly regex: RegExp | undefined;
+}
+
+interface CompiledPattern {
+  readonly segments: readonly CompiledSegment[];
+  readonly hasGlobstar: boolean;
+}
+
+function compilePattern(pattern: string): CompiledPattern {
+  const parts = pattern.split("/").filter((part) => part !== "");
+  const segments: CompiledSegment[] = parts.map((raw) => ({
+    globstar: raw === "**",
+    raw,
+    regex: raw === "**" ? undefined : compileSegment(raw),
+  }));
+  return { segments, hasGlobstar: segments.some((segment) => segment.globstar) };
+}
+
+function matchSegments(
+  dirSegments: readonly string[],
+  patternSegments: readonly CompiledSegment[],
+  dirIndex: number,
+  patIndex: number,
+): boolean {
+  if (patIndex === patternSegments.length) return dirIndex === dirSegments.length;
+  const current = patternSegments[patIndex];
+  if (!current) return false;
+  if (current.globstar) {
+    // `**` matches zero or more path segments.
+    if (matchSegments(dirSegments, patternSegments, dirIndex, patIndex + 1)) return true;
+    if (dirIndex < dirSegments.length) {
+      return matchSegments(dirSegments, patternSegments, dirIndex + 1, patIndex);
+    }
+    return false;
+  }
+  if (dirIndex >= dirSegments.length) return false;
+  const segment = dirSegments[dirIndex] ?? "";
+  if (!current.regex?.test(segment)) return false;
+  return matchSegments(dirSegments, patternSegments, dirIndex + 1, patIndex + 1);
+}
+
+/** True when `prefixSegments` can match a strict ancestor of some path accepted by `pattern`. */
+function canMatchDescendant(
+  prefixSegments: readonly string[],
+  patternSegments: readonly CompiledSegment[],
+  dirIndex: number,
+  patIndex: number,
+): boolean {
+  if (dirIndex === prefixSegments.length) {
+    // We matched the entire prefix; a strict descendant is possible if any segment remains.
+    return patIndex < patternSegments.length;
+  }
+  const current = patternSegments[patIndex];
+  if (!current) return false;
+  if (current.globstar) {
+    if (canMatchDescendant(prefixSegments, patternSegments, dirIndex, patIndex + 1)) return true;
+    return canMatchDescendant(prefixSegments, patternSegments, dirIndex + 1, patIndex);
+  }
+  const segment = prefixSegments[dirIndex] ?? "";
+  if (!current.regex?.test(segment)) return false;
+  return canMatchDescendant(prefixSegments, patternSegments, dirIndex + 1, patIndex + 1);
+}
+
+interface CompiledWorkspacePatterns {
+  readonly positives: readonly CompiledPattern[];
+  readonly negatives: readonly CompiledPattern[];
+}
+
+function compileWorkspacePatterns(patterns: readonly string[]): CompiledWorkspacePatterns {
+  const positives: CompiledPattern[] = [];
+  const negatives: CompiledPattern[] = [];
   for (const raw of patterns) {
     const negated = raw.startsWith("!");
-    const pattern = negated ? raw.slice(1) : raw;
-    if (!globToRegExp(pattern).test(dir)) continue;
-    matched = !negated;
+    const body = negated ? raw.slice(1) : raw;
+    for (const expanded of expandBraces(body)) {
+      const normalized = normalizePattern(expanded);
+      if (!normalized || normalized.startsWith("!")) continue;
+      const compiled = compilePattern(normalized);
+      if (compiled.segments.length === 0) continue;
+      if (negated) negatives.push(compiled);
+      else positives.push(compiled);
+    }
   }
-  return matched;
+  return { positives, negatives };
+}
+
+/** Matches a relative directory against workspace patterns, applying exclusions independently of order. */
+export function matchesWorkspacePatterns(dir: string, patterns: readonly string[]): boolean {
+  const compiled = compileWorkspacePatterns(patterns);
+  return matchesCompiled(
+    dir.split("/").filter((part) => part !== ""),
+    compiled,
+  );
+}
+
+function matchesCompiled(dirSegments: readonly string[], compiled: CompiledWorkspacePatterns): boolean {
+  if (dirSegments.length === 0) return false;
+  const included = compiled.positives.some((pattern) => matchSegments(dirSegments, pattern.segments, 0, 0));
+  if (!included) return false;
+  const excluded = compiled.negatives.some((pattern) => matchSegments(dirSegments, pattern.segments, 0, 0));
+  return !excluded;
 }
 
 function isIgnoredPath(dir: string): boolean {
@@ -150,40 +372,62 @@ function isIgnoredPath(dir: string): boolean {
 /** Finds relative directories containing a `package.json` that match workspace patterns. */
 export function matchWorkspaceDirs(paths: Iterable<string>, patterns: readonly string[]): string[] {
   if (patterns.length === 0) return [];
+  const compiled = compileWorkspacePatterns(patterns);
+  if (compiled.positives.length === 0) return [];
   const dirs = new Set<string>();
   for (const rawPath of paths) {
     const path = normalizePath(rawPath);
     if (!path || !path.endsWith("/package.json")) continue;
     const dir = path.slice(0, -"/package.json".length);
     if (!dir || isIgnoredPath(dir)) continue;
-    if (matchesWorkspacePatterns(dir, patterns)) dirs.add(dir);
+    if (matchesCompiled(dir.split("/"), compiled)) dirs.add(dir);
   }
   return Array.from(dirs).sort();
 }
 
-/** Walks up to `MAX_WALK_DEPTH` directories in `fs` to find workspace package directories. */
+function maxTraversalDepth(compiled: CompiledWorkspacePatterns): number {
+  let maxDepth = 0;
+  for (const pattern of compiled.positives) {
+    const depth = pattern.hasGlobstar
+      ? Math.max(MAX_GLOBSTAR_DEPTH, pattern.segments.length + 4)
+      : pattern.segments.length;
+    if (depth > maxDepth) maxDepth = depth;
+  }
+  return maxDepth;
+}
+
+/** Walks only directories reachable by positive workspace patterns (honoring explicit paths at any depth). */
 export async function findWorkspaceDirsInFs(
   fs: ProjectFs,
   root: string,
   patterns: readonly string[],
 ): Promise<string[]> {
   if (patterns.length === 0) return [];
+  const compiled = compileWorkspacePatterns(patterns);
+  if (compiled.positives.length === 0) return [];
+  const maxDepth = maxTraversalDepth(compiled);
   const found = new Set<string>();
 
-  async function walk(relDir: string, depth: number): Promise<void> {
-    if (depth > MAX_WALK_DEPTH) return;
+  async function walk(segments: readonly string[]): Promise<void> {
+    const relDir = segments.join("/");
     const entries = await fs.readdir(joinPath(root, relDir));
     const hasPkg = entries.some((entry) => entry.kind === "file" && entry.name === "package.json");
-    if (relDir && hasPkg && matchesWorkspacePatterns(relDir, patterns)) {
+    if (segments.length > 0 && hasPkg && matchesCompiled(segments, compiled)) {
       found.add(relDir);
     }
-    if (depth === MAX_WALK_DEPTH) return;
-    const subdirs = entries
+    if (segments.length >= maxDepth) return;
+    const nextDirs = entries
       .filter((entry) => entry.kind === "directory" && !IGNORED_DIRS.has(entry.name))
-      .map((entry) => (relDir ? `${relDir}/${entry.name}` : entry.name));
-    await Promise.all(subdirs.map((sub) => walk(sub, depth + 1)));
+      .map((entry) => segments.concat(entry.name))
+      .filter((child) =>
+        compiled.positives.some(
+          (pattern) =>
+            matchSegments(child, pattern.segments, 0, 0) || canMatchDescendant(child, pattern.segments, 0, 0),
+        ),
+      );
+    await Promise.all(nextDirs.map((child) => walk(child)));
   }
 
-  await walk("", 0);
+  await walk([]);
   return Array.from(found).sort();
 }

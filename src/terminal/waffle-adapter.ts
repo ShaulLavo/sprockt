@@ -294,28 +294,37 @@ export function createWaffleTerminalBridge(
       let told: TerminalSize = { columns: initialSize.cols, rows: initialSize.rows };
       let liveSession: BrowserSession | undefined;
 
-      const browserSession = await BrowserSession.create({
-        runtime: workspace.runtime,
-        wasmUrl: workspace.shell.wasmUrl,
-        workerUrl: workspace.shell.workerUrl,
-        cwd: workspace.shell.cwd,
-        env: { ...workspace.shell.env },
-        cols: initialSize.cols,
-        rows: initialSize.rows,
-        signal,
-        onOutput: (bytes) => {
-          terminals.emitOutput(sessionId, bytes);
-          onEvent({ type: "output", data: bytes });
-        },
-        onState: (state, detail) => {
-          if (signal.aborted) return;
-          terminals.setState(sessionId, state);
-          if (state === "failed" && detail) {
-            onEvent({ type: "error", message: detail });
-          }
-          if (liveSession) runStartupCommand(sessionId, liveSession);
-        },
-      });
+      let browserSession: BrowserSession;
+      try {
+        browserSession = await BrowserSession.create({
+          runtime: workspace.runtime,
+          wasmUrl: workspace.shell.wasmUrl,
+          workerUrl: workspace.shell.workerUrl,
+          cwd: workspace.shell.cwd,
+          env: { ...workspace.shell.env },
+          cols: initialSize.cols,
+          rows: initialSize.rows,
+          signal,
+          onOutput: (bytes) => {
+            terminals.emitOutput(sessionId, bytes);
+            onEvent({ type: "output", data: bytes });
+          },
+          onState: (state, detail) => {
+            if (signal.aborted) return;
+            terminals.setState(sessionId, state, detail);
+            if (state === "failed" && detail) {
+              onEvent({ type: "error", message: detail });
+            }
+            if (liveSession) runStartupCommand(sessionId, liveSession);
+          },
+        });
+      } catch (error: unknown) {
+        if (!signal.aborted) {
+          const detail = error instanceof Error ? error.message : String(error);
+          terminals.setState(sessionId, "failed", detail);
+        }
+        throw error;
+      }
       if (signal.aborted) {
         void browserSession.dispose().catch(() => {});
         return { write: () => {}, resize: () => {}, detach: () => {} };

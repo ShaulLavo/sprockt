@@ -11,13 +11,14 @@ import type { FileService } from "../files/service";
 import type { PreviewTransport } from "../preview/transport";
 import type { ShellSettings } from "../runtime/boot";
 import type { TerminalStore } from "../terminal/store";
-import { createDevServerCoordinator } from "../workspace/coordinator";
+import { createDevServerCoordinator, type CoordinatorOptions } from "../workspace/coordinator";
 import { PROJECT_ROOT } from "../workspace/paths";
 import { createDevServerLine, type DevServerStatus, type ServerProcess } from "./dev-server-line";
 import {
   detectWorkspaceTargets,
   devStart,
   devStartForTarget,
+  shellWord,
   type DevStart,
   type WorkspaceTarget,
 } from "./detect";
@@ -50,8 +51,12 @@ export interface DevServer {
   readonly startable: Accessor<boolean>;
   /** Detected runnable workspace apps and scripts (monorepo packages plus root scripts). */
   readonly targets: Accessor<readonly WorkspaceTarget[]>;
+  /** Target id matching the detected default Start/import command. */
+  readonly defaultTargetId: Accessor<string | undefined>;
   /** Explicitly chosen target id, or `undefined` to use the detected default. */
   readonly selectedTargetId: Accessor<string | undefined>;
+  /** Target id currently running in another tab, when following a remote owner. */
+  readonly remoteTargetId: Accessor<string | undefined>;
   /** Chooses which detected workspace app or script the next start will run. */
   selectTarget(id: string | undefined): void;
   /**
@@ -73,6 +78,8 @@ export interface DevServerHost {
   readonly preview: PreviewTransport;
   /** When present, dev server runs appear inside a visible `dev` terminal tab. */
   readonly terminals?: TerminalStore;
+  /** Test seam for injecting fake Web Locks / BroadcastChannel without a browser. */
+  readonly coordinator?: Pick<CoordinatorOptions, "tabId" | "locks" | "openChannel">;
 }
 
 /** How much of the task's output is kept. */
@@ -100,6 +107,7 @@ export function createDevServer(host: DevServerHost): DevServer {
   const [ended, setEnded] = createSignal(false);
   const [restartHeld, setRestartHeld] = createSignal(false);
   const [targets, setTargets] = createSignal<readonly WorkspaceTarget[]>([]);
+  const [defaultTargetId, setDefaultTargetId] = createSignal<string | undefined>(undefined);
   const [selectedTargetId, setSelectedTargetId] = createSignal<string | undefined>(undefined);
   const decoder = new TextDecoder();
   let devTabId: string | undefined;
@@ -112,26 +120,32 @@ export function createDevServer(host: DevServerHost): DevServer {
     append(new TextEncoder().encode(`\n${error instanceof Error ? error.message : String(error)}\n`));
   }
 
-  async function command(): Promise<DevStart | undefined> {
+  async function command(preferredTargetId?: string): Promise<DevStart | undefined> {
     const [detected, modules] = await Promise.all([
       detectWorkspaceTargets(host.files),
       host.runtime.filesystem.resolvePath(`${PROJECT_ROOT}/node_modules`),
     ]);
     setTargets(detected.targets);
-    const chosenId = selectedTargetId();
+    setDefaultTargetId(detected.defaultTargetId);
+    const chosenId = preferredTargetId ?? selectedTargetId();
     const chosen = chosenId ? detected.targets.find((target) => target.id === chosenId) : undefined;
-    if (chosenId && !chosen) setSelectedTargetId(undefined);
+    if (preferredTargetId && chosen) setSelectedTargetId(chosen.id);
+    else if (!preferredTargetId && chosenId && !chosen) setSelectedTargetId(undefined);
     const hasNodeModules = modules !== undefined;
     if (chosen) return devStartForTarget(detected.detection, chosen, hasNodeModules);
-    return devStart(detected.detection, hasNodeModules);
+    const fallback = devStart(detected.detection, hasNodeModules);
+    if (!fallback) return undefined;
+    return detected.defaultTargetId ? { ...fallback, targetId: detected.defaultTargetId } : fallback;
   }
 
   function ensureDevTerminal(terminals: TerminalStore): string {
     terminals.requestReveal();
     const existing = devTabId && terminals.tabs().tabs.some((tab) => tab.id === devTabId);
     if (existing && devTabId) {
+      const tabState = terminals.stateOf(devTabId);
       const handle = terminals.handle(devTabId);
-      if (!handle?.isRunning()) {
+      const reusable = (tabState === "ready" || tabState === "starting") && !handle?.isRunning();
+      if (reusable) {
         terminals.select(devTabId);
         return devTabId;
       }
@@ -139,6 +153,11 @@ export function createDevServer(host: DevServerHost): DevServer {
     const created = terminals.create({ title: "dev", named: true });
     devTabId = created || undefined;
     return created;
+  }
+
+  /** Anchors every reused-terminal command to `host.shell.cwd` so an interactive `cd` cannot break Start. */
+  function anchoredCommand(script: string): string {
+    return `(cd ${shellWord(host.shell.cwd)} && ${script})`;
   }
 
   /** One run of `script` in the visible `dev` terminal tab, streaming output live and honoring Ctrl-C. */
@@ -149,14 +168,20 @@ export function createDevServer(host: DevServerHost): DevServer {
   ): Promise<Run> {
     const tabId = ensureDevTerminal(terminals);
     if (!tabId) return { done: Promise.resolve(), interrupt() {} };
-    const handle = await terminals.waitForHandle(tabId, signal);
-    if (!handle || signal.aborted) return { done: Promise.resolve(), interrupt() {} };
+    const waited = await terminals.waitForHandle(tabId, signal);
+    if (!waited.ok) {
+      if (waited.reason === "failed") {
+        throw new Error(waited.message ?? "Dev terminal failed to start.");
+      }
+      return { done: Promise.resolve(), interrupt() {} };
+    }
+    const { handle } = waited;
 
     let interrupted = false;
     let settled = false;
     const unsubscribeOutput = terminals.subscribeOutput(tabId, append);
     const done = handle
-      .submit(script)
+      .submit(anchoredCommand(script))
       .catch((error: unknown) => {
         if (!interrupted && !signal.aborted) report(error);
       })
@@ -228,6 +253,7 @@ export function createDevServer(host: DevServerHost): DevServer {
     });
     return {
       command: process.command,
+      targetId: start.targetId,
       // It ended without being asked to: its last output says why, and the pane keeps it.
       exited: process.exited.catch(report).finally(() => {
         setRestartHeld(false);
@@ -241,7 +267,11 @@ export function createDevServer(host: DevServerHost): DevServer {
   }
 
   const line = createDevServerLine({
-    coordinator: createDevServerCoordinator({ workspaceId: host.id, onError: report }),
+    coordinator: createDevServerCoordinator({
+      workspaceId: host.id,
+      onError: report,
+      ...host.coordinator,
+    }),
     ports: {
       current: () => host.preview.servers().map((server) => server.port),
       subscribe: (listener) => host.preview.subscribe(listener),
@@ -269,7 +299,9 @@ export function createDevServer(host: DevServerHost): DevServer {
     restartHeld,
     startable,
     targets,
+    defaultTargetId,
     selectedTargetId,
+    remoteTargetId: () => state().remoteTargetId,
     selectTarget: (id) => void setSelectedTargetId(id),
     start: () => line.start(),
     stop: () => line.stop(),

@@ -26,24 +26,39 @@ describe("createTerminalStore", () => {
     expect(store.tabs().tabs.find((tab) => tab.id === id)?.title).toBe("dev");
   });
 
-  test("waitForHandle resolves on attach and returns undefined on close or abort", async () => {
+  test("waitForHandle resolves on attach and settles on close, abort, exit, or startup failure", async () => {
     const store = createTerminalStore();
     const first = store.create({ title: "dev", named: true });
     const pending = store.waitForHandle(first);
     const handle = stubHandle();
     store.attach(first, handle);
-    expect(await pending).toBe(handle);
+    expect(await pending).toEqual({ ok: true, handle });
+
+    // Exiting clears the handle so a subsequent wait reports exited instead of returning a dead handle.
+    store.setState(first, "exited");
+    expect(store.handle(first)).toBeUndefined();
+    expect(await store.waitForHandle(first)).toEqual({ ok: false, reason: "exited" });
 
     const second = store.create();
     const closing = store.waitForHandle(second);
     store.close(second);
-    expect(await closing).toBeUndefined();
+    expect(await closing).toEqual({ ok: false, reason: "closed" });
 
     const third = store.create();
     const controller = new AbortController();
     const aborted = store.waitForHandle(third, controller.signal);
     controller.abort();
-    expect(await aborted).toBeUndefined();
+    expect(await aborted).toEqual({ ok: false, reason: "aborted" });
+
+    const fourth = store.create({ title: "dev", named: true });
+    const failing = store.waitForHandle(fourth);
+    store.setState(fourth, "failed", "Shell WASM failed");
+    expect(await failing).toEqual({ ok: false, reason: "failed", message: "Shell WASM failed" });
+    expect(await store.waitForHandle(fourth)).toEqual({
+      ok: false,
+      reason: "failed",
+      message: "Shell WASM failed",
+    });
   });
 
   test("delivers output taps and reveal requests to subscribers", () => {

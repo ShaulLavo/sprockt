@@ -48,10 +48,13 @@ function TaskOutput(props: { devServer: DevServer }) {
 }
 
 function targetOptionLabel(target: WorkspaceTarget, targets: readonly WorkspaceTarget[]): string {
-  if (!target.dir) return target.script;
+  if (!target.dir) {
+    const hasWorkspaceTargets = targets.some((other) => other.dir !== "");
+    return hasWorkspaceTargets ? `${target.name} · ${target.action}` : target.action;
+  }
   const duplicateName = targets.some((other) => other.dir !== target.dir && other.name === target.name);
   const label = duplicateName ? target.dir : target.name;
-  return `${label} · ${target.script}`;
+  return `${label} · ${target.action}`;
 }
 
 function formatPreviewPort(server: PreviewServerInfo, targets: readonly WorkspaceTarget[]): string {
@@ -69,18 +72,29 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
   const { devServer } = props;
   const workspace = useWorkspace();
   const { preview } = workspace;
-  const { status, owned, ended, restartHeld, startable, remotePorts, targets, selectedTargetId } = useValue(
-    () => ({
-      status: devServer.status(),
-      owned: devServer.owned(),
-      ended: devServer.ended(),
-      restartHeld: devServer.restartHeld(),
-      startable: devServer.startable(),
-      remotePorts: devServer.remotePorts(),
-      targets: devServer.targets(),
-      selectedTargetId: devServer.selectedTargetId(),
-    }),
-  );
+  const {
+    status,
+    owned,
+    ended,
+    restartHeld,
+    startable,
+    remotePorts,
+    targets,
+    defaultTargetId,
+    selectedTargetId,
+    remoteTargetId,
+  } = useValue(() => ({
+    status: devServer.status(),
+    owned: devServer.owned(),
+    ended: devServer.ended(),
+    restartHeld: devServer.restartHeld(),
+    startable: devServer.startable(),
+    remotePorts: devServer.remotePorts(),
+    targets: devServer.targets(),
+    defaultTargetId: devServer.defaultTargetId(),
+    selectedTargetId: devServer.selectedTargetId(),
+    remoteTargetId: devServer.remoteTargetId(),
+  }));
 
   const adapter = useMemo(() => createWafflePreviewAdapter(preview), [preview]);
   const [activePort, setActivePort] = useState<number>();
@@ -128,7 +142,7 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
   }
 
   const canStart = status === "stopped" && startable;
-  const activeTargetId = selectedTargetId ?? targets[0]?.id ?? "";
+  const activeTargetId = remoteTargetId ?? selectedTargetId ?? defaultTargetId ?? targets[0]?.id ?? "";
   const showTargetPicker = targets.length > 1;
 
   const targetPicker = showTargetPicker ? (

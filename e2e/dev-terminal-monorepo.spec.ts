@@ -1,6 +1,7 @@
 import { gzipSync } from "node:zlib";
 import type { Page, Route } from "@playwright/test";
 import { buildTar, paxBody, type TarFixtureEntry } from "../src/importer/github/tar-writer.ts";
+import { TAB_POLICY } from "../src/runtime/tab-policy";
 import { expect, newWorkspace, runInTerminal, terminalText, test, writeFile } from "./helpers";
 
 const SERVER = (heading: string, port: number) => `
@@ -163,4 +164,91 @@ test("git and rg run cleanly inside Sprockt terminals", async ({ page }) => {
 
   await runInTerminal(page, "git --version && git init && git status");
   await expect.poll(() => terminalText(page), { timeout: 20_000 }).toContain("notes.txt");
+});
+
+test("dev terminal survives interactive cd and shell exit across restarts", async ({ page }) => {
+  await newWorkspace(page);
+  await expect.poll(() => page.evaluate(() => globalThis.sprockt?.workspace !== undefined)).toBe(true);
+  await page.evaluate((files) => globalThis.sprockt?.workspace?.files.writeMany(files), {
+    "server.ts": SERVER("Anchored Dev", 3000),
+    "nested/keep.txt": "ok\n",
+  });
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+
+  await page.getByTestId("preview-start").click();
+  await expect(frame(page).getByRole("heading")).toHaveText("Anchored Dev", { timeout: 15_000 });
+
+  // Stop the server, change directory inside the reused dev tab, and start again.
+  await page.getByTestId("preview-task").click();
+  await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "stopped");
+  await runInTerminal(page, "cd nested && pwd");
+  await expect.poll(() => terminalText(page), { timeout: 15_000 }).toContain("/workspace/nested");
+
+  await page.getByTestId("preview-start").click();
+  await expect(frame(page).getByRole("heading")).toHaveText("Anchored Dev", { timeout: 15_000 });
+
+  // Stop again, exit the dev shell completely, and confirm Start creates a fresh dev tab.
+  await page.getByTestId("preview-task").click();
+  await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "stopped");
+  await runInTerminal(page, "exit");
+  await expect(page.getByTestId("terminal-state")).toHaveText("exited", { timeout: 15_000 });
+
+  await page.getByTestId("preview-start").click();
+  await expect(page.locator('[data-wb-term-session] [role="tab"]', { hasText: "dev" })).toHaveCount(2, {
+    timeout: 15_000,
+  });
+  await expect(frame(page).getByRole("heading")).toHaveText("Anchored Dev", { timeout: 15_000 });
+});
+
+test("monorepo aligns initial picker with preferred app and preserves chosen app on tab takeover", async ({
+  page,
+}) => {
+  test.skip(TAB_POLICY !== "attach", "tabs share a workspace only with the attach policy");
+
+  const id = await newWorkspace(page);
+  await expect.poll(() => page.evaluate(() => globalThis.sprockt?.workspace !== undefined)).toBe(true);
+  await page.evaluate((files) => globalThis.sprockt?.workspace?.files.writeMany(files), {
+    "package.json": JSON.stringify({ name: "mono", private: true, workspaces: ["apps/*"] }),
+    "node_modules/.keep": "",
+    "apps/api/package.json": JSON.stringify({ name: "api", scripts: { dev: "bun server.ts -p 3102" } }),
+    "apps/api/server.ts": SERVER("Mono API App", 3102),
+    "apps/web/package.json": JSON.stringify({
+      name: "web",
+      scripts: { dev: "bun server.ts -p 3101" },
+      devDependencies: { vite: "^6.0.0" },
+    }),
+    "apps/web/server.ts": SERVER("Mono Web App", 3101),
+  });
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+
+  // Options are sorted alphabetically, but Vite web app is preferred so the picker starts on it.
+  const targetSelect = page.getByTestId("preview-target-select");
+  await expect(targetSelect).toBeVisible();
+  await expect(targetSelect.locator("option")).toHaveText(["api · dev", "web · dev"]);
+  await expect(targetSelect).toHaveValue("apps/web:dev");
+
+  // Explicitly choose api · dev and start it in tab 1.
+  await targetSelect.selectOption("apps/api:dev");
+  await page.getByTestId("preview-start").click();
+  await expect(frame(page).getByRole("heading")).toHaveText("Mono API App", { timeout: 15_000 });
+  await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("3102");
+
+  // Open tab 2 on the same workspace: it follows api · dev, and keeps it after tab 1 closes.
+  const second = await page.context().newPage();
+  await second.goto(`/w/${id}`);
+  await expect(second.getByTestId("terminal-state")).toHaveText("ready", { timeout: 20_000 });
+  await expect(second.getByTestId("preview-target-select")).toHaveValue("apps/api:dev", {
+    timeout: 15_000,
+  });
+  await expect(second.getByTestId("wb-preview-port-select")).toHaveValue("3102", { timeout: 15_000 });
+  await expect(frame(second).getByRole("heading")).toHaveText("Mono API App", { timeout: 15_000 });
+
+  await page.close();
+  await expect(second.getByTestId("preview-task")).toBeEnabled({ timeout: 20_000 });
+  await expect(second.getByTestId("preview-task")).toHaveAttribute("data-status", "running", {
+    timeout: 20_000,
+  });
+  await expect(second.getByTestId("preview-target-select")).toHaveValue("apps/api:dev");
+  await expect(second.getByTestId("wb-preview-port-select")).toHaveValue("3102", { timeout: 15_000 });
+  await expect(frame(second).getByRole("heading")).toHaveText("Mono API App", { timeout: 15_000 });
 });
