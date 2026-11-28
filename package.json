@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "guests": "bun scripts/fetch-guests.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "lint": "bun scripts/check-nesting-suppressions.ts && oxlint --deny-warnings",
+    "lint": "bun scripts/check-nesting-suppressions.ts && oxlint --disable-nested-config --deny-warnings",
     "lint:structure": "bun -e 'import { lstatSync } from \"node:fs\"; for (const name of [\".unknot.allow\", \".unknot.json\"]) if (lstatSync(name, { throwIfNoEntry: false })) throw new Error(`Remove ${name}. Sprockt requires zero structural findings with default rules.`)' && unknot .",
     "format": "oxfmt",
     "format:check": "oxfmt --check",

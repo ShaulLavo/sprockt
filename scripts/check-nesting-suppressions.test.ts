@@ -3,6 +3,7 @@ import { nestingSuppressions } from "./check-nesting-suppressions";
 
 test.each([
   "// oxlint-disable-next-line no-nested-ternary, unicorn/no-nested-ternary",
+  "// oxlint-disable-next-line no-nested-ternary unicorn/no-nested-ternary no-console",
   "/* eslint-disable eslint/max-depth */",
   "/* oxlint-disable-next-line\n  no-await-in-loop, no-else-return */",
   "// eslint-disable-line -- disable everything",

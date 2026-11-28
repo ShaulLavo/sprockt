@@ -14,10 +14,7 @@ function disablesNesting(comment: string): boolean {
   const directive = DISABLE_DIRECTIVE.exec(text);
   if (!directive) return false;
   const [rules = ""] = text.slice(directive[0].length).split("--", 1);
-  const names = rules
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean);
+  const names = rules.split(/[\s,]+/).filter(Boolean);
   return names.length === 0 || names.some(isNestingRule);
 }
 
