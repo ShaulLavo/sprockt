@@ -566,6 +566,19 @@ test("Retry and Rename on deleted workspaces refuse without recreating their Ind
   await expect(page.getByTestId("workspace-delete-confirm-deletedren")).toBeVisible();
 
   const databaseName = storageName("deletedren");
+  const maintenanceLock = `bun-wasm:filesystem:indexeddb-maintenance:${databaseName}`;
+  // A landing refresh can still see the old name while an existing-only open holds maintenance.
+  const restoreDiscovery = await page.evaluateHandle((name) => {
+    const original = indexedDB.databases;
+    indexedDB.databases = async () => {
+      const databases = await original.call(indexedDB);
+      if (databases.some((database) => database.name === name)) return databases;
+      return databases.concat({ name, version: 1 });
+    };
+    return () => {
+      indexedDB.databases = original;
+    };
+  }, databaseName);
   // An open connection blocks deleteDatabase() while Delete holds the maintenance lock.
   const blocker = await page.evaluateHandle(async (name) => {
     const opened = Promise.withResolvers<IDBDatabase>();
@@ -580,6 +593,11 @@ test("Retry and Rename on deleted workspaces refuse without recreating their Ind
     return state;
   }, databaseName);
 
+  const pendingMaintenanceLocks = () =>
+    renameTab.evaluate(async (name) => {
+      const snapshot = await navigator.locks.query();
+      return snapshot.pending?.filter((lock) => lock.name === name).length ?? 0;
+    }, maintenanceLock);
   try {
     await page.getByTestId("workspace-delete-confirm-deletedren").click();
     await expect.poll(() => blocker.evaluate((state) => state.deleting)).toBe(true);
@@ -588,21 +606,29 @@ test("Retry and Rename on deleted workspaces refuse without recreating their Ind
     await renameTab.getByTestId("workspace-rename-save-deletedren").evaluate((button) => {
       (button as HTMLButtonElement).form?.requestSubmit();
     });
-    const maintenanceLock = `bun-wasm:filesystem:indexeddb-maintenance:${databaseName}`;
-    await expect
-      .poll(() =>
-        renameTab.evaluate(async (lockName) => {
-          const snapshot = await navigator.locks.query();
-          return snapshot.pending?.some((lock) => lock.name === lockName) ?? false;
-        }, maintenanceLock),
-      )
-      .toBe(true);
+    await expect.poll(pendingMaintenanceLocks).toBe(1);
+
+    // Keep a shared maintenance holder alive so a stale discovery probe sees the name as busy.
+    const releaseDiscoveryLock = await renameTab.evaluateHandle((name) => {
+      const holding = Promise.withResolvers<void>();
+      void navigator.locks.request(name, { mode: "shared" }, () => holding.promise);
+      return holding.resolve;
+    }, maintenanceLock);
+    try {
+      await expect.poll(pendingMaintenanceLocks).toBe(2);
+      await blocker.evaluate((state) => state.database.close());
+      await expect(page.getByTestId("workspace-row-deletedren")).toHaveCount(0);
+      await expect(renameTab.getByTestId("workspace-row-deletedren")).toHaveCount(0);
+    } finally {
+      await releaseDiscoveryLock.evaluate((release) => release());
+      await releaseDiscoveryLock.dispose();
+    }
   } finally {
     await blocker.evaluate((state) => state.database.close());
     await blocker.dispose();
+    await restoreDiscovery.evaluate((restore) => restore());
+    await restoreDiscovery.dispose();
   }
-  await expect(page.getByTestId("workspace-row-deletedren")).toHaveCount(0);
-  await expect(renameTab.getByTestId("workspace-row-deletedren")).toHaveCount(0);
 
   // Confirm IndexedDB has neither deleted database recreated.
   const dbNames = await renameTab.evaluate(async () => {

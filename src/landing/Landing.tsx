@@ -161,6 +161,12 @@ export function Landing() {
     }
   }
 
+  function removeWorkspaceFromList(id: string): void {
+    // A discovery started before the operation confirmed absence can still report the old row.
+    refreshSequence.current++;
+    setWorkspaces((current) => current.filter((workspace) => workspace.id !== id));
+  }
+
   const hasRecent = workspaces.length > 0 || (loadingWorkspaces && expectsWorkspaces);
   const nextTheme = scheme === "dark" ? "light" : "dark";
   const nextThemeLabel = nextTheme === "light" ? LANDING_COPY.navThemeLight : LANDING_COPY.navThemeDark;
@@ -531,6 +537,7 @@ export function Landing() {
                     loading={loadingWorkspaces}
                     onOpen={(id) => navigate({ kind: "workspace", id })}
                     onRefresh={() => void refreshWorkspaces()}
+                    onRemoved={removeWorkspaceFromList}
                   />
                 </div>
               </div>

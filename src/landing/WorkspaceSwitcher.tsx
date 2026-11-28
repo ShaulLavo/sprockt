@@ -21,6 +21,7 @@ export interface WorkspaceSwitcherProps {
   readonly loading: boolean;
   readonly onOpen: (id: string) => void;
   readonly onRefresh: () => void;
+  readonly onRemoved: (id: string) => void;
 }
 
 /** Focuses a just-mounted element once the current render settles. */
@@ -99,7 +100,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
       }
       if (result.status === "missing") {
         setEditingId(undefined);
-        props.onRefresh();
+        props.onRemoved(id);
       }
     } finally {
       setBusyId(undefined);
@@ -116,7 +117,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
         setNotice(LANDING_COPY.recentBusyDelete);
         return;
       }
-      props.onRefresh();
+      props.onRemoved(id);
     } catch {
       setConfirmDeleteId(undefined);
       setNotice(LANDING_COPY.recentDeleteFailed);
@@ -135,7 +136,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
     if (result.status === "busy") {
       throw new Error("busy");
     }
-    props.onRefresh();
+    props.onRemoved(id);
   }
 
   function openWorkspace(id: string): void {
@@ -235,7 +236,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
           id={ws.id}
           meta={ws.meta}
           skipProbe
-          onDeleted={props.onRefresh}
+          onDeleted={() => props.onRemoved(ws.id)}
           onRetryTemplate={(meta) => retryTemplateWorkspace(ws.id, meta)}
         />
       </div>
@@ -273,7 +274,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
           />
         </button>
 
-        <IncompleteRow id={ws.id} meta={ws.meta} skipProbe onDeleted={props.onRefresh} />
+        <IncompleteRow id={ws.id} meta={ws.meta} skipProbe onDeleted={() => props.onRemoved(ws.id)} />
 
         {/* Desktop: reveal actions on hover/focus; Touch: single "more" button */}
         <div className="lp-ws-actions">
