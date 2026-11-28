@@ -207,9 +207,6 @@ function createWorkspaceLock(suffix: string) {
 /** Serializes metadata read-modify-write per workspace within this tab and across attached tabs. */
 export const withWorkspaceMetaLock = createWorkspaceLock("meta-name");
 
-/** Serializes fresh-import and Retry lifecycles per workspace before either opens storage. */
-export const withWorkspaceImportLock = createWorkspaceLock("import");
-
 /**
  * Merges disk metadata read on the landing page with an existing browser hint, preserving a
  * pending adopted name when disk still holds a placeholder (e.g. after a transient write failure).

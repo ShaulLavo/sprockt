@@ -5,6 +5,7 @@ import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import {
   renameWorkspace,
   retrySeedWorkspace,
+  RetrySourceMismatchError,
   seedWorkspace,
   WorkspaceIdTakenError,
   type OpenRenameOptions,
@@ -22,7 +23,6 @@ interface FakeEntry {
 
 function createFakeEnv() {
   const stores = new Map<string, FakeEntry>();
-  const removed: string[] = [];
   const openCalls: Array<{ readonly id: string; readonly requireExisting: boolean }> = [];
   let onWriteFile: ((id: string, path: string, content: string) => void) | undefined;
   let failWriteMany: Error | undefined;
@@ -42,10 +42,6 @@ function createFakeEnv() {
       },
       runtime: {
         filesystem: {
-          async listFiles(dir) {
-            const prefix = dir === "/" ? "/" : `${dir}/`;
-            return Array.from(entry.files.keys()).filter((path) => path.startsWith(prefix));
-          },
           async mkdirp() {},
           async readFile(path) {
             const value = entry.files.get(path);
@@ -57,7 +53,10 @@ function createFakeEnv() {
             entry.files.set(path, text);
           },
           async remove(path) {
-            entry.files.delete(path);
+            const prefix = `${path}/`;
+            for (const key of Array.from(entry.files.keys())) {
+              if (key === path || key.startsWith(prefix)) entry.files.delete(key);
+            }
           },
           async flush() {},
         },
@@ -71,21 +70,22 @@ function createFakeEnv() {
   function seedDeps(ids: readonly string[] = []): NewWorkspaceDeps {
     let index = 0;
     return {
-      newId: () => ids[index++] ?? `id${index}`,
-      exists: async (name) => stores.has(name),
-      remove: async (name) => {
-        removed.push(name);
-        return stores.delete(name) ? "deleted" : "missing";
-      },
-      open: async (id) => {
+      newId: () => ids[index++] ?? ids[ids.length - 1] ?? `id${index}`,
+      createNew: async (id, signal) => {
+        signal?.throwIfAborted();
         openCalls.push({ id, requireExisting: false });
         const name = storageName(id);
-        let entry = stores.get(name);
-        if (!entry) {
-          entry = { files: new Map(), locked: false };
-          stores.set(name, entry);
-        }
-        if (entry.locked) throw new Error("busy");
+        if (stores.has(name)) return "taken";
+        const entry: FakeEntry = { files: new Map(), locked: true };
+        stores.set(name, entry);
+        return makeWriter(id, entry);
+      },
+      openExisting: async (id, signal) => {
+        signal?.throwIfAborted();
+        openCalls.push({ id, requireExisting: true });
+        const entry = stores.get(storageName(id));
+        if (!entry) return "missing";
+        if (entry.locked) return "busy";
         entry.locked = true;
         return makeWriter(id, entry);
       },
@@ -97,7 +97,7 @@ function createFakeEnv() {
       async open(id: string, options: OpenRenameOptions) {
         openCalls.push({ id, requireExisting: options.requireExisting });
         const entry = stores.get(storageName(id));
-        if (!entry) return options.requireExisting ? "missing" : "missing";
+        if (!entry) return "missing";
         if (entry.locked) return "busy";
         entry.locked = true;
         return makeWriter(id, entry);
@@ -107,7 +107,6 @@ function createFakeEnv() {
 
   return {
     stores,
-    removed,
     openCalls,
     seedDeps,
     renameDeps,
@@ -140,40 +139,67 @@ describe("seedWorkspace (via shared createWorkspaceWithFiles)", () => {
     expect(env.stores.get(storageName("fresh22222"))?.files.get(`${PROJECT_ROOT}/server.ts`)).toContain(
       "bun:sqlite",
     );
-    expect(env.removed).toEqual([]);
   });
 
-  test("never overwrites or deletes a raced existing workspace and rolls back only its own failed seed", async () => {
+  test("never overwrites a raced existing workspace and leaves the incomplete marker on failure without deleting", async () => {
     const env = createFakeEnv();
     env.stores.set(storageName("raced11111"), {
-      files: new Map([[`${PROJECT_ROOT}/existing.ts`, "keep"]]),
+      files: new Map(),
       locked: false,
     });
-    const racedDeps: NewWorkspaceDeps = {
-      ...env.seedDeps(["raced11111"]),
-      exists: async () => false,
-    };
-    await expect(seedWorkspace("hono", {}, racedDeps)).rejects.toBeInstanceOf(WorkspaceIdTakenError);
-    expect(env.stores.get(storageName("raced11111"))?.files.get(`${PROJECT_ROOT}/existing.ts`)).toBe("keep");
-    expect(env.removed).toEqual([]);
+    await expect(seedWorkspace("hono", {}, env.seedDeps(["raced11111"]))).rejects.toBeInstanceOf(
+      WorkspaceIdTakenError,
+    );
+    expect(env.stores.get(storageName("raced11111"))?.files.size).toBe(0);
 
     env.setFailWriteMany(new Error("quota exceeded"));
     await expect(seedWorkspace("hono", {}, env.seedDeps(["fresh99999"]))).rejects.toThrow("quota exceeded");
-    expect(env.removed).toEqual([storageName("fresh99999")]);
-    expect(env.stores.has(storageName("fresh99999"))).toBe(false);
+    expect(env.stores.has(storageName("fresh99999"))).toBe(true);
+    expect(parseMeta(env.stores.get(storageName("fresh99999"))?.files.get(WORKSPACE_META_PATH))?.state).toBe(
+      INCOMPLETE,
+    );
+    expect(env.stores.get(storageName("fresh99999"))?.locked).toBe(false);
     expect(env.stores.has(storageName("raced11111"))).toBe(true);
   });
 
-  test("retrySeedWorkspace finishes an incomplete template workspace and refuses a finished one", async () => {
+  test("retrySeedWorkspace finishes a matching incomplete template and refuses finished, busy, missing, or mismatched ones", async () => {
     const env = createFakeEnv();
     const partial = createWorkspaceMeta({ name: "my-hono", template: "hono", state: INCOMPLETE });
     env.stores.set(storageName("part111111"), {
-      files: new Map([[WORKSPACE_META_PATH, serializeMeta(partial)]]),
-      locked: false,
+      files: new Map([
+        [WORKSPACE_META_PATH, serializeMeta(partial)],
+        [`${PROJECT_ROOT}/stale.txt`, "old"],
+      ]),
+      locked: true,
     });
 
+    // Busy while open in another tab: refuses without clearing stale files.
+    expect(await retrySeedWorkspace("part111111", "hono", "my-hono", env.seedDeps())).toEqual({
+      status: "busy",
+    });
+    expect(env.stores.get(storageName("part111111"))?.files.get(`${PROJECT_ROOT}/stale.txt`)).toBe("old");
+
+    // Missing workspace: refuses without recreating it.
+    expect(await retrySeedWorkspace("gone111111", "hono", "my-hono", env.seedDeps())).toEqual({
+      status: "missing",
+    });
+    expect(env.stores.has(storageName("gone111111"))).toBe(false);
+
+    // Unlock and verify mismatched template / unknown template are refused.
+    env.stores.get(storageName("part111111"))!.locked = false;
+    await expect(
+      retrySeedWorkspace("part111111", "vite-react", "my-hono", env.seedDeps()),
+    ).rejects.toBeInstanceOf(RetrySourceMismatchError);
+    await expect(
+      retrySeedWorkspace("part111111", "unknown-template", "my-hono", env.seedDeps()),
+    ).rejects.toBeInstanceOf(RetrySourceMismatchError);
+    expect(env.stores.get(storageName("part111111"))?.files.get(`${PROJECT_ROOT}/stale.txt`)).toBe("old");
+    expect(env.stores.get(storageName("part111111"))?.locked).toBe(false);
+
+    // Matching template completes and clears stale files.
     const retried = await retrySeedWorkspace("part111111", "hono", "my-hono", env.seedDeps());
     expect(retried.status).toBe("seeded");
+    expect(env.stores.get(storageName("part111111"))?.files.get(`${PROJECT_ROOT}/stale.txt`)).toBeUndefined();
     expect(env.stores.get(storageName("part111111"))?.files.get(`${PROJECT_ROOT}/server.ts`)).toContain(
       "Hono",
     );

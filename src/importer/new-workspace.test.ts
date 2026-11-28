@@ -1,16 +1,19 @@
 import { describe, expect, test } from "bun:test";
+import { parseRoute } from "../app/routes";
 import { createProjectFiles, type ProjectFilesystem, type ResolvedEntry } from "../files/project-files";
-import { withWorkspaceImportLock, withWorkspaceMetaLock } from "../workspace/hint";
-import { PROJECT_ROOT } from "../workspace/paths";
+import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import { readIncomplete, retryPath, type OpenIdle } from "./incomplete";
 import { INCOMPLETE, parseMeta, serializeMeta, WORKSPACE_META_PATH, type WorkspaceMeta } from "./metadata";
 import {
   createWorkspaceWithFiles,
   NotIncompleteError,
+  RetrySourceMismatchError,
+  WorkspaceBusyError,
   WorkspaceIdTakenError,
+  WorkspaceMissingError,
   type NewWorkspaceDeps,
+  type WorkspaceWriter,
 } from "./new-workspace";
-import { parseRoute } from "../app/routes";
 
 const META: WorkspaceMeta = {
   name: "demo",
@@ -18,90 +21,173 @@ const META: WorkspaceMeta = {
   source: { kind: "github", owner: "acme", repo: "demo", ref: "feature/x", subdir: "apps/web" },
 };
 
-type Files = Map<string, string>;
+interface StoreEntry {
+  readonly files: Map<string, string>;
+  readonly dirs: Set<string>;
+  locked: boolean;
+}
 
 function noop(): void {}
 
 const encode = (meta: WorkspaceMeta) => new TextEncoder().encode(serializeMeta(meta));
 
+const metaState = (files: Map<string, string>) =>
+  parseMeta(files.get(WORKSPACE_META_PATH))?.state ?? "complete";
+
+function dirsForFiles(files: Iterable<string>): Set<string> {
+  const dirs = new Set<string>();
+  for (const path of files) {
+    if (path.startsWith("/")) continue;
+    const parts = path.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      dirs.add(parts.slice(0, i).join("/"));
+    }
+  }
+  return dirs;
+}
+
+interface Faults {
+  createNew?: Error;
+  openExisting?: Error;
+  readFile?: Error;
+  remove?: Error;
+  writeMany?: Error;
+  flush?: Error;
+  dispose?: Error;
+}
+
 /**
- * An in-memory stand-in for Waffle storage. Project files are keyed project-relative, as
- * FileService takes them; the metadata is keyed by its absolute path on the filesystem root,
- * which only the raw filesystem reaches. The raw project listing returns absolute paths and,
- * unlike FileService, includes node_modules and .git. `log` records writes, flushes and deletes.
+ * An in-memory stand-in for Waffle storage with exclusive locks, directory tracking, and atomic
+ * create-if-absent. Project files are keyed project-relative, metadata by its absolute path on
+ * the filesystem root. Empty workspaces still exist as entries in `stores`.
  */
 function storage(existing: Record<string, Record<string, string>> = {}) {
-  const stores = new Map<string, Files>(
-    Object.entries(existing).map(([id, files]) => [`sprockt-${id}`, new Map(Object.entries(files))]),
+  const stores = new Map<string, StoreEntry>(
+    Object.entries(existing).map(([id, files]) => [
+      storageName(id),
+      { files: new Map(Object.entries(files)), dirs: dirsForFiles(Object.keys(files)), locked: false },
+    ]),
   );
   const log: string[] = [];
-  const faults: { writeMany?: Error; open?: Error; removeAnswer?: string; dispose?: Error } = {};
-  let duringOpen: () => void = noop;
+  const faults: Faults = {};
+  let duringCreate: (id: string) => void = noop;
+  let duringOpenExisting: (id: string) => void = noop;
+  let duringReadMeta: () => void = noop;
   let duringWrite: () => void = noop;
+  let onRemovePath: ((path: string) => Promise<void> | void) | undefined;
 
-  const metaState = (store: Files) => parseMeta(store.get(WORKSPACE_META_PATH))?.state ?? "complete";
-
-  const projectPaths = (store: Files) => Array.from(store.keys()).filter((path) => !path.startsWith("/"));
-
-  function session(id: string, store: Files) {
+  function writer(id: string, entry: StoreEntry): WorkspaceWriter {
     return {
       files: {
         writeMany: async (files: Readonly<Record<string, string | Uint8Array>>) => {
           duringWrite();
           if (faults.writeMany) throw faults.writeMany;
-          for (const [path, value] of Object.entries(files)) store.set(path, String(value));
+          for (const [path, value] of Object.entries(files)) {
+            if (entry.dirs.has(path)) throw new Error(`EISDIR: ${path} is a directory`);
+            const parts = path.split("/");
+            for (let i = 1; i < parts.length; i++) {
+              const dir = parts.slice(0, i).join("/");
+              if (entry.files.has(dir)) throw new Error(`ENOTDIR: ${dir} is a file`);
+              entry.dirs.add(dir);
+            }
+            entry.files.set(path, String(value));
+          }
           log.push("files");
         },
       },
       runtime: {
         filesystem: {
-          listFiles: async () => projectPaths(store).map((path) => `${PROJECT_ROOT}/${path}`),
           readFile: async (path: string) => {
-            const value = store.get(path);
+            if (path === WORKSPACE_META_PATH) duringReadMeta();
+            if (faults.readFile) throw faults.readFile;
+            const value = entry.files.get(path);
             return value === undefined ? undefined : new TextEncoder().encode(value);
           },
           writeFile: async (path: string, value: string | Uint8Array) => {
-            store.set(path, String(value));
-            if (path === WORKSPACE_META_PATH) log.push(`meta ${metaState(store)}`);
+            entry.files.set(path, String(value));
+            if (path === WORKSPACE_META_PATH) log.push(`meta ${metaState(entry.files)}`);
           },
           mkdirp: async () => undefined,
-          remove: async (absolute: string) => void store.delete(absolute.slice(PROJECT_ROOT.length + 1)),
-          flush: async () => void log.push("flush"),
+          remove: async (absolute: string) => {
+            log.push(`remove ${absolute}`);
+            if (onRemovePath) await onRemovePath(absolute);
+            if (faults.remove) throw faults.remove;
+            if (absolute === PROJECT_ROOT) {
+              for (const key of Array.from(entry.files.keys())) {
+                if (!key.startsWith("/")) entry.files.delete(key);
+              }
+              entry.dirs.clear();
+              return;
+            }
+            const rel = absolute.slice(PROJECT_ROOT.length + 1);
+            entry.files.delete(rel);
+            entry.dirs.delete(rel);
+            const prefix = `${rel}/`;
+            for (const key of Array.from(entry.files.keys())) {
+              if (key.startsWith(prefix)) entry.files.delete(key);
+            }
+            for (const dir of Array.from(entry.dirs)) {
+              if (dir.startsWith(prefix)) entry.dirs.delete(dir);
+            }
+          },
+          flush: async () => {
+            if (faults.flush) throw faults.flush;
+            log.push("flush");
+          },
         },
       },
       dispose: async () => {
+        entry.locked = false;
         log.push(`close ${id}`);
         if (faults.dispose) throw faults.dispose;
       },
-    } as never;
+    };
   }
 
-  const deps = (ids: string[]): NewWorkspaceDeps => ({
-    newId: () => ids.shift() ?? "exhausted",
-    exists: async (name) => stores.has(name),
-    remove: async (name) => {
-      log.push(`delete ${name}`);
-      if (faults.removeAnswer) return faults.removeAnswer;
-      stores.delete(name);
-      return "deleted";
-    },
-    open: async (id) => {
-      duringOpen();
-      if (faults.open) throw faults.open;
-      const store = stores.get(`sprockt-${id}`) ?? new Map();
-      stores.set(`sprockt-${id}`, store);
-      return session(id, store);
-    },
-  });
+  const deps = (ids: readonly string[] = []): NewWorkspaceDeps => {
+    let index = 0;
+    return {
+      newId: () => ids[index++] ?? ids[ids.length - 1] ?? "exhausted",
+      createNew: async (id, signal) => {
+        signal?.throwIfAborted();
+        duringCreate(id);
+        if (faults.createNew) throw faults.createNew;
+        const name = storageName(id);
+        if (stores.has(name)) return "taken";
+        const entry: StoreEntry = { files: new Map(), dirs: new Set(), locked: true };
+        stores.set(name, entry);
+        return writer(id, entry);
+      },
+      openExisting: async (id, signal) => {
+        signal?.throwIfAborted();
+        duringOpenExisting(id);
+        if (faults.openExisting) throw faults.openExisting;
+        const entry = stores.get(storageName(id));
+        if (!entry) return "missing";
+        if (entry.locked) return "busy";
+        entry.locked = true;
+        return writer(id, entry);
+      },
+    };
+  };
 
   return {
     stores,
     log,
     faults,
     deps,
-    files: (id: string) => Object.fromEntries(stores.get(`sprockt-${id}`) ?? []),
-    onOpen: (hook: () => void) => (duringOpen = hook),
+    files: (id: string) => Object.fromEntries(stores.get(storageName(id))?.files ?? []),
+    dirs: (id: string) => Array.from(stores.get(storageName(id))?.dirs ?? []).toSorted(),
+    isLocked: (id: string) => stores.get(storageName(id))?.locked ?? false,
+    setLocked: (id: string, locked: boolean) => {
+      const entry = stores.get(storageName(id));
+      if (entry) entry.locked = locked;
+    },
+    onCreate: (hook: (id: string) => void) => (duringCreate = hook),
+    onOpenExisting: (hook: (id: string) => void) => (duringOpenExisting = hook),
+    onReadMeta: (hook: () => void) => (duringReadMeta = hook),
     onWrite: (hook: () => void) => (duringWrite = hook),
+    onRemove: (hook: ((path: string) => Promise<void> | void) | undefined) => (onRemovePath = hook),
   };
 }
 
@@ -119,36 +205,50 @@ describe("createWorkspaceWithFiles", () => {
       "close fresh",
     ]);
     expect(parseMeta(store.files("fresh")[WORKSPACE_META_PATH])).toEqual(META);
+    expect(store.isLocked("fresh")).toBe(false);
   });
 
-  test("takes the next free id when one is already stored", async () => {
-    const store = storage({ taken: { "mine.txt": "keep me" } });
-    expect(await createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(["taken", "free"]))).toBe(
+  test("skips taken ids atomically, including an existing workspace with no files or metadata", async () => {
+    // An existing workspace with only empty directories has zero listed files and no metadata yet.
+    const store = storage({ emptyonly: {} });
+    expect(await createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(["emptyonly", "free"]))).toBe(
       "free",
     );
-    expect(store.files("taken")).toEqual({ "mine.txt": "keep me" });
+    expect(store.files("emptyonly")).toEqual({});
+    expect(store.files("free")["a.txt"]).toBe("a");
   });
 
-  test("a cancel during the open of a workspace someone else just created never deletes it", async () => {
-    // Created between the id check and the open; it holds only node_modules, which FileService
-    // listings hide, so only the raw listing shows it is not empty.
+  test("fails with WorkspaceIdTakenError when every candidate collides with an empty existing workspace", async () => {
+    const store = storage({ emptyonly: {} });
+    await expect(
+      createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(["emptyonly"])),
+    ).rejects.toBeInstanceOf(WorkspaceIdTakenError);
+    expect(store.files("emptyonly")).toEqual({});
+    expect(store.log).toEqual([]);
+  });
+
+  test("concurrent creations racing on the same candidate id never share a workspace", async () => {
+    const store = storage();
+    const [first, second] = await Promise.all([
+      createWorkspaceWithFiles({ "one.txt": "1" }, META, store.deps(["same", "fallback1"])),
+      createWorkspaceWithFiles({ "two.txt": "2" }, META, store.deps(["same", "fallback2"])),
+    ]);
+    expect(new Set([first, second]).size).toBe(2);
+    expect(store.files(first)).toMatchObject({ "one.txt": "1" });
+    expect(store.files(second)).toMatchObject({ "two.txt": "2" });
+  });
+
+  test("a cancel during a collided create never touches the existing workspace", async () => {
     const store = storage({ raced: { "node_modules/dep/index.js": "x" } });
     const controller = new AbortController();
-    store.onOpen(() => controller.abort());
-    const deps = { ...store.deps(["raced"]), exists: async () => false };
-    const attempt = createWorkspaceWithFiles({ "a.txt": "a" }, META, deps, { signal: controller.signal });
-    await expect(attempt).rejects.toBeInstanceOf(WorkspaceIdTakenError);
+    store.onCreate(() => controller.abort());
+    const attempt = createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(["raced", "next"]), {
+      signal: controller.signal,
+    });
+    await expect(attempt).rejects.toThrow();
     expect(store.files("raced")).toEqual({ "node_modules/dep/index.js": "x" });
-    expect(store.log.filter((entry) => entry.startsWith("delete") || entry.startsWith("meta"))).toEqual([]);
-  });
-
-  test("a workspace with metadata but no project files (a blank one) is not ours either", async () => {
-    const store = storage({ blank: { [WORKSPACE_META_PATH]: serializeMeta(META) } });
-    const deps = { ...store.deps(["blank"]), exists: async () => false };
-    await expect(createWorkspaceWithFiles({ "a.txt": "a" }, META, deps)).rejects.toBeInstanceOf(
-      WorkspaceIdTakenError,
-    );
-    expect(store.files("blank")).toEqual({ [WORKSPACE_META_PATH]: serializeMeta(META) });
+    expect(store.stores.has(storageName("next"))).toBe(false);
+    expect(store.log).toEqual([]);
   });
 
   test("the metadata lives on the filesystem root, never inside the project", async () => {
@@ -157,33 +257,27 @@ describe("createWorkspaceWithFiles", () => {
     expect(Object.keys(store.files("rooted")).sort()).toEqual(["/.sprockt/workspace.json", "a.txt"]);
   });
 
-  test("a failed open owns nothing, so nothing is deleted", async () => {
+  test("a failed createNew owns nothing and leaves no workspace behind", async () => {
     const store = storage();
-    store.faults.open = new Error("worker failed");
+    store.faults.createNew = new Error("worker failed");
     await expect(createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(["half"]))).rejects.toThrow(
       "worker failed",
     );
-    expect(store.log.filter((entry) => entry.startsWith("delete"))).toEqual([]);
+    expect(store.stores.has(storageName("half"))).toBe(false);
   });
 
-  test("a failure after the marker deletes the workspace this call created", async () => {
+  test("a failure after the marker never deletes the workspace; it keeps the incomplete marker and closes", async () => {
     const store = storage();
     store.faults.writeMany = new Error("disk full");
     await expect(createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(["broken"]))).rejects.toThrow(
       "disk full",
     );
-    expect(store.stores.has("sprockt-broken")).toBe(false);
+    expect(store.stores.has(storageName("broken"))).toBe(true);
+    expect(parseMeta(store.files("broken")[WORKSPACE_META_PATH])?.state).toBe(INCOMPLETE);
+    expect(store.isLocked("broken")).toBe(false);
   });
 
-  test("if that delete is busy, the marker stays so the landing page can offer Retry and Delete", async () => {
-    const store = storage();
-    store.faults.writeMany = new Error("disk full");
-    store.faults.removeAnswer = "busy";
-    await expect(createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(["stuck"]))).rejects.toThrow();
-    expect(parseMeta(store.files("stuck")[WORKSPACE_META_PATH])?.state).toBe(INCOMPLETE);
-  });
-
-  test("a cancel while writing deletes the workspace this call created", async () => {
+  test("a cancel while writing never deletes the workspace; it keeps the incomplete marker and closes", async () => {
     const store = storage();
     const controller = new AbortController();
     store.onWrite(() => controller.abort());
@@ -191,7 +285,9 @@ describe("createWorkspaceWithFiles", () => {
       signal: controller.signal,
     });
     await expect(attempt).rejects.toThrow();
-    expect(store.stores.has("sprockt-left")).toBe(false);
+    expect(store.stores.has(storageName("left"))).toBe(true);
+    expect(parseMeta(store.files("left")[WORKSPACE_META_PATH])?.state).toBe(INCOMPLETE);
+    expect(store.isLocked("left")).toBe(false);
   });
 
   test("a workspace whose marker is cleared is complete even if closing it fails", async () => {
@@ -199,18 +295,43 @@ describe("createWorkspaceWithFiles", () => {
     store.faults.dispose = new Error("worker gone");
     expect(await createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(["done"]))).toBe("done");
     expect(parseMeta(store.files("done")[WORKSPACE_META_PATH])?.state).toBeUndefined();
-    expect(store.log.filter((entry) => entry.startsWith("delete"))).toEqual([]);
   });
 });
 
 describe("Retry into an unfinished workspace", () => {
   const incomplete = serializeMeta({ ...META, state: INCOMPLETE });
 
-  test("rewrites it in place: stale files go, the new set and cleared marker land, nothing is deleted", async () => {
+  test("rewrites it in place when source matches, even if commit changed", async () => {
     const store = storage({
-      cut: { [WORKSPACE_META_PATH]: incomplete, "stale.txt": "old", "a.txt": "half" },
+      cut: {
+        [WORKSPACE_META_PATH]: serializeMeta({
+          ...META,
+          source: {
+            kind: "github",
+            owner: "acme",
+            repo: "demo",
+            ref: "feature/x",
+            subdir: "apps/web",
+            commit: "aaa",
+          },
+          state: INCOMPLETE,
+        }),
+        "stale.txt": "old",
+        "a.txt": "half",
+      },
     });
-    const id = await createWorkspaceWithFiles({ "a.txt": "full", "b.txt": "b" }, META, store.deps([]), {
+    const nextMeta: WorkspaceMeta = {
+      ...META,
+      source: {
+        kind: "github",
+        owner: "acme",
+        repo: "demo",
+        ref: "feature/x",
+        subdir: "apps/web",
+        commit: "bbb",
+      },
+    };
+    const id = await createWorkspaceWithFiles({ "a.txt": "full", "b.txt": "b" }, nextMeta, store.deps(), {
       into: "cut",
     });
     expect(id).toBe("cut");
@@ -218,25 +339,188 @@ describe("Retry into an unfinished workspace", () => {
     expect(Object.keys(files).sort()).toEqual([WORKSPACE_META_PATH, "a.txt", "b.txt"].sort());
     expect(files["a.txt"]).toBe("full");
     expect(parseMeta(files[WORKSPACE_META_PATH])?.state).toBeUndefined();
-    expect(store.log.filter((entry) => entry.startsWith("delete"))).toEqual([]);
+    expect(store.isLocked("cut")).toBe(false);
   });
 
-  test("a failed retry keeps the workspace and its marker", async () => {
+  test("retries an unfinished GitHub workspace whose stored metadata omitted template", async () => {
+    const store = storage({
+      cut: {
+        [WORKSPACE_META_PATH]: incomplete,
+        "stale.txt": "old",
+      },
+    });
+    const nextMeta: WorkspaceMeta = { ...META, template: "github" };
+    const id = await createWorkspaceWithFiles({ "a.txt": "full" }, nextMeta, store.deps(), { into: "cut" });
+    expect(id).toBe("cut");
+    expect(store.files("cut")).toEqual({
+      [WORKSPACE_META_PATH]: serializeMeta(nextMeta),
+      "a.txt": "full",
+    });
+    expect(store.isLocked("cut")).toBe(false);
+  });
+
+  test("clears stale directories so a directory can become a file on a newer commit while preserving metadata", async () => {
+    const store = storage({
+      cut: {
+        [WORKSPACE_META_PATH]: incomplete,
+        "assets/logo.svg": "<svg/>",
+        "old/nested/file.txt": "stale",
+      },
+    });
+    expect(store.dirs("cut")).toEqual(["assets", "old", "old/nested"]);
+
+    const id = await createWorkspaceWithFiles({ assets: "plain file now" }, META, store.deps(), {
+      into: "cut",
+    });
+    expect(id).toBe("cut");
+    expect(store.files("cut")).toEqual({
+      [WORKSPACE_META_PATH]: serializeMeta(META),
+      assets: "plain file now",
+    });
+    expect(store.dirs("cut")).toEqual([]);
+    expect(store.isLocked("cut")).toBe(false);
+  });
+
+  test("a failed retry keeps the workspace, its marker, and closes the writer", async () => {
     const store = storage({ cut: { [WORKSPACE_META_PATH]: incomplete } });
     store.faults.writeMany = new Error("disk full");
     await expect(
-      createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps([]), { into: "cut" }),
-    ).rejects.toThrow();
-    expect(store.stores.has("sprockt-cut")).toBe(true);
+      createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(), { into: "cut" }),
+    ).rejects.toThrow("disk full");
+    expect(store.stores.has(storageName("cut"))).toBe(true);
     expect(parseMeta(store.files("cut")[WORKSPACE_META_PATH])?.state).toBe(INCOMPLETE);
+    expect(store.isLocked("cut")).toBe(false);
   });
 
-  test("refuses a workspace that is not an unfinished import, and changes nothing", async () => {
+  test("refuses a workspace that is not an unfinished import, changes nothing, and closes", async () => {
     const store = storage({ done: { [WORKSPACE_META_PATH]: serializeMeta(META), "mine.txt": "x" } });
     await expect(
-      createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps([]), { into: "done" }),
+      createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(), { into: "done" }),
     ).rejects.toBeInstanceOf(NotIncompleteError);
     expect(store.files("done")["mine.txt"]).toBe("x");
+    expect(store.isLocked("done")).toBe(false);
+  });
+
+  test("refuses a missing workspace without creating it", async () => {
+    const store = storage();
+    await expect(
+      createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(), { into: "gone" }),
+    ).rejects.toBeInstanceOf(WorkspaceMissingError);
+    expect(store.stores.has(storageName("gone"))).toBe(false);
+  });
+
+  test("refuses a busy workspace held by another tab without touching its files", async () => {
+    const store = storage({ busy: { [WORKSPACE_META_PATH]: incomplete, "keep.txt": "live" } });
+    store.setLocked("busy", true);
+    await expect(
+      createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(), { into: "busy" }),
+    ).rejects.toBeInstanceOf(WorkspaceBusyError);
+    expect(store.files("busy")["keep.txt"]).toBe("live");
+    expect(store.isLocked("busy")).toBe(true);
+  });
+
+  test("two concurrent retries serialize exclusively so the loser cannot clear files the winner wrote", async () => {
+    const store = storage({ race: { [WORKSPACE_META_PATH]: incomplete, "stale.txt": "old" } });
+    const [first, second] = await Promise.allSettled([
+      createWorkspaceWithFiles({ "winner.txt": "ok" }, META, store.deps(), { into: "race" }),
+      createWorkspaceWithFiles({ "loser.txt": "no" }, META, store.deps(), { into: "race" }),
+    ]);
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("rejected");
+    expect(second.status === "rejected" && second.reason).toBeInstanceOf(WorkspaceBusyError);
+    expect(store.files("race")).toMatchObject({ "winner.txt": "ok" });
+    expect(store.files("race")["loser.txt"]).toBeUndefined();
+    expect(store.isLocked("race")).toBe(false);
+  });
+
+  test("refuses a retry for a different GitHub owner, repo, ref, or subdir without clearing files", async () => {
+    const store = storage({ cut: { [WORKSPACE_META_PATH]: incomplete, "stale.txt": "keep" } });
+    const mismatches: WorkspaceMeta[] = [
+      {
+        ...META,
+        source: { kind: "github", owner: "other", repo: "demo", ref: "feature/x", subdir: "apps/web" },
+      },
+      {
+        ...META,
+        source: { kind: "github", owner: "acme", repo: "other", ref: "feature/x", subdir: "apps/web" },
+      },
+      { ...META, source: { kind: "github", owner: "acme", repo: "demo", ref: "main", subdir: "apps/web" } },
+      { ...META, source: { kind: "github", owner: "acme", repo: "demo", ref: "feature/x", subdir: "" } },
+      { name: "hono", created: META.created, template: "hono" },
+    ];
+    for (const wrong of mismatches) {
+      // Sequential checks verify each mismatch leaves storage unlocked and intact.
+      // oxlint-disable-next-line no-await-in-loop
+      await expect(
+        createWorkspaceWithFiles({ "a.txt": "a" }, wrong, store.deps(), { into: "cut" }),
+      ).rejects.toBeInstanceOf(RetrySourceMismatchError);
+      expect(store.files("cut")["stale.txt"]).toBe("keep");
+      expect(store.isLocked("cut")).toBe(false);
+    }
+  });
+
+  test("refuses retrying an unfinished share workspace", async () => {
+    const shareMeta: WorkspaceMeta = {
+      name: "Shared workspace",
+      created: META.created,
+      source: { kind: "share", template: "blank" },
+    };
+    const store = storage({
+      shared: { [WORKSPACE_META_PATH]: serializeMeta({ ...shareMeta, state: INCOMPLETE }), "a.txt": "keep" },
+    });
+    await expect(
+      createWorkspaceWithFiles({ "a.txt": "new" }, shareMeta, store.deps(), { into: "shared" }),
+    ).rejects.toBeInstanceOf(RetrySourceMismatchError);
+    expect(store.files("shared")["a.txt"]).toBe("keep");
+    expect(store.isLocked("shared")).toBe(false);
+  });
+
+  test("checks cancellation before clearing the project subtree and closes the writer", async () => {
+    const store = storage({ cut: { [WORKSPACE_META_PATH]: incomplete, "assets/logo.svg": "<svg/>" } });
+    const controller = new AbortController();
+    store.onReadMeta(() => controller.abort());
+    await expect(
+      createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(), {
+        into: "cut",
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow();
+    expect(store.files("cut")["assets/logo.svg"]).toBe("<svg/>");
+    expect(store.dirs("cut")).toEqual(["assets"]);
+    expect(store.log.filter((entry) => entry.startsWith("remove"))).toEqual([]);
+    expect(store.isLocked("cut")).toBe(false);
+  });
+
+  test("checks cancellation after clearing before writing new files and closes the writer", async () => {
+    const store = storage({ cut: { [WORKSPACE_META_PATH]: incomplete, "stale.txt": "keep" } });
+    const controller = new AbortController();
+    store.onRemove(() => controller.abort());
+    await expect(
+      createWorkspaceWithFiles({ "a.txt": "a" }, META, store.deps(), {
+        into: "cut",
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow();
+    expect(store.log.filter((entry) => entry === "files")).toEqual([]);
+    expect(store.isLocked("cut")).toBe(false);
+  });
+
+  test("closes the writer when readMetaFile or subtree removal fails", async () => {
+    const readStore = storage({ cut: { [WORKSPACE_META_PATH]: incomplete } });
+    readStore.faults.readFile = new Error("read boom");
+    await expect(
+      createWorkspaceWithFiles({ "a.txt": "a" }, META, readStore.deps(), { into: "cut" }),
+    ).rejects.toThrow("read boom");
+    expect(readStore.isLocked("cut")).toBe(false);
+
+    const removeStore = storage({
+      cut: { [WORKSPACE_META_PATH]: incomplete, "assets/logo.svg": "<svg/>" },
+    });
+    removeStore.faults.remove = new Error("remove boom");
+    await expect(
+      createWorkspaceWithFiles({ "c.txt": "3" }, META, removeStore.deps(), { into: "cut" }),
+    ).rejects.toThrow("remove boom");
+    expect(removeStore.isLocked("cut")).toBe(false);
   });
 });
 
@@ -278,9 +562,9 @@ describe("finding unfinished workspaces", () => {
 });
 
 function meteredProjectFilesystem(initial: Readonly<Record<string, string>> = {}, quota = 1024) {
-  const encoder = new TextEncoder();
+  const textEncoder = new TextEncoder();
   const files = new Map<string, Uint8Array>(
-    Object.entries(initial).map(([path, text]) => [path, encoder.encode(text)]),
+    Object.entries(initial).map(([path, text]) => [path, textEncoder.encode(text)]),
   );
   const directories = new Set<string>(["/", PROJECT_ROOT]);
   for (const path of files.keys()) {
@@ -317,11 +601,25 @@ function meteredProjectFilesystem(initial: Readonly<Record<string, string>> = {}
       }),
     writeFile: (path, content) =>
       track(() => {
-        files.set(path, typeof content === "string" ? encoder.encode(content) : content);
+        files.set(path, typeof content === "string" ? textEncoder.encode(content) : content);
       }),
     readFile: (path) => track(() => files.get(path)),
     listFiles: (path) => track(() => Array.from(files.keys()).filter((file) => file.startsWith(`${path}/`))),
-    remove: (path) => track(() => files.delete(path)),
+    remove: (path) =>
+      track(() => {
+        const prefix = `${path}/`;
+        let removed = false;
+        for (const key of Array.from(files.keys())) {
+          if (key === path || key.startsWith(prefix)) {
+            files.delete(key);
+            removed = true;
+          }
+        }
+        for (const dir of Array.from(directories)) {
+          if (dir === path || dir.startsWith(prefix)) directories.delete(dir);
+        }
+        return removed;
+      }),
     move: () => track(() => undefined),
     flush: () => track(() => undefined),
     lookup: (path) =>
@@ -356,19 +654,18 @@ function numberedFiles(count: number, prefix: string): Record<string, string> {
   return files;
 }
 
-describe("bulk imports over 1,024 files", () => {
+describe("bulk imports over 1,024 files and nameless metadata recovery", () => {
   test("imports 1,500 files through real ProjectFiles with bounded concurrent RPCs", async () => {
     const metered = meteredProjectFilesystem();
     const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
     const deps: NewWorkspaceDeps = {
       newId: () => "large",
-      exists: async () => false,
-      remove: async () => "deleted",
-      open: async () => ({
+      createNew: async () => ({
         files: projectFiles,
         runtime: { filesystem: metered.filesystem },
         dispose: async () => projectFiles.dispose(),
       }),
+      openExisting: async () => "missing",
     };
 
     const id = await createWorkspaceWithFiles(numberedFiles(1500, "file"), META, deps);
@@ -380,7 +677,7 @@ describe("bulk imports over 1,024 files", () => {
     expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBeUndefined();
   });
 
-  test("Retry cleans up 1,500 stale files and writes 1,500 new files with bounded concurrent RPCs", async () => {
+  test("Retry cleans up 1,500 stale files via subtree removal and writes 1,500 new files with bounded RPCs", async () => {
     const stale: Record<string, string> = {
       [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
     };
@@ -390,9 +687,8 @@ describe("bulk imports over 1,024 files", () => {
     const metered = meteredProjectFilesystem(stale);
     const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
     const deps: NewWorkspaceDeps = {
-      exists: async () => true,
-      remove: async () => "deleted",
-      open: async () => ({
+      createNew: async () => "taken",
+      openExisting: async () => ({
         files: projectFiles,
         runtime: { filesystem: metered.filesystem },
         dispose: async () => projectFiles.dispose(),
@@ -411,83 +707,11 @@ describe("bulk imports over 1,024 files", () => {
     expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))).toEqual(META);
   });
 
-  test("Retry closes the session and keeps the marker if stale cleanup fails", async () => {
-    let closed = false;
-    const stale: Record<string, string> = {
-      [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
-      [`${PROJECT_ROOT}/stale.txt`]: "old",
-    };
-    const metered = meteredProjectFilesystem(stale);
-    const failingFs = {
-      ...metered.filesystem,
-      remove: async () => {
-        throw new Error("remove failed");
-      },
-    };
-    const deps: NewWorkspaceDeps = {
-      exists: async () => true,
-      remove: async () => "deleted",
-      open: async () => ({
-        files: { writeMany: async () => undefined },
-        runtime: { filesystem: failingFs },
-        dispose: async () => {
-          closed = true;
-        },
-      }),
-    };
-
-    await expect(createWorkspaceWithFiles({ "a.txt": "a" }, META, deps, { into: "cut" })).rejects.toThrow(
-      "remove failed",
-    );
-    expect(closed).toBe(true);
-    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
-    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
-  });
-
-  test("Retry waits for pending sibling removals to settle before closing when another removal throws synchronously", async () => {
-    let closed = false;
-    const pendingRemoval = Promise.withResolvers<boolean>();
-    const stale: Record<string, string> = {
-      [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
-      [`${PROJECT_ROOT}/slow.txt`]: "slow",
-      [`${PROJECT_ROOT}/sync-boom.txt`]: "boom",
-    };
-    const metered = meteredProjectFilesystem(stale);
-    const failingFs = {
-      ...metered.filesystem,
-      remove: (path: string) => {
-        if (path === `${PROJECT_ROOT}/slow.txt`) return pendingRemoval.promise;
-        if (path === `${PROJECT_ROOT}/sync-boom.txt`) throw new Error("sync remove boom");
-        return metered.filesystem.remove(path);
-      },
-    };
-    const deps: NewWorkspaceDeps = {
-      exists: async () => true,
-      remove: async () => "deleted",
-      open: async () => ({
-        files: { writeMany: async () => undefined },
-        runtime: { filesystem: failingFs },
-        dispose: async () => {
-          closed = true;
-        },
-      }),
-    };
-
-    const attempt = createWorkspaceWithFiles({ "a.txt": "a" }, META, deps, { into: "cut" }).catch(
-      (error: unknown) => error,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(closed).toBe(false);
-
-    pendingRemoval.reject(new Error("late sibling rejection"));
-    const error = await attempt;
-    expect(error).toEqual(new Error("late sibling rejection"));
-    expect(closed).toBe(true);
-    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
-    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
-  });
-
   test("Retry accepts an incomplete GitHub import whose workspace.json omits or nulls name", async () => {
+    const retryMeta: WorkspaceMeta = {
+      ...META,
+      source: { kind: "github", owner: "acme", repo: "demo", ref: "main", subdir: "apps/web" },
+    };
     const namelessIncomplete = JSON.stringify({
       state: INCOMPLETE,
       created: "2026-04-01T00:00:00.000Z",
@@ -508,269 +732,21 @@ describe("bulk imports over 1,024 files", () => {
     });
     const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
     const deps: NewWorkspaceDeps = {
-      exists: async () => true,
-      remove: async () => "deleted",
-      open: async () => ({
+      createNew: async () => "taken",
+      openExisting: async () => ({
         files: projectFiles,
         runtime: { filesystem: metered.filesystem },
         dispose: async () => projectFiles.dispose(),
       }),
     };
 
-    const id = await createWorkspaceWithFiles({ "index.ts": "export const ok = 1;\n" }, META, deps, {
+    const id = await createWorkspaceWithFiles({ "index.ts": "export const ok = 1;\n" }, retryMeta, deps, {
       into: "nameless1",
     });
     expect(id).toBe("nameless1");
     expect(metered.files.has(`${PROJECT_ROOT}/stale.txt`)).toBe(false);
     expect(metered.files.has(`${PROJECT_ROOT}/index.ts`)).toBe(true);
     const metaBytes = metered.files.get(WORKSPACE_META_PATH);
-    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))).toEqual(META);
-  });
-
-  test("cancellation while waiting for the final metadata lock leaves the incomplete marker intact", async () => {
-    const id = "cancelmeta";
-    const metered = meteredProjectFilesystem();
-    const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
-    const lockGate = Promise.withResolvers<void>();
-    const lockStarted = Promise.withResolvers<void>();
-    let holder: Promise<void> | undefined;
-    const writeAndHold = async (entries: Readonly<Record<string, string | Uint8Array>>) => {
-      await projectFiles.writeMany(entries);
-      holder = withWorkspaceMetaLock(id, async () => {
-        lockStarted.resolve();
-        await lockGate.promise;
-      });
-      await lockStarted.promise;
-    };
-    const deps: NewWorkspaceDeps = {
-      newId: () => id,
-      exists: async () => false,
-      remove: async () => "busy",
-      open: async () => ({
-        files: { writeMany: writeAndHold },
-        runtime: { filesystem: metered.filesystem },
-        dispose: async () => projectFiles.dispose(),
-      }),
-    };
-
-    const controller = new AbortController();
-    const attempt = createWorkspaceWithFiles({ "index.ts": "export const ok = 1;\n" }, META, deps, {
-      signal: controller.signal,
-    }).catch((error: unknown) => error);
-
-    await lockStarted.promise;
-    controller.abort(new Error("cancelled by user"));
-    lockGate.resolve();
-    await holder;
-
-    const outcome = await attempt;
-    expect(outcome).toBeInstanceOf(Error);
-    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
-    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
-  });
-
-  test("cancellation during open still writes the incomplete marker if rollback is busy", async () => {
-    const metered = meteredProjectFilesystem();
-    const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
-    const controller = new AbortController();
-    let seenSignal: AbortSignal | undefined;
-    const deps: NewWorkspaceDeps = {
-      newId: () => "busycncl",
-      exists: async () => false,
-      remove: async () => "busy",
-      open: async (_id, signal) => {
-        seenSignal = signal;
-        // User leaves while storage is opening.
-        controller.abort(new Error("left during open"));
-        return {
-          files: projectFiles,
-          runtime: { filesystem: metered.filesystem },
-          dispose: async () => projectFiles.dispose(),
-        };
-      },
-    };
-
-    const outcome = await createWorkspaceWithFiles({ "index.ts": "1" }, META, deps, {
-      signal: controller.signal,
-    }).catch((error: unknown) => error);
-    expect(seenSignal).toBeUndefined();
-    expect(outcome).toBeInstanceOf(Error);
-    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
-    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
-  });
-
-  test("cancelling Retry while the metadata lock is held closes the runtime immediately", async () => {
-    const id = "retrycncl";
-    const metered = meteredProjectFilesystem({
-      [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
-    });
-    const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
-    const lockGate = Promise.withResolvers<void>();
-    const lockStarted = Promise.withResolvers<void>();
-    const holder = withWorkspaceMetaLock(id, async () => {
-      lockStarted.resolve();
-      await lockGate.promise;
-    });
-    await lockStarted.promise;
-
-    let disposed = false;
-    const disposeSession = async () => {
-      disposed = true;
-      projectFiles.dispose();
-    };
-    const deps: NewWorkspaceDeps = {
-      exists: async () => true,
-      remove: async () => "deleted",
-      open: async () => ({
-        files: projectFiles,
-        runtime: { filesystem: metered.filesystem },
-        dispose: disposeSession,
-      }),
-    };
-
-    const controller = new AbortController();
-    const attempt = createWorkspaceWithFiles({ "index.ts": "1" }, META, deps, {
-      into: id,
-      signal: controller.signal,
-    }).catch((error: unknown) => error);
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(disposed).toBe(false);
-
-    controller.abort(new Error("retry cancelled"));
-    const outcome = await attempt;
-    expect(outcome).toBeInstanceOf(Error);
-    expect(disposed).toBe(true);
-
-    lockGate.resolve();
-    await holder;
-    const metaBytes = metered.files.get(WORKSPACE_META_PATH);
-    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))?.state).toBe(INCOMPLETE);
-  });
-
-  test("concurrent retries serialize under the metadata lock so only the first succeeds and files never mix", async () => {
-    const id = "concretry";
-    const metered = meteredProjectFilesystem({
-      [WORKSPACE_META_PATH]: serializeMeta({ ...META, state: INCOMPLETE }),
-      [`${PROJECT_ROOT}/stale.txt`]: "old",
-    });
-    const writeGate = Promise.withResolvers<void>();
-    const firstWriting = Promise.withResolvers<void>();
-    const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
-    let opens = 0;
-    const writeWithGate = async (
-      attemptNumber: number,
-      entries: Readonly<Record<string, string | Uint8Array>>,
-    ) => {
-      if (attemptNumber === 1) {
-        firstWriting.resolve();
-        await writeGate.promise;
-      }
-      await projectFiles.writeMany(entries);
-    };
-    const deps: NewWorkspaceDeps = {
-      exists: async () => true,
-      remove: async () => "deleted",
-      open: async () => {
-        opens += 1;
-        const attemptNumber = opens;
-        return {
-          files: { writeMany: (entries) => writeWithGate(attemptNumber, entries) },
-          runtime: { filesystem: metered.filesystem },
-          dispose: async () => undefined,
-        };
-      },
-    };
-
-    const first = createWorkspaceWithFiles({ "first.ts": "1\n" }, META, deps, { into: id });
-    await firstWriting.promise;
-    const second = createWorkspaceWithFiles({ "second.ts": "2\n" }, META, deps, { into: id }).catch(
-      (error: unknown) => error,
-    );
-
-    writeGate.resolve();
-    expect(await first).toBe(id);
-    expect(await second).toBeInstanceOf(NotIncompleteError);
-    expect(metered.files.has(`${PROJECT_ROOT}/first.ts`)).toBe(true);
-    expect(metered.files.has(`${PROJECT_ROOT}/second.ts`)).toBe(false);
-    expect(metered.files.has(`${PROJECT_ROOT}/stale.txt`)).toBe(false);
-    projectFiles.dispose();
-  });
-
-  test("cancelling Retry while storage open is blocked forwards signal and releases the metadata lock", async () => {
-    const id = "retrybusy";
-    const openStarted = Promise.withResolvers<void>();
-    const waitForAbort = (signal: AbortSignal | undefined): Promise<never> =>
-      new Promise((_resolve, reject) => {
-        openStarted.resolve();
-        signal?.addEventListener("abort", () => reject(signal.reason ?? new Error("aborted")), {
-          once: true,
-        });
-      });
-    const deps: NewWorkspaceDeps = {
-      exists: async () => true,
-      remove: async () => "deleted",
-      open: (_workspaceId, signal) => waitForAbort(signal),
-    };
-
-    const controller = new AbortController();
-    const attempt = createWorkspaceWithFiles({ "index.ts": "1" }, META, deps, {
-      into: id,
-      signal: controller.signal,
-    }).catch((error: unknown) => error);
-
-    await openStarted.promise;
-    controller.abort(new Error("user left"));
-    expect(await attempt).toBeInstanceOf(Error);
-
-    // Subsequent import and metadata lock acquisitions succeed immediately once the cancelled Retry unwinds.
-    expect(await withWorkspaceImportLock(id, async () => "unlocked")).toBe("unlocked");
-    expect(await withWorkspaceMetaLock(id, async () => "unlocked")).toBe("unlocked");
-  });
-
-  test("a Retry started during a fresh import waits on the import lock and never mixes files", async () => {
-    const id = "freshretry";
-    const metered = meteredProjectFilesystem();
-    const projectFiles = createProjectFiles(metered.filesystem, () => () => {});
-    const writeGate = Promise.withResolvers<void>();
-    const freshWriting = Promise.withResolvers<void>();
-    let opens = 0;
-    const writeWithGate = async (
-      attemptNumber: number,
-      entries: Readonly<Record<string, string | Uint8Array>>,
-    ) => {
-      if (attemptNumber === 1) {
-        freshWriting.resolve();
-        await writeGate.promise;
-      }
-      await projectFiles.writeMany(entries);
-    };
-    const deps: NewWorkspaceDeps = {
-      newId: () => id,
-      exists: async () => false,
-      remove: async () => "deleted",
-      open: async () => {
-        opens += 1;
-        const attemptNumber = opens;
-        return {
-          files: { writeMany: (entries) => writeWithGate(attemptNumber, entries) },
-          runtime: { filesystem: metered.filesystem },
-          dispose: async () => undefined,
-        };
-      },
-    };
-
-    const fresh = createWorkspaceWithFiles({ "fresh.ts": "1\n" }, META, deps);
-    await freshWriting.promise;
-    const retry = createWorkspaceWithFiles({ "retry.ts": "2\n" }, META, deps, { into: id }).catch(
-      (error: unknown) => error,
-    );
-
-    writeGate.resolve();
-    expect(await fresh).toBe(id);
-    expect(await retry).toBeInstanceOf(NotIncompleteError);
-    expect(metered.files.has(`${PROJECT_ROOT}/fresh.ts`)).toBe(true);
-    expect(metered.files.has(`${PROJECT_ROOT}/retry.ts`)).toBe(false);
-    projectFiles.dispose();
+    expect(parseMeta(metaBytes && new TextDecoder().decode(metaBytes))).toEqual(retryMeta);
   });
 });

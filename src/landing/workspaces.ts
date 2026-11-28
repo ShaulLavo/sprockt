@@ -141,6 +141,7 @@ export function renameStoredWorkspace(
     const { renameWorkspace } = await import("../templates/seed");
     const result = await renameWorkspace(id, nextName);
     if (result.status === "renamed") saveWorkspaceHint(id, result.meta);
+    if (result.status === "missing") removeWorkspaceHint(id);
     return result;
   });
 }
@@ -157,6 +158,7 @@ export function retryStoredWorkspace(
     const { retrySeedWorkspace } = await import("../templates/seed");
     const result = await retrySeedWorkspace(id, templateId, name);
     if (result.status === "seeded") saveWorkspaceHint(id, result.meta);
+    if (result.status === "missing") removeWorkspaceHint(id);
     return result;
   });
 }

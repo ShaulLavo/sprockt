@@ -95,6 +95,11 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
       if (result.status === "busy") {
         setNotice(LANDING_COPY.recentBusyRename);
         setEditingId(undefined);
+        return;
+      }
+      if (result.status === "missing") {
+        setEditingId(undefined);
+        props.onRefresh();
       }
     } finally {
       setBusyId(undefined);

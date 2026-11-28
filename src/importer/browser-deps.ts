@@ -1,20 +1,190 @@
-// The real dependencies of `createWorkspaceWithFiles` in the browser, and the hand-off to the
-// workbench once the new workspace is written.
-import { storedWorkspaces } from "waffle";
-import { isWorkspaceId } from "../workspace/paths";
-import { openWorkspace } from "../workspace/session";
+// The browser storage dependencies of `createWorkspaceWithFiles` and the hand-off to the
+// workbench once a workspace is written. Uses Waffle's IndexedDBStorage + PersistentBackend
+// under an exclusive non-stealing lock (`whenBusy: "ifAvailable"`), so creation never attaches
+// to another tab's workspace and `waffle/runtime.ts` stays unloaded.
+import {
+  ExpectedEpochMismatchError,
+  IndexedDBStorage,
+  IndexedDBStorageBusyError,
+  IndexedDBStorageMissingError,
+} from "waffle/fs/indexeddb";
+import { PersistentBackend } from "waffle/fs/persistent";
+import { FilesystemError } from "waffle/fs/protocol";
+import { isWorkspaceId, PROJECT_ROOT, projectPath, storageName } from "../workspace/paths";
 import { replaceRoute } from "./navigation";
-import type { NewWorkspaceDeps } from "./new-workspace";
+import type { NewWorkspaceDeps, WorkspaceWriter } from "./new-workspace";
+
+const encoder = new TextEncoder();
+const EMPTY_BYTES = new Uint8Array();
+
+function parentDirectory(path: string): string | undefined {
+  const slash = path.lastIndexOf("/");
+  return slash > 0 ? path.slice(0, slash) : undefined;
+}
+
+function isRetryableDirtyCapacity(error: unknown): boolean {
+  return error instanceof FilesystemError && error.errno === 6 && Reflect.get(error, "permanent") === false;
+}
+
+async function runBackendOp(
+  backend: PersistentBackend,
+  operation: string,
+  args: unknown[],
+  data: Uint8Array = EMPTY_BYTES,
+): Promise<unknown> {
+  try {
+    await backend.prepare(operation, args);
+    return backend.execute(operation, args as never, data);
+  } catch (error) {
+    if (!isRetryableDirtyCapacity(error)) throw error;
+    await backend.flush();
+    await backend.prepare(operation, args);
+    return backend.execute(operation, args as never, data);
+  }
+}
+
+async function writeAbsoluteFile(
+  backend: PersistentBackend,
+  path: string,
+  content: string | Uint8Array,
+): Promise<void> {
+  const parent = parentDirectory(path);
+  if (parent) await runBackendOp(backend, "mkdirp", [parent]);
+  const bytes = typeof content === "string" ? encoder.encode(content) : content;
+  await runBackendOp(backend, "writeFile", [path, false, false], bytes);
+}
+
+function createBackendWriter(backend: PersistentBackend): WorkspaceWriter {
+  return {
+    files: {
+      async writeMany(files) {
+        const entries = Object.entries(files).map(
+          ([relativePath, content]) => [projectPath(relativePath), content] as const,
+        );
+        await runBackendOp(backend, "mkdirp", [PROJECT_ROOT]);
+        for (const [absolute, content] of entries) {
+          // Each file shares one backend instance; writing sequentially keeps dirty pressure bounded.
+          // oxlint-disable-next-line no-await-in-loop
+          await writeAbsoluteFile(backend, absolute, content);
+        }
+      },
+    },
+    runtime: {
+      filesystem: {
+        async mkdirp(path: string): Promise<void> {
+          await runBackendOp(backend, "mkdirp", [path]);
+        },
+        async readFile(path: string): Promise<Uint8Array | undefined> {
+          await backend.prepare("readFile", [path]);
+          return backend.execute("readFile", [path], EMPTY_BYTES) as Uint8Array | undefined;
+        },
+        async writeFile(path: string, content: string | Uint8Array): Promise<void> {
+          await writeAbsoluteFile(backend, path, content);
+        },
+        async remove(path: string): Promise<unknown> {
+          return runBackendOp(backend, "remove", [path]);
+        },
+        async flush(): Promise<void> {
+          await backend.flush();
+        },
+      },
+    },
+    async dispose(): Promise<void> {
+      await backend.retireFenced();
+    },
+  };
+}
+
+function isInvalidFormatError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.name === "VfsError" && Reflect.get(error, "code") === "INVALID_VFS_FORMAT"
+  );
+}
+
+function isCreateCollision(error: unknown): boolean {
+  if (error instanceof IndexedDBStorageBusyError) return true;
+  if (error instanceof ExpectedEpochMismatchError) return true;
+  return isInvalidFormatError(error);
+}
+
+/**
+ * Atomically creates and claims a brand-new workspace under an exclusive lock.
+ * `expectedEpoch: 0` fails with `ExpectedEpochMismatchError` if any Waffle opener has ever
+ * allocated an epoch on this database name, even when the workspace holds only empty directories.
+ */
+export async function createNewBrowserWriter(
+  id: string,
+  signal?: AbortSignal,
+): Promise<WorkspaceWriter | "taken"> {
+  signal?.throwIfAborted();
+  const name = storageName(id);
+  let storage: IndexedDBStorage;
+  try {
+    storage = await IndexedDBStorage.open(name, {
+      whenBusy: "ifAvailable",
+      expectedEpoch: 0,
+      epochOwner: "exclusive",
+      signal,
+    });
+  } catch (error) {
+    if (isCreateCollision(error)) return "taken";
+    throw error;
+  }
+
+  try {
+    const backend = await PersistentBackend.open(storage, { intervalMs: 0, signal });
+    if (backend.hasLoadedIndex) {
+      await backend.retireFenced();
+      return "taken";
+    }
+    return createBackendWriter(backend);
+  } catch (error) {
+    await storage.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * Opens an existing workspace under a single non-stealing exclusive lock without creating a
+ * missing database (`createIfMissing: false` aborts IDB creation under Waffle's maintenance lock).
+ * Returns `"busy"` if another tab holds it, or `"missing"` if absent.
+ */
+export async function openExistingBrowserWriter(
+  id: string,
+  signal?: AbortSignal,
+): Promise<WorkspaceWriter | "busy" | "missing"> {
+  signal?.throwIfAborted();
+  const name = storageName(id);
+  let storage: IndexedDBStorage;
+  try {
+    storage = await IndexedDBStorage.open(name, {
+      whenBusy: "ifAvailable",
+      epochOwner: "exclusive",
+      createIfMissing: false,
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof IndexedDBStorageBusyError) return "busy";
+    if (error instanceof IndexedDBStorageMissingError || isInvalidFormatError(error)) return "missing";
+    throw error;
+  }
+
+  try {
+    const backend = await PersistentBackend.open(storage, { intervalMs: 0, signal });
+    if (!backend.hasLoadedIndex) {
+      await backend.retireFenced();
+      return "missing";
+    }
+    return createBackendWriter(backend);
+  } catch (error) {
+    await storage.close().catch(() => undefined);
+    throw error;
+  }
+}
 
 export const browserWorkspaceDeps: NewWorkspaceDeps = {
-  open: (id, signal) => openWorkspace(id, undefined, { signal, hydrateName: false }),
-  // The one deletion every workspace goes through (workspace/storage-lifecycle.ts): the IDE's
-  // own records of the storage go in the same step, and stay when the storage is busy.
-  remove: async (name) => {
-    const { deleteIdleWorkspaceStorage } = await import("../landing/storage-discovery");
-    return deleteIdleWorkspaceStorage(name);
-  },
-  exists: async (name) => (await storedWorkspaces("fast")).includes(name),
+  createNew: createNewBrowserWriter,
+  openExisting: openExistingBrowserWriter,
 };
 
 /**

@@ -1,29 +1,20 @@
 // Writes a file set into a workspace and closes it again, so the workbench can open it the
-// ordinary way. The GitHub importer and share links use it; template seeding can too.
+// ordinary way. The GitHub importer, share links, and template seeding all use it.
 //
 // A workspace being written carries a marker (`state: "importing"` in /.sprockt/workspace.json),
 // written first and cleared as the last step, after the final flush. A workspace that still has
-// the marker was cut off; the landing page shows it with Retry and Delete (see
-// IncompleteImport.tsx). Sprockt never deletes a workspace on its own. The one exception is
-// a cancel or failure in the same page: then this call deletes the workspace it created itself,
-// one whose id it reserved and found empty. If that delete is busy or fails, the marker stays.
-import { withWorkspaceImportLock, withWorkspaceMetaLock } from "../workspace/hint";
-import { newWorkspaceId, PROJECT_ROOT, storageName } from "../workspace/paths";
-import {
-  INCOMPLETE,
-  readMetaFile,
-  WORKSPACE_META_PATH,
-  writeMetaFile,
-  type MetaFilesystem,
-  type WorkspaceMeta,
-} from "./metadata";
+// the marker was cut off; the landing page shows it with Retry and confirmed Delete. Sprockt
+// never deletes a workspace on its own: failure or cancellation closes the writer and leaves
+// the incomplete marker intact so Retry or explicit Delete owns cleanup.
+import { newWorkspaceId, PROJECT_ROOT } from "../workspace/paths";
+import { INCOMPLETE, readMetaFile, writeMetaFile, type MetaFilesystem, type WorkspaceMeta } from "./metadata";
 
 export interface WorkspaceWriterFilesystem extends MetaFilesystem {
-  listFiles(path: string): Promise<string[]>;
+  /** Removes a file or directory subtree at `path`; no-op if absent. */
   remove(path: string): Promise<unknown>;
 }
 
-/** The part of a session this needs; `openWorkspace` from `workspace/session` or a lightweight backend provides it. */
+/** An exclusively owned writer for one workspace. */
 export interface WorkspaceWriter {
   readonly files: {
     writeMany(files: Readonly<Record<string, string | Uint8Array>>): Promise<void>;
@@ -35,11 +26,16 @@ export interface WorkspaceWriter {
 }
 
 export interface NewWorkspaceDeps {
-  readonly open: (id: string, signal?: AbortSignal) => Promise<WorkspaceWriter>;
-  /** Deletes the storage behind a workspace; Waffle answers "deleted", "missing" or "busy". */
-  readonly remove: (storage: string) => Promise<unknown>;
-  /** Whether storage for this name already exists. */
-  readonly exists: (storage: string) => Promise<boolean>;
+  /**
+   * Atomically claims a brand-new workspace id under an exclusive lock, returning an owned writer
+   * or `"taken"` when storage already exists or another tab holds it.
+   */
+  readonly createNew: (id: string, signal?: AbortSignal) => Promise<WorkspaceWriter | "taken">;
+  /**
+   * Opens an existing workspace under an exclusive lock without creating or stealing it.
+   * Returns `"busy"` if another tab holds it, or `"missing"` if it does not exist.
+   */
+  readonly openExisting: (id: string, signal?: AbortSignal) => Promise<WorkspaceWriter | "busy" | "missing">;
   readonly newId?: () => string;
 }
 
@@ -49,43 +45,63 @@ export interface CreateOptions {
   readonly into?: string;
 }
 
-/** The id was taken, or the workspace held files this call did not write. Nothing was changed. */
-export class WorkspaceIdTakenError extends Error {}
-
-/** Retry was asked for a workspace that is not an unfinished import. Nothing was changed. */
-export class NotIncompleteError extends Error {}
-
-/** Ten random characters rarely collide; this many tries makes it practically impossible. */
-const ID_ATTEMPTS = 8;
-/** Stale files removed at once when retrying an unfinished import, to stay under Waffle's in-flight RPC quota. */
-const REMOVE_BATCH = 8;
-
-async function removeInBatches(
-  filesystem: WorkspaceWriterFilesystem,
-  paths: readonly string[],
-  signal: AbortSignal | undefined,
-): Promise<void> {
-  for (let start = 0; start < paths.length; start += REMOVE_BATCH) {
-    signal?.throwIfAborted();
-    // Settle each batch before starting the next so cleanup never saturates the filesystem RPC queue.
-    // oxlint-disable-next-line no-await-in-loop
-    const outcomes = await Promise.allSettled(
-      paths.slice(start, start + REMOVE_BATCH).map(async (path) => filesystem.remove(path)),
-    );
-    const failed = outcomes.find(
-      (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
-    );
-    if (failed) throw failed.reason;
+/** Could not claim an unused workspace id. Nothing was changed. */
+export class WorkspaceIdTakenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspaceIdTakenError";
   }
 }
 
-async function unusedId(deps: NewWorkspaceDeps): Promise<string> {
+/** Retry was asked for a workspace that is not an unfinished import. Nothing was changed. */
+export class NotIncompleteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NotIncompleteError";
+  }
+}
+
+/** Retry was asked for a workspace currently open in another tab. Nothing was changed. */
+export class WorkspaceBusyError extends Error {
+  constructor(id: string) {
+    super(`Workspace ${id} is open in another tab`);
+    this.name = "WorkspaceBusyError";
+  }
+}
+
+/** Retry was asked for a workspace that does not exist. Nothing was changed. */
+export class WorkspaceMissingError extends Error {
+  constructor(id: string) {
+    super(`Workspace ${id} was not found`);
+    this.name = "WorkspaceMissingError";
+  }
+}
+
+/** Retry was asked for a workspace whose recorded source or template does not match. Nothing was changed. */
+export class RetrySourceMismatchError extends Error {
+  constructor(id: string) {
+    super(`Workspace ${id} does not match this retry request`);
+    this.name = "RetrySourceMismatchError";
+  }
+}
+
+/** Ten random characters rarely collide; this many tries makes it practically impossible. */
+const ID_ATTEMPTS = 8;
+
+async function claimNewWorkspace(
+  deps: NewWorkspaceDeps,
+  signal: AbortSignal | undefined,
+): Promise<{ readonly id: string; readonly writer: WorkspaceWriter }> {
   const newId = deps.newId ?? newWorkspaceId;
-  const candidates = Array.from({ length: ID_ATTEMPTS }, () => newId());
-  const taken = await Promise.all(candidates.map((id) => deps.exists(storageName(id))));
-  const id = candidates.find((_, index) => !taken[index]);
-  if (!id) throw new WorkspaceIdTakenError("Could not find an unused workspace id");
-  return id;
+  for (let attempt = 0; attempt < ID_ATTEMPTS; attempt++) {
+    signal?.throwIfAborted();
+    const id = newId();
+    // Each attempt atomically probes and claims a fresh id; candidates cannot be claimed in parallel.
+    // oxlint-disable-next-line no-await-in-loop
+    const writer = await deps.createNew(id, signal);
+    if (writer !== "taken") return { id, writer };
+  }
+  throw new WorkspaceIdTakenError("Could not find an unused workspace id");
 }
 
 /**
@@ -100,26 +116,31 @@ export async function createWorkspaceWithFiles(
 ): Promise<string> {
   options.signal?.throwIfAborted();
   if (options.into) return rewriteIncomplete(options.into, files, meta, deps, options.signal);
-  const id = await unusedId(deps);
-  return withWorkspaceImportLock(
-    id,
-    async () => {
-      options.signal?.throwIfAborted();
-      // A failed open owns nothing: whatever it left is not ours to delete. Do not abort `open`
-      // here, so a cancel after storage is created still reaches ownership verification and rollback.
-      const session = await deps.open(id);
-      // Ownership is proven by an empty project (raw listing, so node_modules and .git count) and
-      // no metadata yet. Checked even after a cancel, so a workspace someone else created is never
-      // deleted.
-      const owned = await isUntouched(session).catch(() => false);
-      if (!owned) {
-        await close(session);
-        throw new WorkspaceIdTakenError(`Workspace ${id} is already in use`);
-      }
-      return fill(id, session, files, meta, { deps, signal: options.signal, created: true });
-    },
-    options.signal,
+  const { id, writer } = await claimNewWorkspace(deps, options.signal);
+  return fill(id, writer, files, meta, options.signal);
+}
+
+function matchesRetryTarget(current: WorkspaceMeta, requested: WorkspaceMeta): boolean {
+  if (current.source || requested.source) {
+    if (current.source?.kind !== "github" || requested.source?.kind !== "github") return false;
+    return (
+      current.source.owner === requested.source.owner &&
+      current.source.repo === requested.source.repo &&
+      current.source.ref === requested.source.ref &&
+      (current.source.subdir ?? "") === (requested.source.subdir ?? "") &&
+      (current.template ?? "github") === (requested.template ?? "github")
+    );
+  }
+  return (
+    typeof current.template === "string" && current.template !== "" && current.template === requested.template
   );
+}
+
+async function clearProjectSubtree(writer: WorkspaceWriter, signal: AbortSignal | undefined): Promise<void> {
+  signal?.throwIfAborted();
+  await writer.runtime.filesystem.remove(PROJECT_ROOT);
+  await writer.runtime.filesystem.mkdirp(PROJECT_ROOT);
+  signal?.throwIfAborted();
 }
 
 async function rewriteIncomplete(
@@ -129,97 +150,53 @@ async function rewriteIncomplete(
   deps: NewWorkspaceDeps,
   signal: AbortSignal | undefined,
 ): Promise<string> {
-  // Serialize fresh imports and retries on the outer import lock (before opening storage) so
-  // lock ordering is strictly `import -> storage -> meta-name` with no overlap or inversion.
-  return withWorkspaceImportLock(
-    id,
-    async () => {
-      signal?.throwIfAborted();
-      const session = await deps.open(id, signal);
-      const current = await readMetaFile(session.runtime.filesystem).catch(() => undefined);
-      if (current?.state !== INCOMPLETE) {
-        await close(session);
-        throw new NotIncompleteError(`Workspace ${id} is not an unfinished import`);
-      }
-      // Clear what the cut-off attempt wrote; the marker lives outside the project and stays.
-      try {
-        const stale = await session.runtime.filesystem.listFiles(PROJECT_ROOT);
-        await removeInBatches(session.runtime.filesystem, stale, signal);
-      } catch (error) {
-        await close(session);
-        throw error;
-      }
-      return fill(id, session, files, meta, { deps, signal, created: false });
-    },
-    signal,
-  );
-}
-
-interface FillContext {
-  readonly deps: NewWorkspaceDeps;
-  readonly signal: AbortSignal | undefined;
-  /** Whether this call created the workspace, and so may delete it after a failure. */
-  readonly created: boolean;
+  const writer = await deps.openExisting(id, signal);
+  if (writer === "busy") throw new WorkspaceBusyError(id);
+  if (writer === "missing") throw new WorkspaceMissingError(id);
+  try {
+    const current = await readMetaFile(writer.runtime.filesystem);
+    if (current?.state !== INCOMPLETE) {
+      throw new NotIncompleteError(`Workspace ${id} is not an unfinished import`);
+    }
+    if (!matchesRetryTarget(current, meta)) {
+      throw new RetrySourceMismatchError(id);
+    }
+    await clearProjectSubtree(writer, signal);
+  } catch (error) {
+    await close(writer);
+    throw error;
+  }
+  return fill(id, writer, files, meta, signal);
 }
 
 async function fill(
   id: string,
-  session: WorkspaceWriter,
+  writer: WorkspaceWriter,
   files: Readonly<Record<string, string | Uint8Array>>,
   meta: WorkspaceMeta,
-  context: FillContext,
+  signal: AbortSignal | undefined,
 ): Promise<string> {
   const { state: _ignored, ...complete } = meta;
   try {
-    // New workspaces always write the INCOMPLETE marker before checking cancellation so a busy
-    // rollback still exposes Retry/Delete. Retries already have the marker on disk, so pass the
-    // signal to avoid leaving the runtime open if the metadata lock is held when cancelled.
-    await writeMeta(
-      id,
-      session,
-      { ...complete, state: INCOMPLETE },
-      context.created ? undefined : context.signal,
-    );
-    context.signal?.throwIfAborted();
-    await session.files.writeMany(files);
-    await session.runtime.filesystem.flush();
-    context.signal?.throwIfAborted();
-    await writeMeta(id, session, complete, context.signal);
+    await writeMeta(writer, { ...complete, state: INCOMPLETE });
+    signal?.throwIfAborted();
+    await writer.files.writeMany(files);
+    await writer.runtime.filesystem.flush();
+    signal?.throwIfAborted();
+    await writeMeta(writer, complete);
   } catch (error) {
-    await close(session);
-    // A busy or failed delete leaves the marker, and the landing page offers Retry and Delete.
-    if (context.created) await context.deps.remove(storageName(id)).catch(() => undefined);
+    await close(writer);
     throw error;
   }
   // Every byte is flushed and the marker is cleared: the workspace is complete even if closing fails.
-  await close(session);
+  await close(writer);
   return id;
 }
 
-async function isUntouched(session: WorkspaceWriter): Promise<boolean> {
-  const [paths, meta] = await Promise.all([
-    session.runtime.filesystem.listFiles(PROJECT_ROOT),
-    session.runtime.filesystem.readFile(WORKSPACE_META_PATH),
-  ]);
-  return paths.length === 0 && meta === undefined;
+function writeMeta(writer: WorkspaceWriter, meta: WorkspaceMeta): Promise<void> {
+  return writeMetaFile(writer.runtime.filesystem, meta);
 }
 
-function writeMeta(
-  id: string,
-  session: WorkspaceWriter,
-  meta: WorkspaceMeta,
-  signal?: AbortSignal,
-): Promise<void> {
-  return withWorkspaceMetaLock(
-    id,
-    async () => {
-      signal?.throwIfAborted();
-      await writeMetaFile(session.runtime.filesystem, meta);
-    },
-    signal,
-  );
-}
-
-async function close(session: WorkspaceWriter): Promise<void> {
-  await session.dispose().catch(() => undefined);
+async function close(writer: WorkspaceWriter): Promise<void> {
+  await writer.dispose().catch(() => undefined);
 }
