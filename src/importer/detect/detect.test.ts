@@ -535,14 +535,14 @@ describe("detectProjectInFs", () => {
   });
 
   test("evaluates multi-globstar patterns on deep paths in linear time without backtracking", async () => {
-    const segs = Array.from({ length: 24 }, () => "a").join("/");
+    // 36 segments with 9 alternating `**/a` groups triggers C(36,9) > 94M steps on recursive
+    // backtracking (exceeding the 2s hang cap), while the O(D*P) NFA finishes in < 1ms.
+    const segs = Array.from({ length: 36 }, () => "a").join("/");
     const matched = `packages/${segs}/app`;
     const unmatched = `packages/${segs}/other`;
+    const pattern = `packages/${Array.from({ length: 9 }, () => "**/a").join("/")}/**/app`;
     const files: Record<string, string> = {
-      "package.json": JSON.stringify({
-        name: "mono",
-        workspaces: ["packages/**/**/a/**/a/**/a/**/a/**/app"],
-      }),
+      "package.json": JSON.stringify({ name: "mono", workspaces: [pattern] }),
       [`${matched}/package.json`]: JSON.stringify({ name: "app", scripts: { dev: "bun server.ts" } }),
       [`${unmatched}/package.json`]: JSON.stringify({ name: "other", scripts: { dev: "bun server.ts" } }),
     };
@@ -555,5 +555,5 @@ describe("detectProjectInFs", () => {
     const fromFs = await detectProjectTargetsInFs(fs);
     expect(fromPaths.targets.map((t) => t.dir)).toEqual([matched]);
     expect(fromFs.targets.map((t) => t.dir)).toEqual([matched]);
-  });
+  }, 2_000);
 });
