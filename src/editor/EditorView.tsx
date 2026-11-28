@@ -23,10 +23,10 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { debugHandle } from "../app/debug";
-import { ContextMenu, type MenuItem } from "../explorer/ContextMenu";
+import { debugHandle } from "../diagnostics/debug";
+import { ContextMenu, type MenuItem } from "../ui/ContextMenu";
 import { useValue } from "../lib/react";
-import { STATUS_SLOT, type StatusItems } from "../workbench/slots";
+import { STATUS_SLOT, type StatusItems } from "../workspace/session/slots";
 import { PROJECT_ROOT, projectRelative } from "../workspace/paths";
 import { useWorkspace } from "../workspace/session";
 import { isDetached, originalPath, type Buffer } from "./buffers";
@@ -35,7 +35,7 @@ import { shouldAutoFocusEditor } from "./focus-policy";
 import { mountEditorPlugins } from "./plugins";
 import type { EditorStore } from "./store";
 
-declare module "../app/debug" {
+declare module "../diagnostics/debug" {
   interface SprocktDebug {
     /** Path, 1-based line and column of the editor's caret. Undefined with no file open. */
     editorCaret?: () => { path: string; line: number; column: number } | undefined;

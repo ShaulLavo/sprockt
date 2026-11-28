@@ -50,6 +50,12 @@ export const themePreference: Accessor<ThemePreference> = preference;
 /** The scheme in effect right now, for things CSS cannot reach (the terminal's canvas). */
 export const colorScheme: Accessor<ColorScheme> = () => resolveScheme(preference(), system());
 
+function metaScheme(media: string, systemScheme: ColorScheme): ColorScheme {
+  if (media.includes("light")) return "light";
+  if (media.includes("dark")) return "dark";
+  return systemScheme;
+}
+
 /** Writes the document first, so effects that read resolved CSS colors see the new theme. */
 function applyToDocument(next: ThemePreference, systemScheme: ColorScheme): void {
   const root = document.documentElement;
@@ -64,12 +70,7 @@ function applyToDocument(next: ThemePreference, systemScheme: ColorScheme): void
     metas.push(meta);
   }
   for (const meta of metas) {
-    const own: ColorScheme = meta.media.includes("light")
-      ? "light"
-      : meta.media.includes("dark")
-        ? "dark"
-        : systemScheme;
-    meta.content = CHROME_COLOR[next === "system" ? own : next];
+    meta.content = CHROME_COLOR[resolveScheme(next, metaScheme(meta.media, systemScheme))];
   }
 }
 

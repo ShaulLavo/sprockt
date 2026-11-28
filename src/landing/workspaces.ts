@@ -1,13 +1,13 @@
 // Lightweight workspace discovery, rename, retry, and deletion for the landing page.
 // Cold landing performs only indexedDB.databases() and loads zero Waffle modules;
 // warm landing uses only Waffle's fs/ storage modules so waffle/runtime.ts stays unloaded.
-import type { WorkspaceSource } from "../importer/metadata";
+import type { WorkspaceSource } from "../workspace/metadata";
 import {
   parseWorkspaceMeta,
   WORKSPACE_META_PATH,
   type WorkspaceMeta,
   type WorkspaceState,
-} from "../templates/workspace-meta";
+} from "../workspace/workspace-meta";
 import {
   hasWorkspaceHints,
   mergeStoredWorkspaceMeta,

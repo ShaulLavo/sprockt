@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseRoute, routePath } from "../app/routes";
+import { parseRoute, routePath } from "../routing/routes";
 import { parseGithubInput } from "./github-input";
 
 describe("parseGithubInput", () => {

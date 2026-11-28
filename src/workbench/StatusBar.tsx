@@ -7,7 +7,7 @@ import { Icon, type IconName } from "../ui/icons";
 import type { SaveState } from "../files/service";
 import { useWorkspace } from "../workspace/session";
 import { ui } from "./copy";
-import { STATUS_SLOT, type StatusEntry } from "./slots";
+import { STATUS_SLOT, type StatusEntry } from "../workspace/session/slots";
 
 const SAVE_TITLE: Readonly<Record<SaveState, string>> = {
   saved: ui.status.saved,

@@ -25,19 +25,24 @@ manager, [bash-web](https://github.com/ShaulLavo/bash-web) as the shell,
 ```
 src/
   main.tsx            entry: mounts <App>
-  app/                routes (pure URL <-> Route), router (signal + history), App, debug handle
+  app/                App
+  routing/            routes (pure URL <-> Route), router (signal + history)
+  diagnostics/        debug handle
   landing/            landing page: templates, GitHub URL bar, workspace switcher
   workbench/          the IDE frame: pane layout, status bar, boot progress
-  workspace/          WorkspaceSession (the state root), paths and ids
+  workspace/          metadata, paths and ids
+    session/          WorkspaceSession (the state root)
   runtime/            boot (Waffle + Bun + coreutils + shell), worker and guest URLs, guest lock
   files/              FileService (read, write, move, remove, watch, flush), tree model
   explorer/           file tree UI
   editor/             EditorPane, tabs, EditorStore, file buffers, theme, plugin mount hook
   search/             quick open (fuzzy file finder) and project search, run in the page
-  terminal/           TerminalPane, Ghostty + bash-web session
+  terminal/           Ghostty + bash-web session
+    pane/             TerminalPanel
   preview/            PreviewTransport seam; the mounted transport, its service worker and the
                       client script for previewed pages; the isolated transport, the workspace's
-                      preview identity and the new-tab page; PreviewPane and its toolbar
+                      preview identity and the new-tab page
+    pane/             PreviewPane and its toolbar
   templates/          (slice 1) starter catalog and file sets
   importer/           (slice 4) GitHub import, install and dev-script detection, share links
   tasks/              the dev-server task and dev-script detection; (slice 7) its cross-tab owner
@@ -425,7 +430,7 @@ How the mounted transport works:
   document that finishes loading gets a numbered `hello`, and only an answer with that number
   makes the pane send "reload" and "go to" as messages. A document that says nothing (an
   image, a download, the worker's refusal) is steered by the frame's address.
-- **The pane** (`preview/PreviewPane.tsx`) keeps its own back and forward list
+- **The pane** (`preview/pane/PreviewPane.tsx`) keeps its own back and forward list
   (`preview/history.ts`). A frame's browser history is shared with the IDE page, so stepping
   through it could walk the IDE itself back. Its toolbar is the panes' header band with the
   shared icon buttons; the port picker and the viewport switch appear once a server listens.
@@ -474,7 +479,7 @@ owner's tab closes. Only the owner has a stop button. A server stopped on purpos
 ended by itself, is announced as `down` before its lease ends, and the tabs behind it leave the
 line instead of restarting it.
 
-**Language servers** (`editor/plugins.ts`). `registerEditorPlugins(provider)`: a provider gets
+**Language servers** (`editor/plugins/index.ts`). `registerEditorPlugins(provider)`: a provider gets
 `{ runtime, projectRoot, rootUri, signal, openFile }` and returns Singapore `EditorPlugin`s, or
 `{ plugins, dispose }`, synchronously or not. The editor never waits for a provider: it opens
 at once with its built-in plugins (syntax, find, gutters), and a provider's plugins are added
@@ -524,7 +529,7 @@ Under attach the workbench never offers to take a workspace over.
 | `/github/<owner>/<repo>[/tree/<branch>[/<subdir>]]` | Importer (slice 4): fetch, write a new workspace, redirect to `/w/<id>`.      |
 | `/s/…`                                              | Share link (slice 4).                                                         |
 
-`app/routes.ts` parses and prints all of them and is unit tested; unknown paths and paths with
+`routing/routes.ts` parses and prints all of them and is unit tested; unknown paths and paths with
 malformed percent-encoding render "not found" and never guess or throw. The workbench is a
 lazy chunk, so the landing page loads none of the editor, terminal or runtime code.
 
@@ -751,7 +756,7 @@ Every slice owns the files listed and one spec in `e2e/`. Shared contracts are f
 the slice that owns them changes them: `FileService` (slice 2), `PreviewTransport` (slice 5),
 `registerEditorPlugins` (slice 3), `Route` (slice 4), `e2e/helpers.ts` (slice 7).
 
-Slice 6 owns the integration files: `src/workspace/session.ts`, `src/workbench/Workbench.tsx`
+Slice 6 owns the integration files: `src/workspace/session/index.ts`, `src/workbench/Workbench.tsx`
 and `src/styles.css`. The other slices do not edit them. Each exports a factory for its service
 and its pane component from its own directory, keeps its CSS there, and slice 6 lands the
 wiring (the import, the entry on `WorkspaceSession`, the pane in the layout).
@@ -761,7 +766,7 @@ wiring (the import, the entry on `WorkspaceSession`, the pane in the layout).
 | 1   | Landing and templates              | `src/landing/**`, `src/templates/**`, `e2e/landing.spec.ts`                                                              | Hero, template grid (Vite+React, Next.js, Hono, Astro, SvelteKit, Vanilla TS, `Bun.serve` + `bun:sqlite`; port the file sets from bun-wasm `sandbox/template-*`), workspace switcher with rename and delete (`deleteWorkspace`), `/.sprockt/workspace.json`. Writes templates with `FileService.writeMany`. |
 | 2   | File tree                          | `src/explorer/**`, `src/files/**`, `e2e/files.spec.ts`                                                                   | Create, rename, delete, upload, ZIP download, dirty markers, lazy directories (`walk`), a hardened watcher (overflow, rebind; see bun-wasm `web/src/workspace-watch.ts`).                                                                                                                                   |
 | 3   | Editor                             | `src/editor/**`, `src/search/**`, `e2e/editor.spec.ts`                                                                   | Tabs, Cmd+P quick open, Cmd+F, Cmd+Shift+F project search (ripgrep is installed), syntax highlighting packages, reload of clean buffers on external change, conflict marker for dirty ones.                                                                                                                 |
-| 4   | GitHub import and share links      | `src/importer/**`, `src/share/**`, `src/app/routes.ts`, `src/app/App.tsx`, `e2e/import.spec.ts`                          | `/github/...` importer (tarball fetch, subdir filter), automatic `bun install`, dev-script detection, `/s/` snapshot links.                                                                                                                                                                                 |
+| 4   | GitHub import and share links      | `src/importer/**`, `src/share/**`, `src/routing/routes.ts`, `src/app/App.tsx`, `e2e/import.spec.ts`                      | `/github/...` importer (tarball fetch, subdir filter), automatic `bun install`, dev-script detection, `/s/` snapshot links.                                                                                                                                                                                 |
 | 5   | Preview                            | `src/preview/**`, `src/tasks/**`, the service worker entry, `e2e/preview.spec.ts`                                        | `mounted` transport keyed by workspace and port (development builds only), URL bar, back, forward, reload, port picker, open in new tab, mobile and desktop viewport, error indicator, HMR.                                                                                                                 |
-| 6   | Workbench layout and terminal tabs | `src/workbench/**`, `src/workspace/session.ts`, `src/terminal/**`, `src/styles.css`, `e2e/layout.spec.ts`                | Resizable panes, the phone pane switcher, multiple terminal tabs (`TerminalStore`), design tokens as CSS custom properties.                                                                                                                                                                                 |
+| 6   | Workbench layout and terminal tabs | `src/workbench/**`, `src/workspace/session/index.ts`, `src/terminal/**`, `src/styles.css`, `e2e/layout.spec.ts`          | Resizable panes, the phone pane switcher, multiple terminal tabs (`TerminalStore`), design tokens as CSS custom properties.                                                                                                                                                                                 |
 | 7   | Tabs, E2E and CI                   | `e2e/helpers.ts`, `e2e/tabs.spec.ts`, `playwright.config.ts`, `.github/**`, `src/workspace/coordinator.ts`, `scripts/**` | Dev-server ownership across tabs, the iPhone simulator smoke, CI speed and caches, moving the guest pin.                                                                                                                                                                                                    |

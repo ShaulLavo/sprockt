@@ -4,14 +4,14 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useViewportMode, type ContextMenuItem } from "@shaulavo/workbench";
 import { TerminalPanel as WorkbenchTerminalPanel } from "@shaulavo/workbench/terminal";
-import { debugHandle } from "../app/debug";
-import { useValue } from "../lib/react";
-import type { Accessor } from "../lib/reactive";
-import { trackOverflowFade } from "../ui/fade";
-import { Icon } from "../ui/icons";
-import { useWorkspace } from "../workspace/session";
+import { debugHandle } from "../../diagnostics/debug";
+import { useValue } from "../../lib/react";
+import type { Accessor } from "../../lib/reactive";
+import { trackOverflowFade } from "../../ui/fade";
+import { Icon } from "../../ui/icons";
+import { useWorkspace } from "../../workspace/session";
 import { ui } from "./copy";
-import { createSprocktTerminalThemeSubscribable, createWaffleTerminalBridge } from "./waffle-adapter";
+import { createSprocktTerminalThemeSubscribable, createWaffleTerminalBridge } from "../waffle-adapter";
 import "./terminal.css";
 
 export interface TerminalPanelProps {

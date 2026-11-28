@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { parseRoute } from "../app/routes";
+import { parseRoute } from "../routing/routes";
 import { createProjectFiles, type ProjectFilesystem, type ResolvedEntry } from "../files/project-files";
 import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import { readIncomplete, retryPath, type OpenIdle } from "./incomplete";
-import { INCOMPLETE, parseMeta, serializeMeta, WORKSPACE_META_PATH, type WorkspaceMeta } from "./metadata";
+import {
+  INCOMPLETE,
+  parseMeta,
+  serializeMeta,
+  WORKSPACE_META_PATH,
+  type WorkspaceMeta,
+} from "../workspace/metadata";
 import {
   createWorkspaceWithFiles,
   NotIncompleteError,

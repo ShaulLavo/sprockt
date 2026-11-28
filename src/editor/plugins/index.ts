@@ -21,7 +21,7 @@
 //   removes them from every editor again.
 import type { EditorDisposable, EditorPlugin } from "@singapore-editor/core/extensions";
 import type { Runtime } from "waffle";
-import type { StatusItems } from "../workbench/slots";
+import type { StatusItems } from "../../workspace/session/slots";
 
 export interface EditorHostContext {
   readonly runtime: Runtime;

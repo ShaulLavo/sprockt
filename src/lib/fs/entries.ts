@@ -20,7 +20,12 @@ export async function collectFiles(
 ): Promise<FileEntry[]> {
   const excluded = new Set(options.excludeDirs ?? DEFAULT_EXCLUDED_DIRS);
   const entries = await collectDirectory(fs, root, "", excluded);
-  return entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return entries.sort(compareEntryPaths);
+}
+
+export function compareEntryPaths(a: FileEntry, b: FileEntry): number {
+  if (a.path === b.path) return 0;
+  return a.path < b.path ? -1 : 1;
 }
 
 /** Reads one directory's files and subdirectories in parallel. */

@@ -1,7 +1,7 @@
 // `/.sprockt/workspace.json`: what a workspace is and where it came from, kept inside the
 // workspace so there is no second database to keep in step (ARCHITECTURE.md "State"). The
 // landing slice owns the name, template and last-opened fields; this slice writes `source`.
-import type { Command, ProjectDetection } from "./detect/detect";
+import type { Command, ProjectDetection } from "../importer/detect/detect";
 
 /**
  * Where the metadata lives: on the workspace filesystem's root, outside the project

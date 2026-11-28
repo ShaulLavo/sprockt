@@ -9,7 +9,7 @@
 import type { Runtime } from "waffle";
 import type { EditorHostContext, EditorPluginSet } from "../editor/plugins";
 import { watchFilesystemEvents, type WatchUpdate } from "../files/watch";
-import { STATUS_SLOT, type StatusItem } from "../workbench/slots";
+import { STATUS_SLOT, type StatusItem } from "../workspace/session/slots";
 import { createGuestLanguageServerPlugin, disposeLanguageServers } from "./glue";
 import {
   checkForScripts,

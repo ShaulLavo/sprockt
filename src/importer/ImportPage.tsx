@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { navigate } from "../app/router";
-import type { Route } from "../app/routes";
-import { deriveGitHubWorkspaceName } from "../templates/workspace-meta";
+import { navigate } from "../routing/router";
+import type { Route } from "../routing/routes";
+import { deriveGitHubWorkspaceName } from "../workspace/workspace-meta";
 import { saveWorkspaceHint } from "../workspace/hint";
 import { browserWorkspaceDeps, openUnlessCancelled, retryTarget } from "./browser-deps";
 import { COPY, fill } from "./copy";

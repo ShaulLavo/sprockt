@@ -5,7 +5,7 @@ import { App } from "./app/App";
 import { registerLanguageServers } from "./lsp";
 import { retirePreviewsIfOff } from "./preview/startup";
 import "./styles.css";
-import { applyStoredTheme } from "./workbench/theme";
+import { applyStoredTheme } from "./ui/theme";
 
 applyStoredTheme();
 retirePreviewsIfOff();

@@ -1,16 +1,16 @@
 // One open workspace in this tab: the runtime and the services every pane shares. Panes take
 // what they need from here through WorkspaceContext; they never reach into each other.
 import { createContext, useContext } from "react";
-import { createFileService, type FileService } from "../files/service";
-import { WORKSPACE_META_DIR, WORKSPACE_META_PATH } from "../importer/metadata";
-import { createPreviewTransport } from "../preview";
-import type { PreviewTransport } from "../preview/transport";
-import { bootWorkspace, type BootOptions, type BootStage, type WorkspaceRuntime } from "../runtime/boot";
-import { createTerminalStore, type TerminalStore } from "../terminal/store";
-import { createCommands, createStatusItems, type Commands, type StatusItems } from "../workbench/slots";
-import { hydrateWorkspaceName, type HydrateWorkspaceNameDeps } from "./hint";
-import { tearDownAll } from "./lifecycle";
-import { PROJECT_ROOT } from "./paths";
+import { createFileService, type FileService } from "../../files/service";
+import { WORKSPACE_META_DIR, WORKSPACE_META_PATH } from "../metadata";
+import { createPreviewTransport } from "../../preview";
+import type { PreviewTransport } from "../../preview/transport";
+import { bootWorkspace, type BootOptions, type BootStage, type WorkspaceRuntime } from "../../runtime/boot";
+import { createTerminalStore, type TerminalStore } from "../../terminal/store";
+import { createCommands, createStatusItems, type Commands, type StatusItems } from "./slots";
+import { hydrateWorkspaceName, type HydrateWorkspaceNameDeps } from "../hint";
+import { tearDownAll } from "../lifecycle";
+import { PROJECT_ROOT } from "../paths";
 import { withServerEnv } from "./shell-env";
 
 const metaDecoder = new TextDecoder();
@@ -71,7 +71,7 @@ export interface WorkspaceSession extends WorkspaceRuntime {
   readonly preview: PreviewTransport;
   /** Terminal tabs; `terminals.create({ run })` opens a shell that runs a command. */
   readonly terminals: TerminalStore;
-  /** Status bar items other slices fill (`STATUS_SLOT` in workbench/slots.ts). */
+  /** Status bar items other slices fill (`STATUS_SLOT` in slots.ts). */
   readonly status: StatusItems;
   /** Commands the title bar offers a button for, once registered (`COMMAND`). */
   readonly commands: Commands;

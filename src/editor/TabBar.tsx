@@ -3,7 +3,7 @@
 import { dismissSoftKeyboardOnTouchActivation } from "@shaulavo/workbench/core";
 import { EditorTabBar } from "@shaulavo/workbench/editor";
 import { useRef, useState } from "react";
-import { ContextMenu, type MenuItem } from "../explorer/ContextMenu";
+import { ContextMenu, type MenuItem } from "../ui/ContextMenu";
 import { useValue } from "../lib/react";
 import { FileIcon } from "../search/icons";
 import { originalPath } from "./buffers";

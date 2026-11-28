@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { PreviewFrameEvent } from "@shaulavo/workbench/core";
-import type { FrameCommand, FrameMessage } from "./bridge";
-import type { PreviewServer, PreviewTransport } from "./transport";
+import type { FrameCommand, FrameMessage } from "../bridge";
+import type { PreviewServer, PreviewTransport } from "../transport";
 import { createWafflePreviewAdapter } from "./waffle-adapter";
 
 function createFakeTransport(options?: { readonly takesCommands?: boolean }) {

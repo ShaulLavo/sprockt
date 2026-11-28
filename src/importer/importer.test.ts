@@ -3,7 +3,7 @@ import { textEncoder } from "../lib/bytes";
 import { COPY } from "./copy";
 import { GitHubImportError, type GitHubErrorCode } from "./github/errors";
 import { formatSize, formatWait, importErrorMessage, isStorageFull } from "./messages";
-import { isMetaPath, parseMeta, serializeMeta, type WorkspaceMeta } from "./metadata";
+import { isMetaPath, parseMeta, serializeMeta, type WorkspaceMeta } from "../workspace/metadata";
 import { detectFromEntries, fileRecord, planFrom, sourceFromRoute } from "./plan";
 
 const file = (path: string, text: string) => ({ path, bytes: textEncoder.encode(text) });

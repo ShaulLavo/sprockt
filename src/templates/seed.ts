@@ -20,7 +20,7 @@ import {
   WORKSPACE_META_DIR,
   WORKSPACE_META_PATH,
   type WorkspaceMeta,
-} from "./workspace-meta";
+} from "../workspace/workspace-meta";
 
 export {
   NotIncompleteError,

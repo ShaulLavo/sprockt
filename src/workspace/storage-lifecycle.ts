@@ -2,7 +2,7 @@
 // outside it goes in the same step. Today that is the workspace's preview identity
 // (preview/identity.ts), whose nonce must never outlive the storage it was made for:
 //
-// - A nonce is claimed only by a tab that has the storage open (workspace/session.ts), and a
+// - A nonce is claimed only by a tab that has the storage open (workspace/session/index.ts), and a
 //   claim that is out when the tab closes is stored before the tab lets go of the storage
 //   (preview/isolated.ts `dispose`).
 // - A nonce is forgotten only here, while the storage is held idle: no tab has it open, and

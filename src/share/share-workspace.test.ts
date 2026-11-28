@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { serializeMeta, WORKSPACE_META_PATH } from "../importer/metadata";
+import { serializeMeta, WORKSPACE_META_PATH } from "../workspace/metadata";
 import { textEncoder } from "../lib/bytes";
 import type { FileEntry } from "../lib/fs/types";
 import {
