@@ -55,6 +55,22 @@ async function writeAbsoluteFile(
   await runBackendOp(backend, "writeFile", [path, false, false], bytes);
 }
 
+async function retireBackend(backend: PersistentBackend): Promise<void> {
+  try {
+    await backend.retireFenced();
+  } finally {
+    notifyWorkspaceWriterSettled();
+  }
+}
+
+async function closeStorage(storage: IndexedDBStorage): Promise<void> {
+  try {
+    await storage.close().catch(() => undefined);
+  } finally {
+    notifyWorkspaceWriterSettled();
+  }
+}
+
 function createBackendWriter(backend: PersistentBackend): WorkspaceWriter {
   return {
     files: {
@@ -90,12 +106,8 @@ function createBackendWriter(backend: PersistentBackend): WorkspaceWriter {
         },
       },
     },
-    async dispose(): Promise<void> {
-      try {
-        await backend.retireFenced();
-      } finally {
-        notifyWorkspaceWriterSettled();
-      }
+    dispose(): Promise<void> {
+      return retireBackend(backend);
     },
   };
 }
@@ -141,17 +153,12 @@ export async function createNewBrowserWriter(
   try {
     const backend = await PersistentBackend.open(storage, { intervalMs: 0 });
     if (backend.hasLoadedIndex) {
-      try {
-        await backend.retireFenced();
-      } finally {
-        notifyWorkspaceWriterSettled();
-      }
+      await retireBackend(backend);
       return "taken";
     }
     return createBackendWriter(backend);
   } catch (error) {
-    await storage.close().catch(() => undefined);
-    notifyWorkspaceWriterSettled();
+    await closeStorage(storage);
     throw error;
   }
 }
@@ -184,17 +191,12 @@ export async function openExistingBrowserWriter(
   try {
     const backend = await PersistentBackend.open(storage, { intervalMs: 0, signal });
     if (!backend.hasLoadedIndex) {
-      try {
-        await backend.retireFenced();
-      } finally {
-        notifyWorkspaceWriterSettled();
-      }
+      await retireBackend(backend);
       return "missing";
     }
     return createBackendWriter(backend);
   } catch (error) {
-    await storage.close().catch(() => undefined);
-    notifyWorkspaceWriterSettled();
+    await closeStorage(storage);
     throw error;
   }
 }

@@ -22,6 +22,7 @@ export const WORKSPACE_PENDING_NAME_PREFIX = "sprockt:ws-pending-name:";
 
 const [hintRevision, setHintRevision] = createSignal(0);
 const writerSettledListeners = new Set<() => void>();
+let suppressedWriterNotifications = 0;
 
 /** Subscribes to notifications that a same-tab workspace writer finished closing its storage lock. */
 export function onWorkspaceWriterSettled(listener: () => void): () => void {
@@ -31,8 +32,23 @@ export function onWorkspaceWriterSettled(listener: () => void): () => void {
   };
 }
 
+/**
+ * Runs a foreground landing operation (template launch, retry, or rename) that already owns its
+ * next navigation or explicit list refresh, so closing its own writer does not trigger a competing
+ * landing discovery probe before handoff.
+ */
+export async function withoutWriterSettledNotifications<T>(task: () => Promise<T>): Promise<T> {
+  suppressedWriterNotifications += 1;
+  try {
+    return await task();
+  } finally {
+    suppressedWriterNotifications -= 1;
+  }
+}
+
 /** Notifies same-tab views (such as the landing list) that a background workspace writer closed. */
 export function notifyWorkspaceWriterSettled(): void {
+  if (suppressedWriterNotifications > 0) return;
   for (const listener of Array.from(writerSettledListeners)) {
     try {
       listener();

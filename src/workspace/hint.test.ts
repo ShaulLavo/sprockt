@@ -10,9 +10,12 @@ import {
   handleHintStorageEvent,
   hydrateWorkspaceName,
   mergeStoredWorkspaceMeta,
+  notifyWorkspaceWriterSettled,
+  onWorkspaceWriterSettled,
   readWorkspaceHint,
   removeWorkspaceHint,
   saveWorkspaceHint,
+  withoutWriterSettledNotifications,
   WORKSPACE_HINT_PREFIX,
   workspaceName,
 } from "./hint";
@@ -770,5 +773,38 @@ describe("workspace name hydration and reactivity", () => {
       ...ghHint,
       lastOpened: "2026-04-01T00:00:00.000Z",
     });
+  });
+});
+
+describe("workspace writer settled notifications", () => {
+  test("suppresses notifications during foreground handoff tasks and restores them even on failure", async () => {
+    let calls = 0;
+    const unsubscribe = onWorkspaceWriterSettled(() => {
+      calls += 1;
+    });
+    try {
+      notifyWorkspaceWriterSettled();
+      expect(calls).toBe(1);
+
+      await withoutWriterSettledNotifications(async () => {
+        notifyWorkspaceWriterSettled();
+      });
+      expect(calls).toBe(1);
+
+      await expect(
+        withoutWriterSettledNotifications(async () => {
+          notifyWorkspaceWriterSettled();
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect(calls).toBe(1);
+
+      notifyWorkspaceWriterSettled();
+      expect(calls).toBe(2);
+    } finally {
+      unsubscribe();
+    }
+    notifyWorkspaceWriterSettled();
+    expect(calls).toBe(2);
   });
 });

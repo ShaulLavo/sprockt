@@ -18,7 +18,7 @@ import {
 } from "../templates/metadata";
 import { SprocktLogo } from "../ui/SprocktLogo";
 import { applyStoredTheme, colorScheme, setColorScheme } from "../workbench/theme";
-import { onWorkspaceWriterSettled } from "../workspace/hint";
+import { onWorkspaceWriterSettled, withoutWriterSettledNotifications } from "../workspace/hint";
 import { LANDING_COPY } from "./copy";
 import { mountGrainGradient, type GrainGradientController } from "./effects/grain-gradient";
 import { FeatureCards } from "./FeatureCards";
@@ -249,7 +249,7 @@ export function Landing() {
     setCreateError(undefined);
     try {
       const { seedWorkspace } = await import("../templates/seed");
-      const { id, meta } = await seedWorkspace(templateId);
+      const { id, meta } = await withoutWriterSettledNotifications(() => seedWorkspace(templateId));
       saveWorkspaceHint(id, meta);
       navigate({ kind: "workspace", id });
     } catch (error) {

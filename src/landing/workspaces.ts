@@ -15,6 +15,7 @@ import {
   removeWorkspaceHint,
   saveWorkspaceHint,
   touchWorkspaceHint,
+  withoutWriterSettledNotifications,
 } from "../workspace/hint";
 import { storageName, workspaceIdOf } from "../workspace/paths";
 
@@ -139,7 +140,7 @@ export function renameStoredWorkspace(
 > {
   return runSerialized(async () => {
     const { renameWorkspace } = await import("../templates/seed");
-    const result = await renameWorkspace(id, nextName);
+    const result = await withoutWriterSettledNotifications(() => renameWorkspace(id, nextName));
     if (result.status === "renamed") saveWorkspaceHint(id, result.meta);
     if (result.status === "missing") removeWorkspaceHint(id);
     return result;
@@ -156,7 +157,7 @@ export function retryStoredWorkspace(
 > {
   return runSerialized(async () => {
     const { retrySeedWorkspace } = await import("../templates/seed");
-    const result = await retrySeedWorkspace(id, templateId, name);
+    const result = await withoutWriterSettledNotifications(() => retrySeedWorkspace(id, templateId, name));
     if (result.status === "seeded") saveWorkspaceHint(id, result.meta);
     if (result.status === "missing") removeWorkspaceHint(id);
     return result;

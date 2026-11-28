@@ -723,6 +723,27 @@ test("cancelling a share restore after IndexedDB opens still persists the incomp
   await expect.poll(() => storedIn(page, id)).toBe(false);
 });
 
+async function recordExclusiveMaintenanceProbes(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const lockManager = navigator.locks;
+    const realRequest = lockManager.request.bind(lockManager);
+    const host = globalThis as unknown as { sprocktExclusiveProbes?: string[] };
+    host.sprocktExclusiveProbes = [];
+    lockManager.request = ((name: string, optionsOrCallback: unknown, maybeCallback?: unknown) => {
+      const hasOptions = typeof optionsOrCallback !== "function";
+      const options = hasOptions ? (optionsOrCallback as LockOptions) : undefined;
+      if (
+        name.startsWith("bun-wasm:filesystem:indexeddb-maintenance:sprockt-") &&
+        (options?.mode ?? "exclusive") === "exclusive"
+      ) {
+        host.sprocktExclusiveProbes?.push(name);
+      }
+      const callback = (hasOptions ? maybeCallback : optionsOrCallback) as LockGrantedCallback<unknown>;
+      return hasOptions ? realRequest(name, options!, callback) : realRequest(name, callback);
+    }) as typeof lockManager.request;
+  });
+}
+
 test("a failed starter seed exposes Retry immediately on the landing page without reloading", async ({
   page,
 }) => {
@@ -754,13 +775,31 @@ test("a failed starter seed exposes Retry immediately on the landing page withou
 
   await page.getByTestId("template-bun-sqlite").click();
   await expect(page.getByTestId("template-error")).toBeVisible();
-  // Without reloading, the incomplete starter appears immediately with Retry and finishes cleanly.
+  // Without reloading, the incomplete starter appears immediately with Retry and finishes cleanly
+  // without starting a competing exclusive landing probe before handoff to the workbench.
   const retryButton = page.getByTestId("incomplete-retry");
   await expect(retryButton).toBeVisible();
+  await recordExclusiveMaintenanceProbes(page);
   await retryButton.click();
-  await expectWorkspace(page);
+  const retriedId = await expectWorkspace(page);
   await expect(page.getByTestId("file-tree")).toContainText("server.ts");
   expect(await workspaceMeta(page)).not.toHaveProperty("state");
+  const retryProbes = await page.evaluate(
+    () => (globalThis as unknown as { sprocktExclusiveProbes?: string[] }).sprocktExclusiveProbes ?? [],
+  );
+  expect(retryProbes).not.toContain(`bun-wasm:filesystem:indexeddb-maintenance:sprockt-${retriedId}`);
+
+  // Launching a fresh starter template from landing must also hand off without an exclusive probe.
+  await page.goto("/");
+  await expect(page.getByTestId("template-bun-sqlite")).toBeVisible();
+  await recordExclusiveMaintenanceProbes(page);
+  await page.getByTestId("template-bun-sqlite").click();
+  const freshId = await expectWorkspace(page);
+  await expect(page.getByTestId("file-tree")).toContainText("server.ts");
+  const launchProbes = await page.evaluate(
+    () => (globalThis as unknown as { sprocktExclusiveProbes?: string[] }).sprocktExclusiveProbes ?? [],
+  );
+  expect(launchProbes).not.toContain(`bun-wasm:filesystem:indexeddb-maintenance:sprockt-${freshId}`);
 });
 
 /** Whether GitHub answers from this machine; the real-repository test needs it. */
