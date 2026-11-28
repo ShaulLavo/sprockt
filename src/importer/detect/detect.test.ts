@@ -490,4 +490,46 @@ describe("detectProjectInFs", () => {
     expect(fromFs.targets.map((t) => t.dir)).toEqual(["apps/.examples/web"]);
     expect(fromFs.defaultTargetId).toBe("apps/.examples/web:dev");
   });
+
+  test("ignores invalid workspace globs and treats escaped wildcards literally", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({
+        name: "root-app",
+        scripts: { dev: "bun server.ts" },
+        workspaces: ["apps/[z-a]", "apps/foo\\*"],
+      }),
+      "apps/fo/package.json": JSON.stringify({ name: "fo", scripts: { dev: "bun server.ts" } }),
+      "apps/foo/package.json": JSON.stringify({ name: "foo", scripts: { dev: "bun server.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    expect(fromPaths.detection.devScript).toBe("dev");
+    expect(fromPaths.targets.map((t) => t.id)).toEqual(["dev"]);
+
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromFs.detection.devScript).toBe("dev");
+    expect(fromFs.targets.map((t) => t.id)).toEqual(["dev"]);
+  });
+
+  test("applies identical globstar depth limits in path-based and filesystem workspace detection", async () => {
+    const deepDir = "packages/a/b/c/d/e/f/g/h/i/j/k/m"; // 13 segments (exceeds globstar cap of 12)
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "mono", workspaces: ["packages/**"] }),
+      [`${deepDir}/package.json`]: JSON.stringify({ name: "deep", scripts: { dev: "bun server.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual(fromFs.targets.map((t) => t.dir));
+    expect(fromPaths.targets).toEqual([]);
+    expect(fromPaths.detection.dev).toBeUndefined();
+  });
 });

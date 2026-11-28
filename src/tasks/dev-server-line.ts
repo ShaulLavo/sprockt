@@ -47,6 +47,8 @@ export interface DevServerLineOptions<Command> {
   readonly ports: LocalPorts;
   /** What starts the project's server, or nothing when it has none. `preferredTargetId` is set on takeover. */
   command(preferredTargetId?: string): Promise<Command | undefined>;
+  /** Target id for a resolved command, announced before `spawn` awaits terminal startup. */
+  targetId?(command: Command): string | undefined;
   /**
    * Runs `command` in this tab. `signal` is the lease's: once it is aborted the server is no
    * longer wanted, and whatever is still being created has to end at once.
@@ -166,10 +168,17 @@ export function createDevServerLine<Command>(options: DevServerLineOptions<Comma
       const command = known ?? (await options.command(inheritedTargetId));
       // Stopped or closed while the command was looked up: nothing is created at all.
       if (current.signal.aborted) return;
+      if (command === undefined) {
+        current.announce(DOWN);
+        return;
+      }
+      const pendingTargetId = options.targetId?.(command);
+      if (pendingTargetId) {
+        current.announce({ phase: "starting", ports: [], targetId: pendingTargetId });
+      }
       // The process is this lease's from here on: `serve` stops it if the lease ended meanwhile.
-      const process = command === undefined ? undefined : await options.spawn(command, current.signal);
-      if (process) await serve(current, process);
-      else current.announce(DOWN);
+      const process = await options.spawn(command, current.signal);
+      await serve(current, process);
     } catch (error) {
       // A start that failed here would fail in the next tab too.
       current.announce(DOWN);
@@ -193,7 +202,9 @@ export function createDevServerLine<Command>(options: DevServerLineOptions<Comma
 
   function follow(current: DevServerState): void {
     if (current.phase !== "down") {
-      if (current.command !== undefined) followedTargetId = current.targetId;
+      if (current.targetId !== undefined || current.command !== undefined) {
+        followedTargetId = current.targetId;
+      }
       return standBy();
     }
     // Once per lease: a later `start` here stands in line again while that lease winds down.

@@ -232,7 +232,7 @@ export function expandBraces(pattern: string): string[] {
 }
 
 function escapeRegexChar(ch: string): string {
-  return /[.+^${}()|[\]\\]/.test(ch) ? `\\${ch}` : ch;
+  return /[.*+?^${}()|[\]\\]/.test(ch) ? `\\${ch}` : ch;
 }
 
 /** Reads a glob character class `[abc]`, `[!a-z]`, or `[^a-z]` starting at `startIndex`. */
@@ -266,7 +266,7 @@ function readCharClass(
 }
 
 /** Compiles one non-`**` glob path segment (supporting `*`, `?`, and `[...]` classes). */
-function compileSegment(segment: string): RegExp {
+function compileSegment(segment: string): RegExp | undefined {
   let source = "^";
   for (let i = 0; i < segment.length; i += 1) {
     const ch = segment[i] ?? "";
@@ -284,7 +284,11 @@ function compileSegment(segment: string): RegExp {
       i = parsed.end;
     } else source += escapeRegexChar(ch);
   }
-  return new RegExp(`${source}$`);
+  try {
+    return new RegExp(`${source}$`);
+  } catch {
+    return undefined;
+  }
 }
 
 interface CompiledSegment {
@@ -297,6 +301,7 @@ interface CompiledSegment {
 interface CompiledPattern {
   readonly segments: readonly CompiledSegment[];
   readonly hasGlobstar: boolean;
+  readonly maxDepth: number;
 }
 
 function hasGlobSyntax(pattern: string): boolean {
@@ -315,15 +320,23 @@ function unescapeLiteralPath(pattern: string): string {
   return pattern.replace(/\\(.)/g, "$1");
 }
 
-function compilePattern(pattern: string): CompiledPattern {
+function compilePattern(pattern: string): CompiledPattern | undefined {
   const parts = pattern.split("/").filter((part) => part !== "");
-  const segments: CompiledSegment[] = parts.map((raw) => ({
-    globstar: raw === "**",
-    raw,
-    allowHidden: raw.startsWith(".") || raw.startsWith("\\."),
-    regex: raw === "**" ? undefined : compileSegment(raw),
-  }));
-  return { segments, hasGlobstar: segments.some((segment) => segment.globstar) };
+  const segments: CompiledSegment[] = [];
+  for (const raw of parts) {
+    const globstar = raw === "**";
+    const regex = globstar ? undefined : compileSegment(raw);
+    if (!globstar && !regex) return undefined;
+    segments.push({
+      globstar,
+      raw,
+      allowHidden: raw.startsWith(".") || raw.startsWith("\\."),
+      regex,
+    });
+  }
+  const hasGlobstar = segments.some((segment) => segment.globstar);
+  const maxDepth = hasGlobstar ? Math.max(MAX_GLOBSTAR_DEPTH, segments.length + 4) : segments.length;
+  return { segments, hasGlobstar, maxDepth };
 }
 
 function matchesSegment(dirSegment: string, patSegment: CompiledSegment, matchHidden: boolean): boolean {
@@ -392,7 +405,7 @@ function addLiteralPattern(body: string, literals: Set<string>, positives: Compi
   const normalized = normalizePattern(body);
   if (!normalized || normalized.startsWith("!")) return;
   const compiled = compilePattern(normalized);
-  if (compiled.segments.length === 0) return;
+  if (!compiled || compiled.segments.length === 0) return;
   literals.add(unescapeLiteralPath(normalized));
   positives.push(compiled);
 }
@@ -412,12 +425,17 @@ function compileWorkspacePatterns(patterns: readonly string[]): CompiledWorkspac
       const normalized = normalizePattern(expanded);
       if (!normalized || normalized.startsWith("!")) continue;
       const compiled = compilePattern(normalized);
-      if (compiled.segments.length === 0) continue;
+      if (!compiled || compiled.segments.length === 0) continue;
       if (negated) negatives.push(compiled);
       else positives.push(compiled);
     }
   }
   return { literals, positives, negatives };
+}
+
+function matchesPositivePattern(dirSegments: readonly string[], pattern: CompiledPattern): boolean {
+  if (dirSegments.length > pattern.maxDepth) return false;
+  return matchSegments(dirSegments, pattern.segments, 0, 0, false);
 }
 
 /** Matches a relative directory against workspace patterns, applying exclusions independently of order. */
@@ -432,9 +450,7 @@ export function matchesWorkspacePatterns(dir: string, patterns: readonly string[
 function matchesCompiled(dirSegments: readonly string[], compiled: CompiledWorkspacePatterns): boolean {
   if (dirSegments.length === 0) return false;
   if (compiled.literals.has(dirSegments.join("/"))) return true;
-  const included = compiled.positives.some((pattern) =>
-    matchSegments(dirSegments, pattern.segments, 0, 0, false),
-  );
+  const included = compiled.positives.some((pattern) => matchesPositivePattern(dirSegments, pattern));
   if (!included) return false;
   const excluded = compiled.negatives.some((pattern) =>
     matchSegments(dirSegments, pattern.segments, 0, 0, true),
@@ -465,10 +481,7 @@ export function matchWorkspaceDirs(paths: Iterable<string>, patterns: readonly s
 function maxTraversalDepth(compiled: CompiledWorkspacePatterns): number {
   let maxDepth = 0;
   for (const pattern of compiled.positives) {
-    const depth = pattern.hasGlobstar
-      ? Math.max(MAX_GLOBSTAR_DEPTH, pattern.segments.length + 4)
-      : pattern.segments.length;
-    if (depth > maxDepth) maxDepth = depth;
+    if (pattern.maxDepth > maxDepth) maxDepth = pattern.maxDepth;
   }
   return maxDepth;
 }
@@ -499,8 +512,8 @@ export async function findWorkspaceDirsInFs(
       .filter((child) =>
         compiled.positives.some(
           (pattern) =>
-            matchSegments(child, pattern.segments, 0, 0, false) ||
-            canMatchDescendant(child, pattern.segments, 0, 0),
+            matchesPositivePattern(child, pattern) ||
+            (child.length < pattern.maxDepth && canMatchDescendant(child, pattern.segments, 0, 0)),
         ),
       );
     await Promise.all(nextDirs.map((child) => walk(child)));

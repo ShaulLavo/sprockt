@@ -204,6 +204,7 @@ interface AttachedSessionRecord {
 export interface WaffleTerminalBridge {
   readonly adapter: TerminalAdapter;
   bindTerminalHandle(sessionId: string, terminal: Terminal): void;
+  reportRendererError(message: string, cause?: unknown): void;
   clearTerminal(terminal: Terminal, attachment: TerminalAttachment | null): void;
 }
 
@@ -237,6 +238,24 @@ export function createWaffleTerminalBridge(
 ): WaffleTerminalBridge {
   const { terminals } = workspace;
   const attached = new Map<string, AttachedSessionRecord>();
+  const handledErrorObjects = new WeakSet<object>();
+  const handledPrimitiveErrors = new Set<unknown>();
+
+  function markAdapterError(error: unknown): void {
+    if (typeof error === "object" && error !== null) handledErrorObjects.add(error);
+    else handledPrimitiveErrors.add(error);
+  }
+
+  function consumeAdapterError(cause: unknown): boolean {
+    if (typeof cause === "object" && cause !== null) {
+      if (!handledErrorObjects.has(cause)) return false;
+      handledErrorObjects.delete(cause);
+      return true;
+    }
+    if (!handledPrimitiveErrors.has(cause)) return false;
+    handledPrimitiveErrors.delete(cause);
+    return true;
+  }
 
   const sessions = createReactiveSubscribable<readonly TerminalSessionInfo[]>(() => {
     const { tabs } = terminals.tabs();
@@ -321,6 +340,7 @@ export function createWaffleTerminalBridge(
       } catch (error: unknown) {
         if (!signal.aborted) {
           const detail = error instanceof Error ? error.message : String(error);
+          markAdapterError(error);
           terminals.setState(sessionId, "failed", detail);
         }
         throw error;
@@ -396,5 +416,16 @@ export function createWaffleTerminalBridge(
     terminals.attach(sessionId, handle);
   }
 
-  return { adapter, bindTerminalHandle, clearTerminal };
+  function reportRendererError(message: string, cause?: unknown): void {
+    if (cause !== undefined && consumeAdapterError(cause)) return;
+    const { tabs, focused } = terminals.tabs();
+    const isStartingWithoutHandle = (id: string) =>
+      !terminals.handle(id) && terminals.stateOf(id) === "starting";
+    const target =
+      (focused && isStartingWithoutHandle(focused) ? focused : undefined) ??
+      tabs.find((tab) => isStartingWithoutHandle(tab.id))?.id;
+    if (target) terminals.setState(target, "failed", message);
+  }
+
+  return { adapter, bindTerminalHandle, reportRendererError, clearTerminal };
 }

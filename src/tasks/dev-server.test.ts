@@ -411,4 +411,88 @@ describe("createDevServer terminal lifecycle", () => {
     await tick();
     expect(server.runningTargetId()).toBeUndefined();
   });
+
+  test("does not submit a dev command if Stop runs after handle attaches and before continuation resumes", async () => {
+    const host = fakeHost({
+      "server.ts": "Bun.serve({ port: 3000, fetch: () => new Response('ok') })",
+    });
+    const server = createDevServer(host);
+    servers.push(server);
+
+    const submitted: string[] = [];
+    await server.start();
+    await tick();
+    const devTab = host.terminals.tabs().tabs.find((tab) => tab.title === "dev");
+    expect(devTab).toBeDefined();
+    if (!devTab) return;
+
+    // Attach resolves waitForHandle, then Stop aborts the lease before the microtask resumes.
+    host.terminals.attach(
+      devTab.id,
+      makeFakeHandle(async (cmd) => {
+        submitted.push(cmd);
+      }),
+    );
+    server.stop();
+    await tick(25);
+
+    expect(submitted).toEqual([]);
+    expect(server.status()).toBe("stopped");
+  });
+
+  test("preserves selected app on takeover even when owner closes during terminal startup", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "mono", workspaces: ["apps/*"] }),
+      "node_modules/.keep": "",
+      "apps/web/package.json": JSON.stringify({
+        name: "web",
+        scripts: { dev: "vite" },
+        devDependencies: { vite: "^6.0.0" },
+      }),
+      "apps/api/package.json": JSON.stringify({
+        name: "api",
+        scripts: { start: "bun server.ts" },
+      }),
+    };
+    const workspaceId = `mono-early-close-${crypto.randomUUID()}`;
+    const locks = new FakeLocks();
+    const channels = new FakeChannels();
+    const firstHost = fakeHost(files, { id: workspaceId, tabId: "tab-1", locks, channels });
+    const secondHost = fakeHost(files, { id: workspaceId, tabId: "tab-2", locks, channels });
+
+    const first = createDevServer(firstHost);
+    const second = createDevServer(secondHost);
+    servers.push(first, second);
+    await tick();
+
+    first.selectTarget("apps/api:start");
+    await first.start();
+    await tick(20);
+
+    // Owner is still waiting for its terminal handle (never attached), yet follower already knows the target.
+    expect(second.remoteTargetId()).toBe("apps/api:start");
+
+    await first.dispose();
+    await tick(25);
+
+    const submittedSecond: string[] = [];
+    const secondFinish = Promise.withResolvers<void>();
+    const secondTab = secondHost.terminals.tabs().tabs.find((tab) => tab.title === "dev");
+    expect(secondTab).toBeDefined();
+    if (!secondTab) return;
+    secondHost.terminals.attach(
+      secondTab.id,
+      makeFakeHandle(async (cmd) => {
+        submittedSecond.push(cmd);
+        await secondFinish.promise;
+      }),
+    );
+    await tick(25);
+
+    expect(submittedSecond).toEqual(["(cd /workspace && (cd apps/api && bun run start))"]);
+    expect(second.runningTargetId()).toBe("apps/api:start");
+    expect(second.selectedTargetId()).toBe("apps/api:start");
+    second.stop();
+    secondFinish.resolve();
+  });
 });

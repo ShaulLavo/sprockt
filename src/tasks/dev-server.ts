@@ -181,6 +181,7 @@ export function createDevServer(host: DevServerHost): DevServer {
     const tabId = ensureDevTerminal(terminals);
     if (!tabId) return { done: Promise.resolve(), interrupt() {} };
     const waited = await terminals.waitForHandle(tabId, signal);
+    if (signal.aborted) return { done: Promise.resolve(), interrupt() {} };
     if (!waited.ok) {
       if (waited.reason === "failed") {
         throw new Error(waited.message ?? "Dev terminal failed to start.");
@@ -188,6 +189,12 @@ export function createDevServer(host: DevServerHost): DevServer {
       return { done: Promise.resolve(), interrupt() {} };
     }
     const { handle } = waited;
+    if (terminals.handle(tabId) !== handle) {
+      if (terminals.stateOf(tabId) === "failed") {
+        throw new Error("Dev terminal failed to start.");
+      }
+      return { done: Promise.resolve(), interrupt() {} };
+    }
 
     let interrupted = false;
     let settled = false;
@@ -304,6 +311,7 @@ export function createDevServer(host: DevServerHost): DevServer {
       subscribe: (listener) => host.preview.subscribe(listener),
     },
     command,
+    targetId: (start) => start.targetId,
     spawn,
   });
   const [state, setState] = createSignal(line.state());

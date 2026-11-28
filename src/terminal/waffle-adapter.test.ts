@@ -105,4 +105,24 @@ describe("createWaffleTerminalBridge split wiring", () => {
     unsubSplit();
     unsubPair?.();
   });
+
+  it("settles waitForHandle when Ghostty renderer initialization fails before attach", async () => {
+    const terminals = createTerminalStore();
+    const bashId = terminals.create();
+    terminals.setState(bashId, "ready");
+    const devId = terminals.create({ title: "dev", named: true });
+    const workspace = { terminals } as unknown as WorkspaceSession;
+    const bridge = createWaffleTerminalBridge(workspace);
+
+    const waited = terminals.waitForHandle(devId);
+    bridge.reportRendererError("WebGPU adapter unavailable", new Error("WebGPU adapter unavailable"));
+
+    expect(await waited).toEqual({
+      ok: false,
+      reason: "failed",
+      message: "WebGPU adapter unavailable",
+    });
+    expect(terminals.stateOf(devId)).toBe("failed");
+    expect(terminals.stateOf(bashId)).toBe("ready");
+  });
 });
