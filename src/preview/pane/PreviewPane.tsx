@@ -3,10 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PreviewServerInfo } from "@shaulavo/workbench/core";
 import { PreviewPane as WorkbenchPreviewPane, type PreviewViewportPreset } from "@shaulavo/workbench/preview";
-import { onAfterImport } from "../../importer/after-import";
-import { onCleanup } from "../../lib/reactive";
-import { Scope, useValue } from "../../lib/react";
-import { createDevServer, type DevServer, type WorkspaceTarget } from "../../tasks/dev-server";
+import { useValue } from "../../lib/react";
+import type { DevServer, WorkspaceTarget } from "../../tasks/dev-server";
 import { plainOutput } from "../../tasks/output";
 import { RESTART_LIMIT } from "../../tasks/restarting";
 import { trackOverflowFade } from "../../ui/fade";
@@ -68,10 +66,9 @@ function formatPreviewPort(server: PreviewServerInfo, targets: readonly Workspac
   return portLabel(server.port);
 }
 
-function PreviewPaneBody(props: { devServer: DevServer }) {
-  const { devServer } = props;
+export function PreviewPane() {
   const workspace = useWorkspace();
-  const { preview } = workspace;
+  const { devServer, preview } = workspace;
   const {
     status,
     owned,
@@ -258,33 +255,5 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
         )
       }
     />
-  );
-}
-
-export function PreviewPane() {
-  const workspace = useWorkspace();
-  return (
-    <Scope
-      create={() => {
-        const server = createDevServer(workspace);
-        onCleanup(
-          onAfterImport((importedSession, plan) => {
-            if (importedSession.id !== workspace.id) return;
-            if (plan.dev) {
-              void server.start();
-              return;
-            }
-            if (plan.install) {
-              workspace.terminals.requestReveal();
-              workspace.terminals.create({ title: "dev", named: true, run: "bun install" });
-            }
-          }),
-        );
-        onCleanup(() => void server.dispose());
-        return server;
-      }}
-    >
-      {(devServer) => <PreviewPaneBody devServer={devServer} />}
-    </Scope>
   );
 }

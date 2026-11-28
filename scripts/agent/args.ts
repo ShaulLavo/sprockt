@@ -18,6 +18,7 @@ export interface ParsedArgs {
   readonly scheme: ColorScheme;
   readonly engine: BrowserEngine;
   readonly doctor: boolean;
+  readonly live: boolean;
   readonly headed: boolean;
   readonly starter: string;
   readonly selector?: string;
@@ -82,6 +83,7 @@ interface MutableArgs {
   scheme: ColorScheme;
   engine: BrowserEngine;
   doctor: boolean;
+  live: boolean;
   headed: boolean;
   starter: string;
   selector?: string;
@@ -93,6 +95,10 @@ function applyFlag(state: MutableArgs, argv: readonly string[], index: number): 
   const token = argv[index];
   if (token === "--doctor") {
     state.doctor = true;
+    return index + 1;
+  }
+  if (token === "--live") {
+    state.live = true;
     return index + 1;
   }
   if (token === "--headed") {
@@ -163,12 +169,16 @@ export function parseCliArgs(argv: readonly string[]): ParsedArgs {
     scheme: "light",
     engine: "chromium",
     doctor: false,
+    live: false,
     headed: false,
     starter: "vite-react",
     timeoutMs: 180_000,
   };
   while (cursor < argv.length) {
     cursor = applyFlag(state, argv, cursor);
+  }
+  if (state.live && (verbRaw !== "scenario" || state.url !== "https://sprockt.dev/")) {
+    throw new Error("--live requires a scenario and --url https://sprockt.dev/.");
   }
   return {
     verb: verbRaw,
@@ -178,6 +188,7 @@ export function parseCliArgs(argv: readonly string[]): ParsedArgs {
     scheme: state.scheme,
     engine: state.engine,
     doctor: state.doctor,
+    live: state.live,
     headed: state.headed,
     starter: state.starter,
     selector: state.selector,
@@ -188,5 +199,5 @@ export function parseCliArgs(argv: readonly string[]): ParsedArgs {
 
 export const CLI_USAGE = `Usage:
   bun run agent:browser look [--doctor] [--url URL] [--viewport desktop|phone|WxH] [--scheme light|dark] [--engine chromium|webkit|firefox] [--selector CSS] [--headed]
-  bun run agent:browser scenario <name> [--url URL] [--viewport desktop|phone|WxH] [--scheme light|dark] [--engine chromium|webkit|firefox] [--starter ID] [--headed]
+  bun run agent:browser scenario <name> [--url URL] [--live] [--viewport desktop|phone|WxH] [--scheme light|dark] [--engine chromium|webkit|firefox] [--starter ID] [--headed]
   bun run agent:browser list`;

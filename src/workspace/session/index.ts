@@ -7,11 +7,13 @@ import { createPreviewTransport } from "../../preview";
 import type { PreviewTransport } from "../../preview/transport";
 import { bootWorkspace, type BootOptions, type BootStage, type WorkspaceRuntime } from "../../runtime/boot";
 import { createTerminalStore, type TerminalStore } from "../../terminal/store";
+import { createDevServer, type DevServer } from "../../tasks/dev-server";
 import { createCommands, createStatusItems, type Commands, type StatusItems } from "./slots";
 import { hydrateWorkspaceName, type HydrateWorkspaceNameDeps } from "../hint";
 import { tearDownAll } from "../lifecycle";
 import { PROJECT_ROOT } from "../paths";
 import { withServerEnv } from "./shell-env";
+import { runFirstOpenPlan } from "./first-open";
 
 const metaDecoder = new TextDecoder();
 
@@ -71,6 +73,7 @@ export interface WorkspaceSession extends WorkspaceRuntime {
   readonly preview: PreviewTransport;
   /** Terminal tabs; `terminals.create({ run })` opens a shell that runs a command. */
   readonly terminals: TerminalStore;
+  readonly devServer: DevServer;
   /** Status bar items other slices fill (`STATUS_SLOT` in slots.ts). */
   readonly status: StatusItems;
   /** Commands the title bar offers a button for, once registered (`COMMAND`). */
@@ -145,34 +148,52 @@ export async function openWorkspace(
   opened.resolve();
   const files = createFileService(booted.runtime, booted.id);
   const terminals = createTerminalStore();
+  const shell = withServerEnv(booted.shell, preview.serverEnv);
+  const devServer = createDevServer({ id, runtime: booted.runtime, shell, files, preview, terminals });
+  const { signal } = lifecycle;
+  if (!moved) terminals.create();
+  const firstOpen = runFirstOpenPlan({ id, filesystem: booted.runtime.filesystem, signal }, (plan) => {
+    if (plan.dev) return devServer.start();
+    if (!plan.install) return;
+    terminals.requestReveal();
+    terminals.create({ title: "dev", named: true, run: "bun install" });
+  }).catch((error: unknown) => {
+    if (!signal.aborted) console.error("Workspace startup failed", error);
+  });
+  let disposal: Promise<void> | undefined;
+  const dispose = () => {
+    lifecycle.abort();
+    return (disposal ??= tearDownAll([
+      () => devServer.dispose(),
+      () => terminals.shutdown(),
+      () => firstOpen,
+      () => files.dispose(),
+      () => preview.dispose(),
+      () => booted.dispose(),
+    ]));
+  };
   // Revoking saves first leaves the editor's unsaved text for the new owner; then this tab's
   // shells stop and its runtime goes, so nothing here keeps running against storage it lost.
   // The previews go with them: the preview identity is for a tab that holds the storage.
   revoke = () => {
     moved = true;
-    lifecycle.abort();
     files.revoke(movedError());
-    void terminals
-      .shutdown()
-      .then(() => tearDownAll([() => preview.dispose(), () => booted.dispose()]))
-      .catch((error: unknown) => console.error("Releasing a workspace taken by another tab failed", error));
+    void dispose().catch((error: unknown) =>
+      console.error("Releasing a workspace taken by another tab failed", error),
+    );
   };
   if (moved) revoke();
-  terminals.create();
   return {
     ...booted,
-    shell: withServerEnv(booted.shell, preview.serverEnv),
+    shell,
     files,
     preview,
     terminals,
+    devServer,
     status: createStatusItems(),
     commands: createCommands(),
-    signal: lifecycle.signal,
-    // Every step runs even if an earlier one fails: the runtime must not outlive its session.
-    dispose: () => {
-      lifecycle.abort();
-      return tearDownAll([() => files.dispose(), () => preview.dispose(), () => booted.dispose()]);
-    },
+    signal,
+    dispose,
   };
 }
 

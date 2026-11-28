@@ -22,8 +22,8 @@ bun run agent:browser scenario workbench-tabs-and-explorer
 
 Verify:
 
-- Before `node_modules` is installed, `CSS.highlights` contains zero `lsp-plugin-error` ranges and the status bar shows a quiet `Install deps for TS` indicator instead of a wall of red squiggles.
-- After **Start dev server** (`bun install`) finishes, `Install deps for TS` clears and `CSS.highlights` remains at zero `lsp-plugin-error` ranges. Positive LSP diagnostic, hover, and completion checks live in `e2e/lsp.spec.ts`.
+- In `starter-dev-server` (desktop), after the starter auto-starts (`bun install` + dev server) and edits `src/App.tsx`, `CSS.highlights` contains zero `lsp-plugin-error` ranges.
+- Pre-install gating (`Install deps for TS` with zero false-alarm red squiggles before `node_modules` exists), waiting through partial installs, and positive LSP diagnostic, hover, and completion checks live in `e2e/lsp.spec.ts`, which writes starter files into a blank workspace so auto-start does not install packages first.
 
 ## Gotchas
 

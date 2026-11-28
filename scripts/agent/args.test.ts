@@ -60,6 +60,13 @@ describe("agent:browser args", () => {
     expect(() => parseCliArgs(["look", "--scheme", "sepia"])).toThrow(/Invalid --scheme/);
   });
 
+  test("allows --live only for a scenario targeting the production landing page", () => {
+    const live = ["--url", "https://sprockt.dev/", "--live"];
+    expect(parseCliArgs(["scenario", "starter-dev-server"].concat(live)).live).toBe(true);
+    expect(() => parseCliArgs(["look"].concat(live))).toThrow(/--live requires a scenario/);
+    expect(() => parseCliArgs(["scenario", "starter-dev-server", "--live"])).toThrow(/--url/);
+  });
+
   test("normalizes trailing dots and subdomains when checking production URLs", () => {
     expect(isProductionUrl("https://sprockt.dev")).toBe(true);
     expect(isProductionUrl("https://sprockt.dev./w/abc")).toBe(true);

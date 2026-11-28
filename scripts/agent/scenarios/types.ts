@@ -14,6 +14,7 @@ export interface AgentScenario {
   readonly name: string;
   readonly description: string;
   readonly readOnly: boolean;
+  readonly live?: true;
   readonly defaultViewport?: "desktop" | "phone";
   readonly run: (ctx: ScenarioContext) => Promise<void>;
 }

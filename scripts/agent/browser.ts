@@ -157,7 +157,9 @@ async function runScenario(
     const names = SCENARIOS.map((item) => item.name).join(", ");
     throw new Error(`Unknown scenario "${args.scenarioName}". Available: ${names}`);
   }
-  if (args.url && !scenario.readOnly) {
+  if (args.live && !scenario.live) throw new Error(`Scenario "${scenario.name}" does not support --live.`);
+  const guardProduction = !scenario.readOnly && !args.live;
+  if (args.url && guardProduction) {
     await verifyNonProductionUrl(args.url, scenario.name);
   }
   const effectiveViewport: ViewportSpec =
@@ -175,7 +177,7 @@ async function runScenario(
       hasTouch: effectiveViewport.hasTouch,
       colorScheme: args.scheme,
     });
-    if (!scenario.readOnly) await installProductionGuard(context);
+    if (guardProduction) await installProductionGuard(context);
     page = await context.newPage();
     evidence.attach(page);
     await scenario.run({
@@ -185,7 +187,7 @@ async function runScenario(
       args: { ...args, viewport: effectiveViewport },
       evidence,
     });
-    if (!scenario.readOnly) assertPageNotProduction(page, scenario.name);
+    if (guardProduction) assertPageNotProduction(page, scenario.name);
   } catch (error) {
     status = "FAIL";
     const message = error instanceof Error ? error.message : String(error);

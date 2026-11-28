@@ -163,13 +163,11 @@ takes the version on disk: opening the file, or reloading, does not use it up.
 
 `runtime/boot.ts`, in order:
 
-1. `createRuntime({ filesystem: { mode: "fast", name: "sprockt-<id>", workerURL, whenBusy }, memoryGroups })`, with `whenBusy` `"wait"`, or `"takeover"` once the person confirmed it.
+1. `createRuntime({ filesystem: { mode: "fast", name: "sprockt-<id>", workerURL, whenBusy }, memoryGroups })`, with `whenBusy` taken from `TAB_POLICY` (`"attach"` by default, or `"wait"` and `"takeover"` under the takeover fallback).
    The memory group limits are bun-wasm's (2 GiB per group, 1 GiB per member, 8 MiB stacks).
-2. `installBunSharedObjects`, then `installBunAdapters` with the browser engine and the pinned
-   guest descriptor (URL, SHA-256, size). The guest is fetched and compiled on first `bun` use.
-3. `installBase` (coreutils, findutils, grep, sed, ripgrep) on the program worker.
-4. `installShellCommands` (`/bin/sh`, `/bin/bash`), sharing the shell guest with terminals.
-5. Flush, then report `ready`. Terminals then start `BrowserSession`s on the same runtime.
+2. `mkdirp("/workspace")`, then `onStorageReady` starts hydrating the workspace display name from metadata or `package.json` in the background without blocking boot.
+3. `installBunSharedObjects`, then `installBunAdapters` (browser engine and pinned guest descriptor, with the guest fetched and compiled on first `bun` use), `installBase` (coreutils, findutils, grep, sed, ripgrep on the program worker), and `installShellCommands` (`/bin/sh`, `/bin/bash`, sharing the shell guest with terminals) run in parallel via `Promise.allSettled`. Waiting for all three before throwing on failure keeps teardown from racing a pending registration. Once they settle, `waffle-git` registers on demand with `/bin/bun` as its interpreter.
+4. Flush, then report `ready`. Terminals then start `BrowserSession`s on the same runtime.
 
 Workers are bundled from the installed packages' sources with the app's own Waffle, so every
 realm runs one Waffle version: `bun-wasm/worker`, `bun-wasm/notification-worker`,
@@ -179,25 +177,34 @@ are imported by path. The program worker must be bun-wasm's: it gives programs s
 terminal their terminal, and a plain `preview1Executor` worker fails in WebKit on the second
 program it runs.
 
+### First-open startup
+
+`WorkspaceSession` (`workspace/session/index.ts`) owns `devServer` directly instead of leaving it to `PreviewPane`. Both starter seeding (`templates/seed.ts`) and GitHub imports store a `pendingImport` plan in `/.sprockt/workspace.json` when project detection finds an install or dev command.
+
+Right after `openWorkspace` creates `devServer` and the initial terminal, it calls `runFirstOpenPlan` (`workspace/session/first-open.ts`). Under the workspace metadata lock, `runFirstOpenPlan` reads `/.sprockt/workspace.json`, skips incomplete (`state: "importing"`) or aborted sessions, starts the plan (`devServer.start()` when `plan.dev` is set, or reveals the terminal and runs `bun install` in a `dev` tab when only `plan.install` is set), and clears and flushes `pendingImport`.
+
+Because startup runs on `WorkspaceSession`, starters and imports install dependencies and start listening immediately on first open, even on a phone where the Preview pane has not been opened yet. Because `pendingImport` is cleared and flushed when consumed, a plan runs once across tabs and reloads: reloading a workspace tab requires a manual start, while reloading only the preview frame keeps the server running.
+
 ## Packages and guests
 
-| Package                                                 | Pin                | Source                                                                |
-| ------------------------------------------------------- | ------------------ | --------------------------------------------------------------------- |
-| `waffle` (`@waffle-os/runtime`), `@waffle-os/relay`     | 0.0.150            | npm                                                                   |
-| `waffle-base`                                           | programs-v0.0.23   | GitHub release tarball                                                |
-| `bash-web`                                              | 0.0.114            | npm                                                                   |
-| `bun-wasm`                                              | commit `a997a2069` | Git dependency (not on npm); `trustedDependencies` runs its `prepare` |
-| `ghostty-webgpu`                                        | 0.3.34             | npm                                                                   |
-| `@singapore-editor/core`, `/react`, `/find`, `/gutters` | 0.2.13             | npm                                                                   |
-| `@singapore-editor/highlighting`                        | 0.2.16             | npm (Tree-sitter grammars load per language, on first use)            |
-| `@singapore-editor/lsp`, `/lsp-plugin`                  | 0.2.13, 0.2.16     | npm                                                                   |
+| Package                                                               | Pin                | Source                                                                |
+| --------------------------------------------------------------------- | ------------------ | --------------------------------------------------------------------- |
+| `waffle` (`@waffle-os/runtime`)                                       | 0.0.159            | npm                                                                   |
+| `@waffle-os/relay`                                                    | 0.0.159            | npm                                                                   |
+| `waffle-base`, `waffle-git`                                           | programs-v0.0.23   | GitHub release tarballs                                               |
+| `bash-web`                                                            | 0.0.114            | npm                                                                   |
+| `bun-wasm`                                                            | commit `e51d22ae7` | Git dependency (not on npm); `trustedDependencies` runs its `prepare` |
+| `ghostty-webgpu`                                                      | 0.3.34             | npm                                                                   |
+| `@singapore-editor/core`, `/react`, `/find`, `/gutters`, `/plugin-ui` | 0.2.14             | npm                                                                   |
+| `@singapore-editor/highlighting`, `/lsp-plugin`                       | 0.2.17             | npm (Tree-sitter grammars load per language, on first use)            |
+| `@singapore-editor/lsp`                                               | 0.2.13             | npm                                                                   |
 
 Guests are the WASM programs the workers run. They are published to the hash-addressed guest
 store, `bun-artifacts.shaulavo.dev/<sha256>/<file>.gz`, served gzip-encoded with immutable
 caching and `Access-Control-Allow-Origin: *`. bun-wasm names its guest by hash
 (`BUN_WASM_ASSET`); the bash-web package ships no `shell-engine.wasm` yet (Known gaps, 3).
 
-- `guests.lock.json` pins `bun-browser.wasm` (bun-wasm `a997a2069`, Bun 1.4.5) and
+- `guests.lock.json` pins `bun-browser.wasm` (bun-wasm `e51d22ae7`, 16,637,885 bytes decoded) and
   `shell-engine.wasm` (bash-web 0.0.114) by store URL, SHA-256 and size. The URL contains the
   hash, so it never serves anything else. `scripts/guest-lock.test.ts` checks that the lock
   names the commit `package.json` pins and the guest that package names, so the host code and
@@ -212,7 +219,7 @@ caching and `Access-Control-Allow-Origin: *`. bun-wasm names its guest by hash
   on our pages are simplest with every asset on one origin, and Safari has no `credentialless`.
 - `SPROCKT_GUEST_CACHE` (CI: an Actions cache keyed on the lock) keeps verified copies. Moving
   a pin means moving the lock entry and its package together.
-- JSC and QuickJS engine guests, `bun-tools.wasm` (lint, fmt) and Python or Git programs are not
+- JSC and QuickJS engine guests, `bun-tools.wasm` (lint, fmt) and Python programs are not
   pinned yet; add them to the lock when a slice needs them.
 
 ## Seams for the sibling lanes

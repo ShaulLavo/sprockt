@@ -100,20 +100,26 @@ export interface PortListener {
 
 async function installPrograms(runtime: Runtime, ports: PortListener | undefined): Promise<string> {
   installBunSharedObjects(runtime);
-  await installBunAdapters(runtime, {
+  const bun = installBunAdapters(runtime, {
     workerUrl: runtimeAssets.bunWorker,
     notificationWorkerUrl: runtimeAssets.bunNotificationWorker,
     engine: "browser",
     asset: runtimeAssets.bunGuest,
     network: { ...ports, fetch: createRuntimeFetch() },
   });
-  const base = await installBase(runtime, { launcher: programLauncher(runtimeAssets.programWorker) });
-  await runtime.programs.onDemand(createGitPackage({ interpreter: "/bin/bun" }));
-  await installShellCommands(runtime, {
+  const base = installBase(runtime, { launcher: programLauncher(runtimeAssets.programWorker) });
+  const shell = installShellCommands(runtime, {
     wasmUrl: runtimeAssets.shellGuest,
     workerUrl: runtimeAssets.shellWorker,
   });
-  return ["/bin"].concat(base.path).join(":");
+  // These installers own different executable paths. Wait for all of them before teardown
+  // on failure so a pending registration cannot race disposal.
+  const [installedBase, installedBun, installedShell] = await Promise.allSettled([base, bun, shell]);
+  if (installedBase.status === "rejected") throw installedBase.reason;
+  if (installedBun.status === "rejected") throw installedBun.reason;
+  if (installedShell.status === "rejected") throw installedShell.reason;
+  await runtime.programs.onDemand(createGitPackage({ interpreter: "/bin/bun" }));
+  return ["/bin"].concat(installedBase.value.path).join(":");
 }
 
 /**

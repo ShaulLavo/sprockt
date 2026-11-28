@@ -342,7 +342,7 @@ test("the pane's button starts a server entry file, and the pill stops it", asyn
   await expect(page.getByTestId("wb-preview-port-select")).toHaveCount(0);
 });
 
-test("the Bun.serve + bun:sqlite starter starts from the pane's button and renders", async ({ page }) => {
+test("the Bun.serve + bun:sqlite starter starts automatically and renders", async ({ page }) => {
   // The starter installs Bun's types from the npm registry inside the browser first: these are
   // hang caps for a download, not speed targets.
   test.setTimeout(900_000);
@@ -350,9 +350,7 @@ test("the Bun.serve + bun:sqlite starter starts from the pane's button and rende
   await page.goto("/");
   await page.getByTestId("template-bun-sqlite").click();
   await expect(page).toHaveURL(/\/w\/[a-z0-9-]+$/);
-  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
 
-  await page.getByTestId("preview-task").click();
   const app = frame(page);
   await expect(app.getByRole("heading")).toHaveText("Bun.serve + bun:sqlite", patient);
   await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("5173");
@@ -367,21 +365,34 @@ test("the Bun.serve + bun:sqlite starter starts from the pane's button and rende
   await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "running");
 });
 
-test("the Vite + React starter starts from the pane's button and renders", async ({ page }) => {
+test("the Vite + React starter starts automatically before opening Preview on a phone", async ({ page }) => {
   test.setTimeout(900_000);
   const patient = { timeout: 600_000 };
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
+  const started = performance.now();
   await page.getByTestId("template-vite-react").click();
   await expect(page).toHaveURL(/\/w\/[a-z0-9-]+$/);
-  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
 
-  await page.getByTestId("preview-task").click();
+  await expect(page.getByTestId("wb-preview-iframe")).toBeHidden();
+  await expect(page.getByTestId("dev-server")).toHaveText(":5173", patient);
+  await page.getByTestId("pane-switcher").getByRole("button", { name: "Preview" }).click();
   const app = frame(page);
   await expect(app.getByRole("heading")).toHaveText("Hello from bun.wasm", patient);
+  await test.info().attach("starter-cold-boot", {
+    body: JSON.stringify({ clickToPreviewMs: Math.round(performance.now() - started) }),
+    contentType: "application/json",
+  });
   await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("5173");
   await app.getByRole("button", { name: "count is 0" }).click();
   await expect(app.getByRole("button", { name: "count is 1" })).toBeVisible();
   await expect(page.getByTestId("preview-task")).toHaveAttribute("data-status", "running");
+  await page.getByTestId("wb-preview-reload").click();
+  await expect(app.getByRole("button", { name: "count is 0" })).toBeVisible();
+
+  await page.reload();
+  await page.getByTestId("pane-switcher").getByRole("button", { name: "Preview" }).click();
+  await expect(page.getByTestId("preview-start")).toBeVisible(patient);
 });
 
 test("a tab that takes the workspace over is not left following the old tab's dev server", async ({

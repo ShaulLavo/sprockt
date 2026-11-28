@@ -75,8 +75,7 @@ export interface WorkspaceMeta {
   /** What the importer detected, shown to the user. */
   readonly detected?: Pick<ProjectDetection, "framework" | "packageManager" | "devScript" | "port">;
   /**
-   * Install and dev-server commands still to run after an import. Removed by the first
-   * after-import handler that takes it, so it runs once across tabs and reloads.
+   * Install and dev-server commands to run on first open, once across tabs and reloads.
    */
   readonly pendingImport?: ImportPlan;
 }

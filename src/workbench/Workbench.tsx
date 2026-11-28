@@ -20,7 +20,6 @@ import { EditorPane } from "../editor/EditorPane";
 import { shouldAutoFocusEditor } from "../editor/focus-policy";
 import { createEditorStore, type EditorStore } from "../editor/store";
 import { Explorer } from "../explorer/Explorer";
-import { attachAfterImport } from "../importer/after-import";
 import { Scope, useValue } from "../lib/react";
 import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from "../lib/reactive";
 import { PreviewPane } from "../preview/pane/PreviewPane";
@@ -161,7 +160,6 @@ interface PaneScope {
 
 function createPanes(session: WorkspaceSession, frame: FrameState): PaneScope {
   const editor = createEditorStore(session);
-  onCleanup(attachAfterImport(session));
   onCleanup(
     session.terminals.onRevealRequest(() => {
       if (!frame.phone() && frame.layout.layout().terminalState !== "open") {

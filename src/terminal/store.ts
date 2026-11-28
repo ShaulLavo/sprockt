@@ -82,6 +82,7 @@ export function createTerminalStore(): TerminalStore {
   const handleWaiters = new Map<string, Set<(result: TerminalWaitResult) => void>>();
   const outputListeners = new Map<string, Set<(bytes: Uint8Array) => void>>();
   const revealListeners = new Set<() => void>();
+  let revealPending = false;
   let counter = 0;
   let stopped = false;
 
@@ -170,10 +171,15 @@ export function createTerminalStore(): TerminalStore {
       };
     },
     requestReveal() {
+      revealPending = revealListeners.size === 0;
       for (const listener of Array.from(revealListeners)) listener();
     },
     onRevealRequest(listener) {
       revealListeners.add(listener);
+      if (revealPending) {
+        revealPending = false;
+        listener();
+      }
       return () => revealListeners.delete(listener);
     },
     async shutdown() {
