@@ -10,7 +10,7 @@
 // rather than skip it, so a tab whose claim gave up is followed by one that can take over.
 import { withWorkspaceMetaLock } from "../workspace/hint";
 import type { WorkspaceSession } from "../workspace/session";
-import { INCOMPLETE, readMetaFile, writeMetaFile, type ImportPlan } from "./metadata";
+import { INCOMPLETE, readMetaFile, writeMetaFile, type ImportPlan } from "../workspace/metadata";
 
 export type AfterImportHandler = (session: WorkspaceSession, plan: ImportPlan) => void | Promise<void>;
 

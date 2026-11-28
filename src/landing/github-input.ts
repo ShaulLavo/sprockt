@@ -1,6 +1,6 @@
 // Parses user input from the "open any GitHub repo" bar into a typed GitHub Route.
 // Accepts owner/repo, owner/repo/tree/branch[/subdir], or any github.com URL.
-import { parseRoute, routePath, type Route } from "../app/routes";
+import { parseRoute, routePath, type Route } from "../routing/routes";
 
 export type GithubRoute = Extract<Route, { kind: "github" }>;
 
@@ -81,13 +81,9 @@ export function parseGithubInput(raw: string): GithubRoute | undefined {
   const repo = stripGitSuffix(rawRepo);
   if (!repo || repo === "." || repo === "..") return undefined;
 
-  const candidate =
-    segments.length === 2
-      ? ({ kind: "github", owner, repo } satisfies GithubRoute)
-      : marker === "tree" && branch
-        ? buildTreeRoute(owner, repo, branch, segments.slice(4))
-        : undefined;
-
+  let candidate: GithubRoute | undefined;
+  if (segments.length === 2) candidate = { kind: "github", owner, repo };
+  else if (marker === "tree" && branch) candidate = buildTreeRoute(owner, repo, branch, segments.slice(4));
   if (!candidate) return undefined;
   const parsed = parseRoute(routePath(candidate));
   return parsed.kind === "github" ? parsed : undefined;

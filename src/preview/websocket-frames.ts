@@ -129,23 +129,29 @@ interface Header {
   readonly payloadLength: number;
 }
 
+const EXTENDED_LENGTH_BYTES: readonly number[] = [2, 8];
+
+function readPayloadLength(bytes: Uint8Array, short: number): number {
+  if (short < 126) return short;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (short === 126) return view.getUint16(2);
+  return Number(view.getBigUint64(2));
+}
+
 function readHeader(bytes: Uint8Array): Header | undefined {
   const first = bytes[0];
   const second = bytes[1];
   if (first === undefined || second === undefined) return undefined;
   const short = second & 0x7f;
-  const extended = short === 126 ? 2 : short === 127 ? 8 : 0;
+  const extended = EXTENDED_LENGTH_BYTES[short - 126] ?? 0;
   if (bytes.length < 2 + extended) return undefined;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const payloadLength =
-    extended === 0 ? short : extended === 2 ? view.getUint16(2) : Number(view.getBigUint64(2));
   const masked = (second & 0x80) !== 0;
   return {
     fin: (first & 0x80) !== 0,
     opcode: first & 0x0f,
     masked,
     headerLength: 2 + extended + (masked ? 4 : 0),
-    payloadLength,
+    payloadLength: readPayloadLength(bytes, short),
   };
 }
 

@@ -1,4 +1,5 @@
 import { normalizePath } from "../lib/fs/path.ts";
+import { compareEntryPaths } from "../lib/fs/entries.ts";
 import { DEFAULT_FILE_MODE, type FileEntry } from "../lib/fs/types.ts";
 import { githubImportPath } from "../importer/github/source.ts";
 import {
@@ -197,7 +198,7 @@ export function applySnapshot(template: readonly FileEntry[], snapshot: ShareSna
   const files = new Map(template.map((entry) => [entry.path, entry]));
   for (const path of snapshot.deleted) files.delete(path);
   for (const entry of snapshot.files) files.set(entry.path, entry);
-  return Array.from(files.values()).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return Array.from(files.values()).sort(compareEntryPaths);
 }
 
 /** A link that imports (forks) a GitHub repository into a new workspace. */

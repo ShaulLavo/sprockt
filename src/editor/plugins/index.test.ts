@@ -6,7 +6,7 @@ import {
   registerEditorPlugins,
   type EditorHostContext,
   type EditorPluginProvider,
-} from "./plugins";
+} from ".";
 
 const host = {
   runtime: {} as Runtime,

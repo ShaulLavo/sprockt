@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { navigate } from "../app/router";
+import { navigate } from "../routing/router";
 import { browserWorkspaceDeps, openUnlessCancelled } from "../importer/browser-deps";
 import { COPY } from "../importer/copy";
 import { importErrorMessage } from "../importer/messages";
 import { createWorkspaceWithFiles } from "../importer/new-workspace";
 import { templateDefaultName } from "../templates/metadata";
-import { packageJsonName } from "../templates/workspace-meta";
+import { packageJsonName } from "../workspace/workspace-meta";
 import { saveWorkspaceHint } from "../workspace/hint";
 import { BLANK_TEMPLATE } from "./templates";
 import { restoreShare } from "./share-workspace";

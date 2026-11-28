@@ -6,7 +6,7 @@ Interactive WASI shell (`bash-web` + `bun-wasm` 1.4.5) rendered on a WebGPU/WebG
 
 - Multiple terminal tabs (`terminal-tab`, `new-terminal`), split terminal toggle, rename, close, and collapsible bottom panel (`terminal-panel`).
 - Live shell readiness indicator (`terminal-state`: `ready` once prompt is interactive).
-- Reactive Light/Dark theme synchronization (`src/terminal/theme.ts`, `TerminalView.tsx`), including when the terminal pane is hidden or mid-boot.
+- Reactive Light/Dark theme synchronization (`src/terminal/waffle-adapter.ts`, `src/terminal/pane/TerminalPanel.tsx`), including when the terminal pane is hidden or mid-boot.
 - Touch helper key toolbar (`term-keys`) on phone viewports (Esc, Tab, Ctrl, arrows).
 
 ## How to get to it (user POV)

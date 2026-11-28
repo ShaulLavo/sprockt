@@ -2,9 +2,9 @@
 // /.sprockt/workspace.json, see new-workspace.ts). Shared with the landing page and with
 // template seeding: anything that writes a new workspace through `createWorkspaceWithFiles`
 // gets the marker, and the landing list shows the result through `IncompleteImport`.
-import { routePath } from "../app/routes";
+import { routePath } from "../routing/routes";
 import { storageName } from "../workspace/paths";
-import { INCOMPLETE, parseMeta, WORKSPACE_META_PATH, type WorkspaceMeta } from "./metadata";
+import { INCOMPLETE, parseMeta, WORKSPACE_META_PATH, type WorkspaceMeta } from "../workspace/metadata";
 
 /** What `readIncomplete` needs from Waffle's idle workspace API (`openIdleWorkspace`). */
 export type OpenIdle = (selection: {

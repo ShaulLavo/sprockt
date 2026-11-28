@@ -7,8 +7,8 @@ import { Icon } from "../ui/icons";
 import { workspaceName } from "../workspace/hint";
 import type { WorkspaceSession } from "../workspace/session";
 import { ui } from "./copy";
-import { COMMAND, STATUS_SLOT, type Command } from "./slots";
-import { colorScheme, setColorScheme, type ColorScheme } from "./theme";
+import { COMMAND, STATUS_SLOT, type Command } from "../workspace/session/slots";
+import { colorScheme, setColorScheme, type ColorScheme } from "../ui/theme";
 
 /** Workspace actions, in title bar order. */
 const ACTIONS = [COMMAND.share, COMMAND.download] as const;

@@ -8,7 +8,7 @@ import {
   WORKSPACE_META_PATH,
   type ImportPlan,
   type WorkspaceMeta,
-} from "./metadata";
+} from "../workspace/metadata";
 
 const PLAN: ImportPlan = { install: { command: "bun", args: ["install"] }, dev: undefined, port: undefined };
 

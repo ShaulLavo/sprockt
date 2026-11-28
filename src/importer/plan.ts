@@ -2,10 +2,10 @@
 // the install and dev-server plan the after-import hook runs.
 import { decodeUtf8 } from "../lib/bytes";
 import type { FileEntry } from "../lib/fs/types";
-import type { Route } from "../app/routes";
+import type { Route } from "../routing/routes";
 import { detectProject, type ProjectDetection } from "./detect/detect";
 import type { GitHubSource } from "./github/source";
-import { isMetaPath, type ImportPlan } from "./metadata";
+import { isMetaPath, type ImportPlan } from "../workspace/metadata";
 
 export type { ImportPlan };
 

@@ -2,7 +2,7 @@
 // into the file set of a new workspace.
 import type { FileService } from "../files/service";
 import { COPY, fill } from "../importer/copy";
-import { isMetaPath, readMetaFile } from "../importer/metadata";
+import { isMetaPath, readMetaFile } from "../workspace/metadata";
 import type { FileEntry } from "../lib/fs/types";
 import type { WorkspaceSession } from "../workspace/session";
 import {

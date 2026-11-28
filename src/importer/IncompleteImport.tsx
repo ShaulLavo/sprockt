@@ -3,7 +3,7 @@ import { openIdleWorkspace } from "waffle";
 import { storageName } from "../workspace/paths";
 import { COPY, fill } from "./copy";
 import { readIncomplete, retryPath } from "./incomplete";
-import type { WorkspaceMeta } from "./metadata";
+import type { WorkspaceMeta } from "../workspace/metadata";
 import "./importer.css";
 
 /** The unfinished import's metadata of workspace `id`, once read; undefined while reading or when complete. */

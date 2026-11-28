@@ -1,7 +1,7 @@
-import type { DevServerStatus } from "../tasks/dev-server";
-import { fill } from "../ui/format";
-import type { StatusItem } from "../workbench/slots";
-import { ui } from "./copy";
+import type { DevServerStatus } from "../../tasks/dev-server";
+import { fill } from "../../ui/format";
+import type { StatusItem } from "../../workspace/session/slots";
+import { ui } from "../copy";
 
 /** A port as every place prints it: `:5173`. */
 export const portLabel = (port: number): string => fill(ui.port, { port });

@@ -1,9 +1,9 @@
 // Local workspace switcher: lists stored IndexedDB workspaces, opens, renames, retries, and deletes them.
 // Renders `<IncompleteRow>` (built on PR 4's `readIncomplete` / `retryPath`) for unfinished workspaces.
 import { useState } from "react";
-import type { WorkspaceMeta } from "../importer/metadata";
+import type { WorkspaceMeta } from "../workspace/metadata";
 import { templateLabel } from "../templates/metadata";
-import { formatRelativeTime } from "../templates/workspace-meta";
+import { formatRelativeTime } from "../workspace/workspace-meta";
 import { LANDING_COPY } from "./copy";
 import { Icon } from "./icons";
 import { IncompleteRow } from "./IncompleteRow";

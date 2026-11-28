@@ -1,7 +1,7 @@
 // The IDE frame. Desktop: title bar, activity bar, Explorer | Editor | Preview over a Terminal,
 // with drag handles between them, and a status bar. Phones and small tablets: one pane at a
 // time, picked from a tab bar at the bottom. Each slice's pane mounts into its own slot here,
-// and its service joins WorkspaceSession in workspace/session.ts.
+// and its service joins WorkspaceSession in workspace/session/index.ts.
 //
 // The frame's state (layout, window size, phone or not, the shown pane, the boot stage) lives in
 // reactive signals, not React state: the panes' own reactive code (presence, quick open, the
@@ -14,8 +14,8 @@ import {
   useLongPressContextMenu,
   WorkbenchPortalProvider,
 } from "@shaulavo/workbench";
-import { debugHandle } from "../app/debug";
-import { navigate } from "../app/router";
+import { debugHandle } from "../diagnostics/debug";
+import { navigate } from "../routing/router";
 import { EditorPane } from "../editor/EditorPane";
 import { shouldAutoFocusEditor } from "../editor/focus-policy";
 import { createEditorStore, type EditorStore } from "../editor/store";
@@ -23,11 +23,11 @@ import { Explorer } from "../explorer/Explorer";
 import { attachAfterImport } from "../importer/after-import";
 import { Scope, useValue } from "../lib/react";
 import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from "../lib/reactive";
-import { PreviewPane } from "../preview/PreviewPane";
+import { PreviewPane } from "../preview/pane/PreviewPane";
 import { workspaceIsOpenElsewhere, type BootStage } from "../runtime/boot";
 import { TAB_POLICY } from "../runtime/tab-policy";
 import { ShareButton } from "../share/ShareButton";
-import { TerminalPanel } from "../terminal/TerminalPanel";
+import { TerminalPanel } from "../terminal/pane/TerminalPanel";
 import { Icon } from "../ui/icons";
 import { workspaceTurnstile } from "../workspace/lifecycle";
 import { openWorkspace, WorkspaceContext, type WorkspaceSession } from "../workspace/session";
@@ -54,9 +54,9 @@ import { createLayoutStore, type LayoutStore } from "./layout-store";
 import { PaneSwitcher, type PhonePane } from "./PaneSwitcher";
 import { trackPresence } from "./presence";
 import { Splitter } from "./Splitter";
-import { COMMAND } from "./slots";
+import { COMMAND } from "../workspace/session/slots";
 import { StatusBar } from "./StatusBar";
-import { applyStoredTheme, colorScheme } from "./theme";
+import { applyStoredTheme, colorScheme } from "../ui/theme";
 import { TitleBar } from "./TitleBar";
 import "./workbench.css";
 

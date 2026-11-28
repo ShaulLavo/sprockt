@@ -1,13 +1,13 @@
 // Lightweight workspace discovery, rename, retry, and deletion for the landing page.
 // Cold landing performs only indexedDB.databases() and loads zero Waffle modules;
 // warm landing uses only Waffle's fs/ storage modules so waffle/runtime.ts stays unloaded.
-import type { WorkspaceSource } from "../importer/metadata";
+import type { WorkspaceSource } from "../workspace/metadata";
 import {
   parseWorkspaceMeta,
   WORKSPACE_META_PATH,
   type WorkspaceMeta,
   type WorkspaceState,
-} from "../templates/workspace-meta";
+} from "../workspace/workspace-meta";
 import {
   hasWorkspaceHints,
   mergeStoredWorkspaceMeta,
@@ -26,6 +26,8 @@ let storageQueue: Promise<unknown> = Promise.resolve();
 let discoverySeq = 0;
 let handoffSkipId: string | undefined;
 let handoffSkipThroughSeq = 0;
+// A database name and a busy lock are weaker evidence than a completed removal or missing result.
+const confirmedMissingIds = new Set<string>();
 
 function runSerialized<T>(task: () => Promise<T>): Promise<T> {
   const result = storageQueue.then(task, task);
@@ -82,6 +84,16 @@ function summaryFromMeta(
   };
 }
 
+function unverifiedWorkspace(id: string, openInOtherTab: boolean): StoredWorkspaceSummary | undefined {
+  if (confirmedMissingIds.has(id)) return undefined;
+  return summaryFromMeta(id, readWorkspaceHint(id), openInOtherTab);
+}
+
+function confirmWorkspaceMissing(id: string): void {
+  confirmedMissingIds.add(id);
+  removeWorkspaceHint(id);
+}
+
 function compareWorkspaces(a: StoredWorkspaceSummary, b: StoredWorkspaceSummary): number {
   if (a.openInOtherTab !== b.openInOtherTab) return a.openInOtherTab ? -1 : 1;
   const aTime = a.lastOpened ? Date.parse(a.lastOpened) : 0;
@@ -97,17 +109,24 @@ export function listStoredWorkspaces(): Promise<StoredWorkspaceSummary[]> {
     if (ids.length === 0) return [];
     const skipId = mySeq <= handoffSkipThroughSeq ? handoffSkipId : undefined;
 
-    const { inspectIdleWorkspaceMeta } = await import("./storage-discovery");
+    const { hasOpenIndexedDbWorkspace, inspectIdleWorkspaceMeta } = await import("./storage-discovery");
     const results = await Promise.all(
       ids.map(async (id): Promise<StoredWorkspaceSummary | undefined> => {
-        if (id === skipId) return summaryFromMeta(id, readWorkspaceHint(id), false);
+        if (id === skipId) return unverifiedWorkspace(id, false);
         try {
-          const outcome = await inspectIdleWorkspaceMeta(storageName(id), WORKSPACE_META_PATH);
+          const name = storageName(id);
+          const outcome = await inspectIdleWorkspaceMeta(name, WORKSPACE_META_PATH);
+          if (outcome.status === "missing") return undefined;
+          if (
+            outcome.status === "idle" ||
+            (confirmedMissingIds.has(id) && (await hasOpenIndexedDbWorkspace(name)))
+          ) {
+            confirmedMissingIds.delete(id);
+          }
+          if (outcome.status === "busy") return unverifiedWorkspace(id, true);
           // Re-read the hint after async disk inspection so a name adopted in another tab during
           // the probe is never overwritten by a stale pre-probe snapshot.
           const hint = readWorkspaceHint(id);
-          if (outcome.status === "missing") return undefined;
-          if (outcome.status === "busy") return summaryFromMeta(id, hint, true);
           const meta = outcome.rawMeta ? parseWorkspaceMeta(outcome.rawMeta) : undefined;
           if (meta) {
             const merged = mergeStoredWorkspaceMeta(id, meta, hint);
@@ -116,7 +135,7 @@ export function listStoredWorkspaces(): Promise<StoredWorkspaceSummary[]> {
           }
           return summaryFromMeta(id, hint, false);
         } catch {
-          return summaryFromMeta(id, readWorkspaceHint(id), false);
+          return unverifiedWorkspace(id, false);
         }
       }),
     );
@@ -131,7 +150,7 @@ export function deleteStoredWorkspace(id: string): Promise<"deleted" | "missing"
   return runSerialized(async () => {
     const { deleteIdleWorkspaceStorage } = await import("./storage-discovery");
     const result = await deleteIdleWorkspaceStorage(storageName(id));
-    if (result !== "busy") removeWorkspaceHint(id);
+    if (result !== "busy") confirmWorkspaceMissing(id);
     return result;
   });
 }
@@ -146,8 +165,11 @@ export function renameStoredWorkspace(
   return runSerialized(async () => {
     const { renameWorkspace } = await import("../templates/seed");
     const result = await renameWorkspace(id, nextName);
-    if (result.status === "renamed") saveWorkspaceHint(id, result.meta);
-    if (result.status === "missing") removeWorkspaceHint(id);
+    if (result.status === "renamed") {
+      confirmedMissingIds.delete(id);
+      saveWorkspaceHint(id, result.meta);
+    }
+    if (result.status === "missing") confirmWorkspaceMissing(id);
     return result;
   });
 }
@@ -164,8 +186,9 @@ export function retryStoredWorkspace(
     const { retrySeedWorkspace } = await import("../templates/seed");
     const result = await retrySeedWorkspace(id, templateId, name);
     if (result.status === "seeded") saveWorkspaceHint(id, result.meta);
-    if (result.status === "missing") removeWorkspaceHint(id);
+    if (result.status === "missing") confirmWorkspaceMissing(id);
     if (result.status === "seeded" || result.status === "already-ready") {
+      confirmedMissingIds.delete(id);
       handoffSkipId = id;
       handoffSkipThroughSeq = discoverySeq;
     }

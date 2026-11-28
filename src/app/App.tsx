@@ -1,8 +1,8 @@
 import { lazy, Suspense } from "react";
 import { Landing } from "../landing/Landing";
 import { useValue } from "../lib/react";
-import { currentRoute, navigate } from "./router";
-import { routePath, type Route } from "./routes";
+import { currentRoute, navigate } from "../routing/router";
+import { routePath, type Route } from "../routing/routes";
 
 // The workbench pulls in the editor, the terminal and the runtime; the landing page needs none.
 const Workbench = lazy(async () => ({ default: (await import("../workbench/Workbench")).Workbench }));

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { INCOMPLETE, parseMeta, serializeMeta, WORKSPACE_META_PATH } from "../importer/metadata";
+import { INCOMPLETE, parseMeta, serializeMeta, WORKSPACE_META_PATH } from "../workspace/metadata";
 import type { NewWorkspaceDeps, WorkspaceWriter } from "../importer/new-workspace";
 import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import {
@@ -11,7 +11,7 @@ import {
   type OpenRenameOptions,
   type RenameWorkspaceDeps,
 } from "./seed";
-import { createWorkspaceMeta, parseWorkspaceMeta } from "./workspace-meta";
+import { createWorkspaceMeta, parseWorkspaceMeta } from "../workspace/workspace-meta";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();

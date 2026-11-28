@@ -2,6 +2,13 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConsoleMessage, Page, Request, Response } from "@playwright/test";
+import { SELECTORS } from "./selectors";
+
+const APP_ROOTS = [
+  ["landing", SELECTORS.landing.page],
+  ["workbench", SELECTORS.workbench.root],
+  ["import", SELECTORS.importer.page],
+] as const;
 
 export interface ObservedProblems {
   readonly pageErrors: string[];
@@ -63,18 +70,10 @@ function formatStamp(date: Date): string {
 }
 
 async function snapshotLayout(page: Page): Promise<LayoutSnapshot> {
-  return page.evaluate(() => {
+  return page.evaluate((roots) => {
     const docEl = document.documentElement;
     const body = document.body;
-    const appSurface: "landing" | "workbench" | "import" | "unknown" = document.querySelector(
-      '[data-testid="landing-page"]',
-    )
-      ? "landing"
-      : document.querySelector('[data-testid="workbench"]')
-        ? "workbench"
-        : document.querySelector('[data-testid="import-page"]')
-          ? "import"
-          : "unknown";
+    const appSurface = roots.find(([, selector]) => document.querySelector(selector))?.[0] ?? "unknown";
     const alerts = Array.from(document.querySelectorAll('[role="alert"]'))
       .filter((el) => {
         const rect = el.getBoundingClientRect();
@@ -108,7 +107,7 @@ async function snapshotLayout(page: Page): Promise<LayoutSnapshot> {
       brokenImages,
       iframes,
     };
-  });
+  }, APP_ROOTS);
 }
 
 function recordResponse(observed: ObservedProblems, res: Response): void {

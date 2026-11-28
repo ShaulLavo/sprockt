@@ -23,20 +23,6 @@
     {
       "files": ["scripts/**"],
       "rules": { "no-console": "off" }
-    },
-    {
-      "files": [
-        "scripts/agent/evidence.ts",
-        "src/landing/github-input.ts",
-        "src/lib/fs/entries.ts",
-        "src/preview/websocket-frames.ts",
-        "src/share/share.ts",
-        "src/workbench/theme.ts"
-      ],
-      "rules": {
-        "no-nested-ternary": "off",
-        "unicorn/no-nested-ternary": "off"
-      }
     }
   ],
   "ignorePatterns": [

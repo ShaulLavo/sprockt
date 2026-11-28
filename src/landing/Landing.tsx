@@ -7,8 +7,8 @@
 import jetbrainsMonoLatinUrl from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url";
 import schibstedLatinUrl from "@fontsource-variable/schibsted-grotesk/files/schibsted-grotesk-latin-wght-normal.woff2?url";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { navigate } from "../app/router";
-import { routePath, type Route } from "../app/routes";
+import { navigate } from "../routing/router";
+import { routePath, type Route } from "../routing/routes";
 import { useValue } from "../lib/react";
 import {
   BLANK_TEMPLATE_SUMMARY,
@@ -17,7 +17,7 @@ import {
   type TemplateSummary,
 } from "../templates/metadata";
 import { SprocktLogo } from "../ui/SprocktLogo";
-import { applyStoredTheme, colorScheme, setColorScheme } from "../workbench/theme";
+import { applyStoredTheme, colorScheme, setColorScheme } from "../ui/theme";
 import { onWorkspaceWriterSettled } from "../workspace/hint";
 import { LANDING_COPY } from "./copy";
 import { mountGrainGradient, type GrainGradientController } from "./effects/grain-gradient";

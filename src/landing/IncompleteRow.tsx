@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { COPY, fill } from "../importer/copy";
 import { readIncomplete, retryPath, type OpenIdle } from "../importer/incomplete";
-import { INCOMPLETE, WORKSPACE_META_PATH, type WorkspaceMeta } from "../importer/metadata";
+import { INCOMPLETE, WORKSPACE_META_PATH, type WorkspaceMeta } from "../workspace/metadata";
 import { LANDING_COPY } from "./copy";
 import { Icon } from "./icons";
 import { deleteStoredWorkspace } from "./workspaces";

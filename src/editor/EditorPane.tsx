@@ -12,7 +12,7 @@ import { useScope, useValue } from "../lib/react";
 import { createEffect, createMemo, onCleanup, type Accessor } from "../lib/reactive";
 import type { PaletteCommand } from "../search/commands";
 import { QuickOpen } from "../search/QuickOpen";
-import { COMMAND, type Commands } from "../workbench/slots";
+import { COMMAND, type Commands } from "../workspace/session/slots";
 import { SearchPanel } from "../search/SearchPanel";
 import { AlertIcon, ChevronIcon } from "../search/icons";
 import { useWorkspace } from "../workspace/session";

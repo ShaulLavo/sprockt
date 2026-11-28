@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createEffect, createRoot } from "../lib/reactive";
-import {
-  createWorkspaceMeta,
-  serializeWorkspaceMeta,
-  updateWorkspaceMetaName,
-} from "../templates/workspace-meta";
+import { createWorkspaceMeta, serializeWorkspaceMeta, updateWorkspaceMetaName } from "./workspace-meta";
 import {
   adoptUploadedWorkspaceName,
   handleHintStorageEvent,

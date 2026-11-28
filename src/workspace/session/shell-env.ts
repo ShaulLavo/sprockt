@@ -1,4 +1,4 @@
-import type { ShellSettings } from "../runtime/boot";
+import type { ShellSettings } from "../../runtime/boot";
 
 /**
  * The settings every shell of a workspace starts with, with what its preview transport needs a

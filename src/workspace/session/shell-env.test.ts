@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { previewHostEnv } from "bun-wasm/preview-origins";
-import type { ShellSettings } from "../runtime/boot";
+import type { ShellSettings } from "../../runtime/boot";
 import { withServerEnv } from "./shell-env";
 
 const shell: ShellSettings = {

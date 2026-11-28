@@ -2,7 +2,7 @@
 // had when it was last created, renamed, hydrated or listed here. Reactive via `hintRevision`, so
 // the title bar, boot screen and explorer update immediately when a workspace's real name is
 // hydrated from `/.sprockt/workspace.json` or `package.json`.
-import { INCOMPLETE } from "../importer/metadata";
+import { INCOMPLETE } from "./metadata";
 import { createSignal } from "../lib/reactive";
 import {
   deriveGitHubWorkspaceName,
@@ -15,7 +15,7 @@ import {
   serializeWorkspaceMeta,
   type PartialWorkspaceMeta,
   type WorkspaceMeta,
-} from "../templates/workspace-meta";
+} from "./workspace-meta";
 
 export const WORKSPACE_HINT_PREFIX = "sprockt:ws-meta:";
 export const WORKSPACE_PENDING_NAME_PREFIX = "sprockt:ws-pending-name:";

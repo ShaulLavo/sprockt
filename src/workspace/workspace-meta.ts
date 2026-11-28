@@ -8,7 +8,7 @@ import {
   WORKSPACE_META_PATH,
   type WorkspaceMeta as ImporterWorkspaceMeta,
   type WorkspaceSource,
-} from "../importer/metadata";
+} from "./metadata";
 
 export {
   deriveGitHubWorkspaceName,

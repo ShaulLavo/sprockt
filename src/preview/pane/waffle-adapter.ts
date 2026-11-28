@@ -7,10 +7,10 @@ import type {
   PreviewServerInfo,
   Subscribable,
 } from "@shaulavo/workbench/core";
-import { frameCommand, type FrameMessage } from "./bridge";
-import { normalizePreviewPath } from "./paths";
+import { frameCommand, type FrameMessage } from "../bridge";
+import { normalizePreviewPath } from "../paths";
 import { listedPorts } from "./server-status";
-import type { PreviewServer, PreviewTransport } from "./transport";
+import type { PreviewServer, PreviewTransport } from "../transport";
 
 function withoutFragment(path: string): string {
   const hash = path.indexOf("#");

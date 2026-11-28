@@ -7,7 +7,13 @@
 // never deletes a workspace on its own: failure or cancellation closes the writer and leaves
 // the incomplete marker intact so Retry or explicit Delete owns cleanup.
 import { newWorkspaceId, PROJECT_ROOT } from "../workspace/paths";
-import { INCOMPLETE, readMetaFile, writeMetaFile, type MetaFilesystem, type WorkspaceMeta } from "./metadata";
+import {
+  INCOMPLETE,
+  readMetaFile,
+  writeMetaFile,
+  type MetaFilesystem,
+  type WorkspaceMeta,
+} from "../workspace/metadata";
 
 export interface WorkspaceWriterFilesystem extends MetaFilesystem {
   /** Removes a file or directory subtree at `path`; no-op if absent. */
