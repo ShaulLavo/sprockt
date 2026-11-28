@@ -204,7 +204,7 @@ interface AttachedSessionRecord {
 export interface WaffleTerminalBridge {
   readonly adapter: TerminalAdapter;
   bindTerminalHandle(sessionId: string, terminal: Terminal): void;
-  reportRendererError(message: string, cause?: unknown): void;
+  reportRendererError(sessionId: string, message: string, cause?: unknown): void;
   clearTerminal(terminal: Terminal, attachment: TerminalAttachment | null): void;
 }
 
@@ -416,15 +416,11 @@ export function createWaffleTerminalBridge(
     terminals.attach(sessionId, handle);
   }
 
-  function reportRendererError(message: string, cause?: unknown): void {
+  function reportRendererError(sessionId: string, message: string, cause?: unknown): void {
     if (cause !== undefined && consumeAdapterError(cause)) return;
-    const { tabs, focused } = terminals.tabs();
-    const isStartingWithoutHandle = (id: string) =>
-      !terminals.handle(id) && terminals.stateOf(id) === "starting";
-    const target =
-      (focused && isStartingWithoutHandle(focused) ? focused : undefined) ??
-      tabs.find((tab) => isStartingWithoutHandle(tab.id))?.id;
-    if (target) terminals.setState(target, "failed", message);
+    if (!terminals.handle(sessionId) && terminals.stateOf(sessionId) === "starting") {
+      terminals.setState(sessionId, "failed", message);
+    }
   }
 
   return { adapter, bindTerminalHandle, reportRendererError, clearTerminal };

@@ -5,7 +5,6 @@ import type { ProjectFs } from "../../lib/fs/types.ts";
 
 const IGNORED_DIRS = new Set(["node_modules", ".git", ".sprockt", "dist", "build", ".next", ".nuxt"]);
 const MAX_BRACE_EXPANSIONS = 256;
-const MAX_GLOBSTAR_DEPTH = 12;
 
 function stripInlineComment(line: string): string {
   let quote: "'" | '"' | undefined;
@@ -335,7 +334,7 @@ function compilePattern(pattern: string): CompiledPattern | undefined {
     });
   }
   const hasGlobstar = segments.some((segment) => segment.globstar);
-  const maxDepth = hasGlobstar ? Math.max(MAX_GLOBSTAR_DEPTH, segments.length + 4) : segments.length;
+  const maxDepth = hasGlobstar ? Number.POSITIVE_INFINITY : segments.length;
   return { segments, hasGlobstar, maxDepth };
 }
 

@@ -515,8 +515,8 @@ describe("detectProjectInFs", () => {
     expect(fromFs.targets.map((t) => t.id)).toEqual(["dev"]);
   });
 
-  test("applies identical globstar depth limits in path-based and filesystem workspace detection", async () => {
-    const deepDir = "packages/a/b/c/d/e/f/g/h/i/j/k/m"; // 13 segments (exceeds globstar cap of 12)
+  test("discovers deep globstar workspaces consistently in both path-based and filesystem detection", async () => {
+    const deepDir = "packages/a/b/c/d/e/f/g/h/i/j/k/m"; // 13 segments deep
     const files: Record<string, string> = {
       "package.json": JSON.stringify({ name: "mono", workspaces: ["packages/**"] }),
       [`${deepDir}/package.json`]: JSON.stringify({ name: "deep", scripts: { dev: "bun server.ts" } }),
@@ -528,8 +528,9 @@ describe("detectProjectInFs", () => {
       Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
     );
     const fromFs = await detectProjectTargetsInFs(fs);
-    expect(fromPaths.targets.map((t) => t.dir)).toEqual(fromFs.targets.map((t) => t.dir));
-    expect(fromPaths.targets).toEqual([]);
-    expect(fromPaths.detection.dev).toBeUndefined();
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual([deepDir]);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual([deepDir]);
+    expect(fromPaths.defaultTargetId).toBe(`${deepDir}:dev`);
+    expect(fromFs.defaultTargetId).toBe(`${deepDir}:dev`);
   });
 });
