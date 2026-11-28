@@ -10,6 +10,7 @@ import {
 } from "waffle/fs/indexeddb";
 import { PersistentBackend } from "waffle/fs/persistent";
 import { FilesystemError } from "waffle/fs/protocol";
+import { notifyWorkspaceWriterSettled } from "../workspace/hint";
 import { isWorkspaceId, PROJECT_ROOT, projectPath, storageName } from "../workspace/paths";
 import { replaceRoute } from "./navigation";
 import type { NewWorkspaceDeps, WorkspaceWriter } from "./new-workspace";
@@ -90,7 +91,11 @@ function createBackendWriter(backend: PersistentBackend): WorkspaceWriter {
       },
     },
     async dispose(): Promise<void> {
-      await backend.retireFenced();
+      try {
+        await backend.retireFenced();
+      } finally {
+        notifyWorkspaceWriterSettled();
+      }
     },
   };
 }
@@ -136,12 +141,17 @@ export async function createNewBrowserWriter(
   try {
     const backend = await PersistentBackend.open(storage, { intervalMs: 0 });
     if (backend.hasLoadedIndex) {
-      await backend.retireFenced();
+      try {
+        await backend.retireFenced();
+      } finally {
+        notifyWorkspaceWriterSettled();
+      }
       return "taken";
     }
     return createBackendWriter(backend);
   } catch (error) {
     await storage.close().catch(() => undefined);
+    notifyWorkspaceWriterSettled();
     throw error;
   }
 }
@@ -174,12 +184,17 @@ export async function openExistingBrowserWriter(
   try {
     const backend = await PersistentBackend.open(storage, { intervalMs: 0, signal });
     if (!backend.hasLoadedIndex) {
-      await backend.retireFenced();
+      try {
+        await backend.retireFenced();
+      } finally {
+        notifyWorkspaceWriterSettled();
+      }
       return "missing";
     }
     return createBackendWriter(backend);
   } catch (error) {
     await storage.close().catch(() => undefined);
+    notifyWorkspaceWriterSettled();
     throw error;
   }
 }

@@ -698,33 +698,25 @@ test("cancelling a share restore after IndexedDB opens still persists the incomp
   const id = dbName.slice("sprockt-".length);
 
   // Replace the share fragment to cancel the in-flight attempt right after IDB schema creation,
-  // then release the writer-lock request so creation finishes persisting the incomplete marker.
+  // then return to Sprockt BEFORE releasing the writer lock so landing initially sees it busy.
   await page.evaluate(() => {
     location.hash = "#share=not-a-real-link";
   });
   await expect(page.getByTestId("share-error")).toBeVisible();
+  await page.getByRole("button", { name: "Back to Sprockt" }).click();
+
+  const row = page.getByTestId("workspace-list").locator("li", { hasText: id });
+  await expect(row).toBeVisible();
+  await expect(page.getByTestId(`workspace-live-${id}`)).toBeVisible();
+
+  // Release the paused writer lock while staying on the same landing page; once the writer flushes
+  // the incomplete marker and closes, the landing page must refresh automatically to expose Delete.
   await page.evaluate(() => {
     (globalThis as unknown as { sprocktReleaseShareLock?: () => void }).sprocktReleaseShareLock?.();
   });
-
-  // Wait until the background writer finishes flushing the incomplete marker and releases Waffle's
-  // maintenance lock (held continuously from before the pause until writer.dispose() completes).
-  await expect
-    .poll(() =>
-      page.evaluate(async (target) => {
-        const snapshot = await navigator.locks.query();
-        return (
-          snapshot.held?.some(
-            (lock) => lock.name === `bun-wasm:filesystem:indexeddb-maintenance:${target}`,
-          ) ?? false
-        );
-      }, dbName),
-    )
-    .toBe(false);
-
-  await page.getByRole("button", { name: "Back to Sprockt" }).click();
-  const row = page.getByTestId("workspace-list").locator("li", { hasText: id });
   await expect(row.getByTestId("incomplete-import")).toBeVisible();
+  await expect(page.getByTestId(`workspace-live-${id}`)).toHaveCount(0);
+
   await row.getByTestId("incomplete-delete").click();
   await row.getByTestId("incomplete-confirm-delete").click();
   await expect(row).toHaveCount(0);

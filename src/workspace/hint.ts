@@ -21,6 +21,26 @@ export const WORKSPACE_HINT_PREFIX = "sprockt:ws-meta:";
 export const WORKSPACE_PENDING_NAME_PREFIX = "sprockt:ws-pending-name:";
 
 const [hintRevision, setHintRevision] = createSignal(0);
+const writerSettledListeners = new Set<() => void>();
+
+/** Subscribes to notifications that a same-tab workspace writer finished closing its storage lock. */
+export function onWorkspaceWriterSettled(listener: () => void): () => void {
+  writerSettledListeners.add(listener);
+  return () => {
+    writerSettledListeners.delete(listener);
+  };
+}
+
+/** Notifies same-tab views (such as the landing list) that a background workspace writer closed. */
+export function notifyWorkspaceWriterSettled(): void {
+  for (const listener of Array.from(writerSettledListeners)) {
+    try {
+      listener();
+    } catch {
+      // Keep notifying other subscribers.
+    }
+  }
+}
 /**
  * In-memory fallback populated only when `localStorage.setItem` throws (private mode or full
  * quota). Preferred over stale `localStorage` entries until another write succeeds or storage

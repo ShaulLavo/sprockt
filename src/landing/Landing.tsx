@@ -18,6 +18,7 @@ import {
 } from "../templates/metadata";
 import { SprocktLogo } from "../ui/SprocktLogo";
 import { applyStoredTheme, colorScheme, setColorScheme } from "../workbench/theme";
+import { onWorkspaceWriterSettled } from "../workspace/hint";
 import { LANDING_COPY } from "./copy";
 import { mountGrainGradient, type GrainGradientController } from "./effects/grain-gradient";
 import { FeatureCards } from "./FeatureCards";
@@ -217,10 +218,12 @@ export function Landing() {
       if (event.key === "Escape") setMenuOpen(false);
     }
     void refreshWorkspaces();
+    const unsubscribeWriter = onWorkspaceWriterSettled(() => void refreshWorkspaces());
     document.addEventListener("visibilitychange", refreshOnVisible);
     window.addEventListener("focus", refreshOnVisible);
     window.addEventListener("keydown", closeMenuOnEscape);
     return () => {
+      unsubscribeWriter();
       document.removeEventListener("visibilitychange", refreshOnVisible);
       window.removeEventListener("focus", refreshOnVisible);
       window.removeEventListener("keydown", closeMenuOnEscape);
