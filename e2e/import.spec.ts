@@ -2,6 +2,7 @@ import { gzipSync } from "node:zlib";
 import type { Page, Route } from "@playwright/test";
 import { buildTar, paxBody, type TarFixtureEntry } from "../src/importer/github/tar-writer.ts";
 import { encodeShareFragment } from "../src/share/share.ts";
+import { storageName } from "../src/workspace/paths";
 import { createGitHubProxy } from "../worker/github-proxy.ts";
 import { expect, runInTerminal, terminalText, test } from "./helpers";
 
@@ -564,73 +565,42 @@ test("Retry and Rename on deleted workspaces refuse without recreating their Ind
   await page.getByTestId("workspace-delete-deletedren").click();
   await expect(page.getByTestId("workspace-delete-confirm-deletedren")).toBeVisible();
 
-  // Pause Delete on OpfsStorage.claimIdle (which runs inside the exclusive maintenance + writer
-  // locks, before deleteDatabase() runs, and is never requested by listStoredWorkspaces refreshes).
-  await page.evaluate(() => {
-    const lockManager = navigator.locks;
-    const realRequest = lockManager.request.bind(lockManager);
-    let releaseDelete!: () => void;
-    const resumeDelete = new Promise<void>((resolve) => {
-      releaseDelete = resolve;
+  const databaseName = storageName("deletedren");
+  // An open connection blocks deleteDatabase() while Delete holds the maintenance lock.
+  const blocker = await page.evaluateHandle(async (name) => {
+    const opened = Promise.withResolvers<IDBDatabase>();
+    const request = indexedDB.open(name);
+    request.addEventListener("upgradeneeded", () => request.transaction?.abort(), { once: true });
+    request.addEventListener("error", () => opened.reject(request.error), { once: true });
+    request.addEventListener("success", () => opened.resolve(request.result), { once: true });
+    const state = { database: await opened.promise, deleting: false };
+    state.database.addEventListener("versionchange", (event) => {
+      state.deleting = event.newVersion === null;
     });
-    const host = globalThis as unknown as {
-      sprocktDeletePaused?: boolean;
-      sprocktResumeDelete?: () => void;
-    };
-    host.sprocktDeletePaused = false;
-    host.sprocktResumeDelete = releaseDelete;
-    let armed = true;
-    lockManager.request = ((name: string, optionsOrCallback: unknown, maybeCallback?: unknown) => {
-      const hasOptions = typeof optionsOrCallback !== "function";
-      const callback = (hasOptions ? maybeCallback : optionsOrCallback) as (lock: Lock | null) => unknown;
-      if (armed && name === "bun-wasm:filesystem:sprockt-deletedren") {
-        armed = false;
-        host.sprocktDeletePaused = true;
-        return resumeDelete.then(() =>
-          hasOptions
-            ? realRequest(name, optionsOrCallback as LockOptions, callback)
-            : realRequest(name, callback),
-        );
-      }
-      return hasOptions
-        ? realRequest(name, optionsOrCallback as LockOptions, callback)
-        : realRequest(name, callback);
-    }) as typeof lockManager.request;
-  });
+    return state;
+  }, databaseName);
 
-  await page.getByTestId("workspace-delete-confirm-deletedren").click();
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () => (globalThis as unknown as { sprocktDeletePaused?: boolean }).sprocktDeletePaused === true,
-      ),
-    )
-    .toBe(true);
-  // The database still exists while Delete holds the maintenance lock.
-  expect(await storedIn(page, "deletedren")).toBe(true);
+  try {
+    await page.getByTestId("workspace-delete-confirm-deletedren").click();
+    await expect.poll(() => blocker.evaluate((state) => state.deleting)).toBe(true);
 
-  // Submit the already-open rename form without focusing renameTab first so Landing's focus refresh
-  // cannot clear the row before renameWorkspace() races Delete on the maintenance lock.
-  await renameTab.getByTestId("workspace-rename-save-deletedren").evaluate((button) => {
-    (button as HTMLButtonElement).form?.requestSubmit();
-  });
-  await expect
-    .poll(() =>
-      renameTab.evaluate(async () => {
-        const snapshot = await navigator.locks.query();
-        return (
-          snapshot.pending?.some(
-            (lock) => lock.name === "bun-wasm:filesystem:indexeddb-maintenance:sprockt-deletedren",
-          ) ?? false
-        );
-      }),
-    )
-    .toBe(true);
-
-  // Let Delete remove the database and release the maintenance lock while Rename is waiting on it.
-  await page.evaluate(() => {
-    (globalThis as unknown as { sprocktResumeDelete?: () => void }).sprocktResumeDelete?.();
-  });
+    // Submit without focusing the tab so its focus refresh cannot clear the rename form first.
+    await renameTab.getByTestId("workspace-rename-save-deletedren").evaluate((button) => {
+      (button as HTMLButtonElement).form?.requestSubmit();
+    });
+    const maintenanceLock = `bun-wasm:filesystem:indexeddb-maintenance:${databaseName}`;
+    await expect
+      .poll(() =>
+        renameTab.evaluate(async (lockName) => {
+          const snapshot = await navigator.locks.query();
+          return snapshot.pending?.some((lock) => lock.name === lockName) ?? false;
+        }, maintenanceLock),
+      )
+      .toBe(true);
+  } finally {
+    await blocker.evaluate((state) => state.database.close());
+    await blocker.dispose();
+  }
   await expect(page.getByTestId("workspace-row-deletedren")).toHaveCount(0);
   await expect(renameTab.getByTestId("workspace-row-deletedren")).toHaveCount(0);
 
