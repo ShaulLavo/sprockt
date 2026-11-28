@@ -96,7 +96,9 @@ export const starterDevServerScenario: AgentScenario = {
     timing.mark("previewRenderedMs");
     const report = await timing.report(page);
     evidence.writeJson("cold-boot.json", report);
-    evidence.notes.push(`Cold boot in ms from starter activation: ${JSON.stringify(report.milestones)}`);
+    evidence.notes.push(
+      `Cold boot in ms from starter activation: ${JSON.stringify(report.milestonesSinceActivation)}`,
+    );
     await evidence.capture(page, "auto-started-preview");
 
     if (args.starter === "vite-react") {

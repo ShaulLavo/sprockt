@@ -65,7 +65,7 @@ Built-in scenarios live in `scripts/agent/scenarios/`:
 
 - `landing-desktop-mobile` (`read-only`): checks the landing page at `1440x900` and `390x844` in light and dark modes, zero overflow, and all 7 starter cards present.
 - `starter-dev-server` (`live`-capable): opens a starter (`--starter vite-react` by default), asserts first-open auto-start without clicking **Start dev server** (on phone, waits for `preview-task` to reach `running` and `preview-port` to attach before tapping **Preview**), writes `cold-boot.json`, and captures `01-auto-started-preview.png`. For `vite-react`, it clicks the counter, clicks preview reload (`wb-preview-reload`) to prove the counter resets while the server stays up, and on desktop edits `src/App.tsx` to verify React HMR updates the heading without resetting the counter and leaves zero `lsp-plugin-error` ranges (`02-hmr-updated.png`).
-- `github-real-repo` (`live`-capable): imports an immutable public GitHub repository from its real archive, runs `bun install`, waits for the preview to render, and captures evidence. Supports `--url https://sprockt.dev/ --live`.
+- `github-real-repo` (`live`-capable): runs two immutable public GitHub imports from their real archives. The first runs `bun install` to prove workspace linkage, catalog versions, and an override. The second imports a separate Vite project, runs `bun install`, and verifies the served preview renders. It writes `cold-boot.json` with timings relative to activation and browser navigation for each import, and captures evidence. Supports `--url https://sprockt.dev/ --live`.
 - `workbench-tabs-and-explorer`: filters the file tree, opens a second tab, creates and edits a new file, and opens the command palette.
 - `mobile-workbench`: runs at `390x844` with real touch input (`hasTouch: true`, `.tap()`), verifies tab switching never focuses the editor (keeping the soft keyboard closed), checks that an explicit editor tap focuses it, and confirms that toggling Light to Dark while the Terminal pane is hidden syncs Ghostty to a dark theme on reveal.
 - `github-import-and-share`: checks landing repo input validation and round-trips a `/s#share=...` snapshot into a fresh isolated browser context.
@@ -78,7 +78,7 @@ Every run creates `<OS temp>/sprockt-evidence/<stamp>-<verb>-<label>/` (override
 
 - `summary.md`: concise PASS/FAIL report printed to stdout
 - `01-*.png`, `02-*.png`, ...: viewport and step screenshots
-- `cold-boot.json`: milestone timings (`workspaceOpenedMs`, `workbenchReadyMs`, `serverListeningMs`, `previewRenderedMs`) and resource timings for `.wasm`, `/api/github/`, and boot/worker assets (written by `starter-dev-server` and cold-boot scenarios)
+- `cold-boot.json`: milestone timings relative to activation (`milestonesSinceActivation`) and resource timings relative to browser navigation (`resourcesSinceNavigation` for `.wasm`, `/api/github/`, and boot/worker assets), written by `starter-dev-server` and recorded per import by `github-real-repo`
 - `observed.json`: `pageErrors`, `consoleErrors`, `consoleWarnings`, `failedRequests`, `badResponses`
 - `layout.json`: viewport dimensions, `overflowX`, `crossOriginIsolated`, theme state, visible alerts, broken images, iframe geometry
 - `server.log`: throwaway `vite preview` stdout and stderr (for local runs)

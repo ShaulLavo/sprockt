@@ -24,7 +24,7 @@ export function startBootTiming() {
             decodedBytes: entry.decodedBodySize,
           })),
       );
-      return { milestones, resources };
+      return { milestonesSinceActivation: milestones, resourcesSinceNavigation: resources };
     },
   };
 }

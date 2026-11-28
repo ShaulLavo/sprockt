@@ -23,7 +23,7 @@ bun run agent:browser scenario github-real-repo --url https://sprockt.dev/ --liv
 ```
 
 - `github-import-and-share` validates inline repo error handling on `/`, creates a marker file inside a fresh starter workspace, triggers the real **Share** button to copy a `/s#share=...` URL, opens that URL in a clean isolated browser context, and asserts the marker file restores byte-for-byte.
-- `github-real-repo` (paired with a Playwright E2E spec) imports an immutable public GitHub repository from its real archive, runs `bun install`, and verifies the preview renders. It also supports exact production verification via `--url https://sprockt.dev/ --live`.
+- `github-real-repo` (paired with a Playwright E2E spec) runs two immutable public GitHub imports from their real archives. The first runs `bun install` to prove workspace linkage, catalog versions, and an override. The second imports a separate Vite project, runs `bun install`, and verifies the served preview renders. Its `cold-boot.json` records timings relative to activation and browser navigation for each import. It also supports exact production verification via `--url https://sprockt.dev/ --live`.
 
 ## Gotchas
 

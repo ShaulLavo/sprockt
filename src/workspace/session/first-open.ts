@@ -17,7 +17,8 @@ export function runFirstOpenPlan(
       const meta = await readMetaFile(filesystem);
       if (!meta?.pendingImport || meta.state === INCOMPLETE || signal.aborted) return;
       const { pendingImport, ...rest } = meta;
-      await Promise.all([run(pendingImport), writeMetaFile(filesystem, rest)]);
+      await run(pendingImport);
+      if (!signal.aborted) await writeMetaFile(filesystem, rest);
     },
     signal,
   );

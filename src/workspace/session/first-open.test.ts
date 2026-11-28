@@ -4,6 +4,7 @@ import {
   INCOMPLETE,
   readMetaFile,
   serializeMeta,
+  writeMetaFile,
   type ImportPlan,
   type MetaFilesystem,
   type WorkspaceMeta,
@@ -81,4 +82,29 @@ test("a failed metadata write is reported and leaves the plan", async () => {
   };
   await expect(runFirstOpenPlan(failed, () => {})).rejects.toThrow("write failed");
   expect((await readMetaFile(opened.filesystem))?.pendingImport).toEqual(PLAN);
+});
+
+test("a failed handoff leaves the plan and releases the lock before a later rename", async () => {
+  const opened = workspace("handoff-failed");
+  const handoff = Promise.withResolvers<void>();
+  const entered = Promise.withResolvers<void>();
+  const attempt = runFirstOpenPlan(opened, () => {
+    entered.resolve();
+    return handoff.promise;
+  });
+  await entered.promise;
+  const rename = withWorkspaceMetaLock(opened.id, async () => {
+    const meta = await readMetaFile(opened.filesystem);
+    if (!meta) throw new Error("Missing workspace metadata");
+    await writeMetaFile(opened.filesystem, { ...meta, name: "renamed" });
+  });
+
+  handoff.reject(new Error("startup failed"));
+  await expect(attempt).rejects.toThrow("startup failed");
+  await rename;
+  expect(await readMetaFile(opened.filesystem)).toEqual({
+    name: "renamed",
+    created: "",
+    pendingImport: PLAN,
+  });
 });

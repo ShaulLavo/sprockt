@@ -179,7 +179,7 @@ program it runs.
 
 ### First-open startup
 
-`WorkspaceSession` (`workspace/session/index.ts`) owns `devServer` directly instead of leaving it to `PreviewPane`. Both starter seeding (`templates/seed.ts`) and GitHub imports store a `pendingImport` plan in `/.sprockt/workspace.json` when project detection finds an install or dev command.
+`WorkspaceSession` (`workspace/session/index.ts`) owns `devServer` directly instead of leaving it to `PreviewPane`. Starter seeding (`templates/seed.ts`) stores a `pendingImport` plan in `/.sprockt/workspace.json` when project detection finds a dev command, while GitHub imports (`importer/ImportPage.tsx`) store one when project detection finds an install or dev command.
 
 Right after `openWorkspace` creates `devServer` and the initial terminal, it calls `runFirstOpenPlan` (`workspace/session/first-open.ts`). Under the workspace metadata lock, `runFirstOpenPlan` reads `/.sprockt/workspace.json`, skips incomplete (`state: "importing"`) or aborted sessions, starts the plan (`devServer.start()` when `plan.dev` is set, or reveals the terminal and runs `bun install` in a `dev` tab when only `plan.install` is set), and clears and flushes `pendingImport`.
 

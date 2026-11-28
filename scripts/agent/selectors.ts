@@ -27,7 +27,6 @@ export const SELECTORS = {
     bootError: '[data-testid="boot-error"]',
     workspaceName: '[data-testid="workspace-name"]',
     statusBar: '[data-testid="status-bar"]',
-    devServer: '[data-testid="dev-server"]',
     saveState: '[data-testid="save-state"]',
     phoneMenu: '[data-testid="phone-menu"]',
     phoneMenuPanel: ".wb-menu-panel",
