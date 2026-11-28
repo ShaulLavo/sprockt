@@ -200,9 +200,11 @@ describe("createDevServer terminal lifecycle", () => {
     servers.push(first, second);
     await tick();
 
-    // Default target is apps/web:dev (Vite), while tab 1 explicitly chooses apps/api:dev.
+    // Default target is apps/web:dev (Vite); tab 2 even had an older local Web selection before
+    // tab 1 started apps/api:dev — takeover must still adopt API for subsequent Stop -> Start.
     expect(first.defaultTargetId()).toBe("apps/web:dev");
     expect(second.defaultTargetId()).toBe("apps/web:dev");
+    second.selectTarget("apps/web:dev");
     first.selectTarget("apps/api:dev");
 
     const submittedFirst: string[] = [];

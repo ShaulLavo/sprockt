@@ -88,8 +88,8 @@ export interface DevServerHost {
 const OUTPUT_LIMIT = 16_384;
 
 interface ResolvedStart extends DevStart {
-  /** True when `targetId` was inherited from a previous owner tab during lease takeover. */
-  readonly inherited?: boolean;
+  /** Selection generation captured when a takeover lookup began; commits only if unchanged. */
+  readonly inheritedAtSelection?: number;
 }
 
 async function pump(
@@ -120,6 +120,7 @@ export function createDevServer(host: DevServerHost): DevServer {
   const decoder = new TextDecoder();
   let devTabId: string | undefined;
   let runToken = 0;
+  let selectionGeneration = 0;
 
   function append(bytes: Uint8Array): void {
     setOutput((text) => (text + decoder.decode(bytes, { stream: true })).slice(-OUTPUT_LIMIT));
@@ -130,6 +131,7 @@ export function createDevServer(host: DevServerHost): DevServer {
   }
 
   async function command(preferredTargetId?: string): Promise<ResolvedStart | undefined> {
+    const selectionAtStart = selectionGeneration;
     const [detected, modules] = await Promise.all([
       detectWorkspaceTargets(host.files),
       host.runtime.filesystem.resolvePath(`${PROJECT_ROOT}/node_modules`),
@@ -141,7 +143,7 @@ export function createDevServer(host: DevServerHost): DevServer {
     const hasNodeModules = modules !== undefined;
     if (chosen) {
       const start = devStartForTarget(detected.detection, chosen, hasNodeModules);
-      return preferredTargetId ? { ...start, inherited: true } : start;
+      return preferredTargetId ? { ...start, inheritedAtSelection: selectionAtStart } : start;
     }
     const fallback = devStart(detected.detection, hasNodeModules);
     if (!fallback) return undefined;
@@ -239,7 +241,12 @@ export function createDevServer(host: DevServerHost): DevServer {
   /** Starts the server. A command that does not reload itself runs again when the source changes. */
   async function spawn(start: ResolvedStart, signal: AbortSignal): Promise<ServerProcess> {
     const token = ++runToken;
-    if (start.inherited && start.targetId && !signal.aborted && selectedTargetId() === undefined) {
+    if (
+      start.inheritedAtSelection !== undefined &&
+      start.targetId &&
+      !signal.aborted &&
+      selectionGeneration === start.inheritedAtSelection
+    ) {
       setSelectedTargetId(start.targetId);
     }
     setRunningTargetId(start.targetId);
@@ -323,7 +330,10 @@ export function createDevServer(host: DevServerHost): DevServer {
     selectedTargetId,
     runningTargetId,
     remoteTargetId: () => state().remoteTargetId,
-    selectTarget: (id) => void setSelectedTargetId(id),
+    selectTarget(id) {
+      selectionGeneration++;
+      setSelectedTargetId(id);
+    },
     start: () => line.start(),
     stop() {
       runToken++;
