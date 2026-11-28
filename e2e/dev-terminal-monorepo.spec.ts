@@ -251,6 +251,14 @@ test("monorepo aligns initial picker with preferred app and preserves chosen app
   await expect(second.getByTestId("preview-target-select")).toHaveValue("apps/api:dev");
   await expect(second.getByTestId("wb-preview-port-select")).toHaveValue("3102", { timeout: 15_000 });
   await expect(frame(second).getByRole("heading")).toHaveText("Mono API App", { timeout: 15_000 });
+
+  // Stopping and starting again in the successor tab keeps the inherited api · dev selection.
+  await second.getByTestId("preview-task").click();
+  await expect(second.getByTestId("preview-task")).toHaveAttribute("data-status", "stopped");
+  await expect(second.getByTestId("preview-target-select")).toHaveValue("apps/api:dev");
+  await second.getByTestId("preview-start").click();
+  await expect(frame(second).getByRole("heading")).toHaveText("Mono API App", { timeout: 15_000 });
+  await expect(second.getByTestId("wb-preview-port-select")).toHaveValue("3102", { timeout: 15_000 });
 });
 
 test("picker stays on the running target when background edits promote another app to default", async ({

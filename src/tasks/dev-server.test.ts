@@ -237,20 +237,39 @@ describe("createDevServer terminal lifecycle", () => {
     const secondTab = secondHost.terminals.tabs().tabs.find((tab) => tab.title === "dev");
     expect(secondTab).toBeDefined();
     if (!secondTab) return;
+    let activeSecondFinish = secondFinish;
     secondHost.terminals.attach(
       secondTab.id,
       makeFakeHandle(async (cmd) => {
         submittedSecond.push(cmd);
-        await secondFinish.promise;
+        await activeSecondFinish.promise;
       }),
     );
     await tick(25);
 
     expect(second.owned()).toBe(true);
     expect(second.runningTargetId()).toBe("apps/api:dev");
+    expect(second.selectedTargetId()).toBe("apps/api:dev");
     expect(submittedSecond).toEqual(["(cd /workspace && (cd apps/api && bun run dev))"]);
+
+    // Stopping and starting again in the successor tab preserves the inherited API app.
     second.stop();
-    secondFinish.resolve();
+    activeSecondFinish.resolve();
+    await tick(25);
+    expect(second.runningTargetId()).toBeUndefined();
+    expect(second.selectedTargetId()).toBe("apps/api:dev");
+
+    const thirdFinish = Promise.withResolvers<void>();
+    activeSecondFinish = thirdFinish;
+    await second.start();
+    await tick(25);
+    expect(submittedSecond).toEqual([
+      "(cd /workspace && (cd apps/api && bun run dev))",
+      "(cd /workspace && (cd apps/api && bun run dev))",
+    ]);
+    expect(second.runningTargetId()).toBe("apps/api:dev");
+    second.stop();
+    thirdFinish.resolve();
   });
 
   test("canceled takeover lookup never overwrites a user's newly selected target", async () => {

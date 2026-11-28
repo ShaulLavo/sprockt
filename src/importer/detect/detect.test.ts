@@ -464,4 +464,30 @@ describe("detectProjectInFs", () => {
     });
     expect(explicit.targets.map((t) => t.dir)).toEqual(["apps/.template"]);
   });
+
+  test("allows negative globs to exclude packages inside explicitly included hidden directories", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({
+        name: "mono",
+        workspaces: ["apps/.examples/*", "!**/legacy"],
+      }),
+      "apps/.examples/legacy/package.json": JSON.stringify({
+        name: "legacy",
+        scripts: { dev: "bun server.ts" },
+      }),
+      "apps/.examples/web/package.json": JSON.stringify({ name: "web", scripts: { dev: "bun server.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual(["apps/.examples/web"]);
+    expect(fromPaths.defaultTargetId).toBe("apps/.examples/web:dev");
+
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual(["apps/.examples/web"]);
+    expect(fromFs.defaultTargetId).toBe("apps/.examples/web:dev");
+  });
 });

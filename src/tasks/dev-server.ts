@@ -87,6 +87,11 @@ export interface DevServerHost {
 /** How much of the task's output is kept. */
 const OUTPUT_LIMIT = 16_384;
 
+interface ResolvedStart extends DevStart {
+  /** True when `targetId` was inherited from a previous owner tab during lease takeover. */
+  readonly inherited?: boolean;
+}
+
 async function pump(
   shell: Shell,
   onOutput: (bytes: Uint8Array) => void,
@@ -124,7 +129,7 @@ export function createDevServer(host: DevServerHost): DevServer {
     append(new TextEncoder().encode(`\n${error instanceof Error ? error.message : String(error)}\n`));
   }
 
-  async function command(preferredTargetId?: string): Promise<DevStart | undefined> {
+  async function command(preferredTargetId?: string): Promise<ResolvedStart | undefined> {
     const [detected, modules] = await Promise.all([
       detectWorkspaceTargets(host.files),
       host.runtime.filesystem.resolvePath(`${PROJECT_ROOT}/node_modules`),
@@ -134,7 +139,10 @@ export function createDevServer(host: DevServerHost): DevServer {
     const chosenId = preferredTargetId ?? selectedTargetId();
     const chosen = chosenId ? detected.targets.find((target) => target.id === chosenId) : undefined;
     const hasNodeModules = modules !== undefined;
-    if (chosen) return devStartForTarget(detected.detection, chosen, hasNodeModules);
+    if (chosen) {
+      const start = devStartForTarget(detected.detection, chosen, hasNodeModules);
+      return preferredTargetId ? { ...start, inherited: true } : start;
+    }
     const fallback = devStart(detected.detection, hasNodeModules);
     if (!fallback) return undefined;
     return detected.defaultTargetId ? { ...fallback, targetId: detected.defaultTargetId } : fallback;
@@ -229,8 +237,11 @@ export function createDevServer(host: DevServerHost): DevServer {
   }
 
   /** Starts the server. A command that does not reload itself runs again when the source changes. */
-  async function spawn(start: DevStart, signal: AbortSignal): Promise<ServerProcess> {
+  async function spawn(start: ResolvedStart, signal: AbortSignal): Promise<ServerProcess> {
     const token = ++runToken;
+    if (start.inherited && start.targetId && !signal.aborted && selectedTargetId() === undefined) {
+      setSelectedTargetId(start.targetId);
+    }
     setRunningTargetId(start.targetId);
     setOutput("");
     setEnded(false);

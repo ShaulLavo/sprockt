@@ -326,8 +326,8 @@ function compilePattern(pattern: string): CompiledPattern {
   return { segments, hasGlobstar: segments.some((segment) => segment.globstar) };
 }
 
-function matchesSegment(dirSegment: string, patSegment: CompiledSegment): boolean {
-  if (dirSegment.startsWith(".") && !patSegment.allowHidden) return false;
+function matchesSegment(dirSegment: string, patSegment: CompiledSegment, matchHidden: boolean): boolean {
+  if (!matchHidden && dirSegment.startsWith(".") && !patSegment.allowHidden) return false;
   return patSegment.regex?.test(dirSegment) ?? false;
 }
 
@@ -336,23 +336,24 @@ function matchSegments(
   patternSegments: readonly CompiledSegment[],
   dirIndex: number,
   patIndex: number,
+  matchHidden: boolean,
 ): boolean {
   if (patIndex === patternSegments.length) return dirIndex === dirSegments.length;
   const current = patternSegments[patIndex];
   if (!current) return false;
   if (current.globstar) {
-    // `**` matches zero or more non-hidden path segments.
-    if (matchSegments(dirSegments, patternSegments, dirIndex, patIndex + 1)) return true;
+    // `**` matches zero or more path segments (skipping hidden ones during positive discovery).
+    if (matchSegments(dirSegments, patternSegments, dirIndex, patIndex + 1, matchHidden)) return true;
     const nextDir = dirSegments[dirIndex];
-    if (nextDir !== undefined && !nextDir.startsWith(".")) {
-      return matchSegments(dirSegments, patternSegments, dirIndex + 1, patIndex);
+    if (nextDir !== undefined && (matchHidden || !nextDir.startsWith("."))) {
+      return matchSegments(dirSegments, patternSegments, dirIndex + 1, patIndex, matchHidden);
     }
     return false;
   }
   if (dirIndex >= dirSegments.length) return false;
   const segment = dirSegments[dirIndex] ?? "";
-  if (!matchesSegment(segment, current)) return false;
-  return matchSegments(dirSegments, patternSegments, dirIndex + 1, patIndex + 1);
+  if (!matchesSegment(segment, current, matchHidden)) return false;
+  return matchSegments(dirSegments, patternSegments, dirIndex + 1, patIndex + 1, matchHidden);
 }
 
 /** True when `prefixSegments` can match a strict ancestor of some path accepted by `pattern`. */
@@ -377,7 +378,7 @@ function canMatchDescendant(
     return false;
   }
   const segment = prefixSegments[dirIndex] ?? "";
-  if (!matchesSegment(segment, current)) return false;
+  if (!matchesSegment(segment, current, false)) return false;
   return canMatchDescendant(prefixSegments, patternSegments, dirIndex + 1, patIndex + 1);
 }
 
@@ -431,9 +432,13 @@ export function matchesWorkspacePatterns(dir: string, patterns: readonly string[
 function matchesCompiled(dirSegments: readonly string[], compiled: CompiledWorkspacePatterns): boolean {
   if (dirSegments.length === 0) return false;
   if (compiled.literals.has(dirSegments.join("/"))) return true;
-  const included = compiled.positives.some((pattern) => matchSegments(dirSegments, pattern.segments, 0, 0));
+  const included = compiled.positives.some((pattern) =>
+    matchSegments(dirSegments, pattern.segments, 0, 0, false),
+  );
   if (!included) return false;
-  const excluded = compiled.negatives.some((pattern) => matchSegments(dirSegments, pattern.segments, 0, 0));
+  const excluded = compiled.negatives.some((pattern) =>
+    matchSegments(dirSegments, pattern.segments, 0, 0, true),
+  );
   return !excluded;
 }
 
@@ -494,7 +499,8 @@ export async function findWorkspaceDirsInFs(
       .filter((child) =>
         compiled.positives.some(
           (pattern) =>
-            matchSegments(child, pattern.segments, 0, 0) || canMatchDescendant(child, pattern.segments, 0, 0),
+            matchSegments(child, pattern.segments, 0, 0, false) ||
+            canMatchDescendant(child, pattern.segments, 0, 0),
         ),
       );
     await Promise.all(nextDirs.map((child) => walk(child)));
