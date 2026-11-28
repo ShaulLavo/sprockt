@@ -290,6 +290,27 @@ describe("createWorkspaceWithFiles", () => {
     expect(store.isLocked("left")).toBe(false);
   });
 
+  test("a cancel during createNew still flushes the incomplete marker before aborting and closing", async () => {
+    const store = storage();
+    const controller = new AbortController();
+    const baseDeps = store.deps(["midopen"]);
+    const deps: NewWorkspaceDeps = {
+      ...baseDeps,
+      async createNew(id, signal) {
+        const writer = await baseDeps.createNew(id, signal);
+        controller.abort();
+        return writer;
+      },
+    };
+    await expect(
+      createWorkspaceWithFiles({ "a.txt": "a" }, META, deps, { signal: controller.signal }),
+    ).rejects.toThrow();
+    expect(store.stores.has(storageName("midopen"))).toBe(true);
+    expect(parseMeta(store.files("midopen")[WORKSPACE_META_PATH])?.state).toBe(INCOMPLETE);
+    expect(store.files("midopen")["a.txt"]).toBeUndefined();
+    expect(store.isLocked("midopen")).toBe(false);
+  });
+
   test("a workspace whose marker is cleared is complete even if closing it fails", async () => {
     const store = storage();
     store.faults.dispose = new Error("worker gone");

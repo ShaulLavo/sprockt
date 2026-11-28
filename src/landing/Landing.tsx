@@ -253,6 +253,7 @@ export function Landing() {
       launching.current = false;
       setCreatingTemplate(undefined);
       setCreateError(error instanceof Error ? error.message : String(error));
+      void refreshWorkspaces().catch(() => undefined);
     }
   }
 

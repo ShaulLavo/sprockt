@@ -562,15 +562,76 @@ test("Retry and Rename on deleted workspaces refuse without recreating their Ind
 
   await page.getByTestId("workspace-row-deletedren").hover();
   await page.getByTestId("workspace-delete-deletedren").click();
+  await expect(page.getByTestId("workspace-delete-confirm-deletedren")).toBeVisible();
+
+  // Pause Delete on OpfsStorage.claimIdle (which runs inside the exclusive maintenance + writer
+  // locks, before deleteDatabase() runs, and is never requested by listStoredWorkspaces refreshes).
+  await page.evaluate(() => {
+    const lockManager = navigator.locks;
+    const realRequest = lockManager.request.bind(lockManager);
+    let releaseDelete!: () => void;
+    const resumeDelete = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    const host = globalThis as unknown as {
+      sprocktDeletePaused?: boolean;
+      sprocktResumeDelete?: () => void;
+    };
+    host.sprocktDeletePaused = false;
+    host.sprocktResumeDelete = releaseDelete;
+    let armed = true;
+    lockManager.request = ((name: string, optionsOrCallback: unknown, maybeCallback?: unknown) => {
+      const hasOptions = typeof optionsOrCallback !== "function";
+      const callback = (hasOptions ? maybeCallback : optionsOrCallback) as (lock: Lock | null) => unknown;
+      if (armed && name === "bun-wasm:filesystem:sprockt-deletedren") {
+        armed = false;
+        host.sprocktDeletePaused = true;
+        return resumeDelete.then(() =>
+          hasOptions
+            ? realRequest(name, optionsOrCallback as LockOptions, callback)
+            : realRequest(name, callback),
+        );
+      }
+      return hasOptions
+        ? realRequest(name, optionsOrCallback as LockOptions, callback)
+        : realRequest(name, callback);
+    }) as typeof lockManager.request;
+  });
+
   await page.getByTestId("workspace-delete-confirm-deletedren").click();
-  await expect(page.getByTestId("workspace-row-deletedren")).toHaveCount(0);
-  await expect.poll(() => storedIn(page, "deletedren")).toBe(false);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (globalThis as unknown as { sprocktDeletePaused?: boolean }).sprocktDeletePaused === true,
+      ),
+    )
+    .toBe(true);
+  // The database still exists while Delete holds the maintenance lock.
+  expect(await storedIn(page, "deletedren")).toBe(true);
 
   // Submit the already-open rename form without focusing renameTab first so Landing's focus refresh
-  // cannot clear the row before renameWorkspace() runs against the deleted database.
+  // cannot clear the row before renameWorkspace() races Delete on the maintenance lock.
   await renameTab.getByTestId("workspace-rename-save-deletedren").evaluate((button) => {
     (button as HTMLButtonElement).form?.requestSubmit();
   });
+  await expect
+    .poll(() =>
+      renameTab.evaluate(async () => {
+        const snapshot = await navigator.locks.query();
+        return (
+          snapshot.pending?.some(
+            (lock) => lock.name === "bun-wasm:filesystem:indexeddb-maintenance:sprockt-deletedren",
+          ) ?? false
+        );
+      }),
+    )
+    .toBe(true);
+
+  // Let Delete remove the database and release the maintenance lock while Rename is waiting on it.
+  await page.evaluate(() => {
+    (globalThis as unknown as { sprocktResumeDelete?: () => void }).sprocktResumeDelete?.();
+  });
+  await expect(page.getByTestId("workspace-row-deletedren")).toHaveCount(0);
   await expect(renameTab.getByTestId("workspace-row-deletedren")).toHaveCount(0);
 
   // Confirm IndexedDB has neither deleted database recreated.
@@ -580,6 +641,134 @@ test("Retry and Rename on deleted workspaces refuse without recreating their Ind
   });
   expect(dbNames.filter((name) => name.includes("deletedretry") || name.includes("deletedren"))).toEqual([]);
   await renameTab.close();
+});
+
+test("cancelling a share restore after IndexedDB opens still persists the incomplete marker for landing cleanup", async ({
+  page,
+}) => {
+  const encoded = await encodeShareFragment({
+    templateId: "blank",
+    files: [{ path: "hello.txt", bytes: new TextEncoder().encode("hi\n") }],
+    deleted: [],
+  });
+  if (!encoded.ok) throw new Error("the fixture fits in a link");
+
+  await page.addInitScript(() => {
+    const lockManager = navigator.locks;
+    const realRequest = lockManager.request.bind(lockManager);
+    let releaseLock!: () => void;
+    const waitLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const host = globalThis as unknown as {
+      sprocktPausedShareDb?: string;
+      sprocktReleaseShareLock?: () => void;
+    };
+    host.sprocktReleaseShareLock = releaseLock;
+    let armed = true;
+    lockManager.request = ((name: string, optionsOrCallback: unknown, maybeCallback?: unknown) => {
+      const hasOptions = typeof optionsOrCallback !== "function";
+      const callback = (hasOptions ? maybeCallback : optionsOrCallback) as (lock: Lock | null) => unknown;
+      if (armed && name.startsWith("bun-wasm:filesystem:indexeddb:sprockt-")) {
+        armed = false;
+        host.sprocktPausedShareDb = name.slice("bun-wasm:filesystem:indexeddb:".length);
+        return waitLock.then(() =>
+          hasOptions
+            ? realRequest(name, optionsOrCallback as LockOptions, callback)
+            : realRequest(name, callback),
+        );
+      }
+      return hasOptions
+        ? realRequest(name, optionsOrCallback as LockOptions, callback)
+        : realRequest(name, callback);
+    }) as typeof lockManager.request;
+  });
+
+  await page.goto(`/s#${encoded.fragment}`);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (globalThis as unknown as { sprocktPausedShareDb?: string }).sprocktPausedShareDb ?? "",
+      ),
+    )
+    .toMatch(/^sprockt-[a-z0-9]+$/);
+  const dbName = await page.evaluate(
+    () => (globalThis as unknown as { sprocktPausedShareDb?: string }).sprocktPausedShareDb ?? "",
+  );
+  const id = dbName.slice("sprockt-".length);
+
+  // Replace the share fragment to cancel the in-flight attempt right after IDB schema creation,
+  // then release the writer-lock request so creation finishes persisting the incomplete marker.
+  await page.evaluate(() => {
+    location.hash = "#share=not-a-real-link";
+  });
+  await expect(page.getByTestId("share-error")).toBeVisible();
+  await page.evaluate(() => {
+    (globalThis as unknown as { sprocktReleaseShareLock?: () => void }).sprocktReleaseShareLock?.();
+  });
+
+  // Wait until the background writer finishes flushing the incomplete marker and releases Waffle's
+  // maintenance lock (held continuously from before the pause until writer.dispose() completes).
+  await expect
+    .poll(() =>
+      page.evaluate(async (target) => {
+        const snapshot = await navigator.locks.query();
+        return (
+          snapshot.held?.some(
+            (lock) => lock.name === `bun-wasm:filesystem:indexeddb-maintenance:${target}`,
+          ) ?? false
+        );
+      }, dbName),
+    )
+    .toBe(false);
+
+  await page.getByRole("button", { name: "Back to Sprockt" }).click();
+  const row = page.getByTestId("workspace-list").locator("li", { hasText: id });
+  await expect(row.getByTestId("incomplete-import")).toBeVisible();
+  await row.getByTestId("incomplete-delete").click();
+  await row.getByTestId("incomplete-confirm-delete").click();
+  await expect(row).toHaveCount(0);
+  await expect.poll(() => storedIn(page, id)).toBe(false);
+});
+
+test("a failed starter seed exposes Retry immediately on the landing page without reloading", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.getByTestId("template-bun-sqlite")).toBeVisible();
+
+  // Fail the project checkpoint (2nd "active" commit) once after the incomplete marker (1st commit) succeeds.
+  await page.evaluate(() => {
+    const realPut = IDBObjectStore.prototype.put;
+    let activeCommits = 0;
+    let armed = true;
+    IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
+      if (
+        armed &&
+        this.name === "metadata" &&
+        key === "active" &&
+        this.transaction.db.name.startsWith("sprockt-")
+      ) {
+        activeCommits += 1;
+        if (activeCommits === 2) {
+          armed = false;
+          this.transaction.abort();
+          throw new DOMException("Simulated checkpoint failure", "AbortError");
+        }
+      }
+      return realPut.call(this, value, key);
+    };
+  });
+
+  await page.getByTestId("template-bun-sqlite").click();
+  await expect(page.getByTestId("template-error")).toBeVisible();
+  // Without reloading, the incomplete starter appears immediately with Retry and finishes cleanly.
+  const retryButton = page.getByTestId("incomplete-retry");
+  await expect(retryButton).toBeVisible();
+  await retryButton.click();
+  await expectWorkspace(page);
+  await expect(page.getByTestId("file-tree")).toContainText("server.ts");
+  expect(await workspaceMeta(page)).not.toHaveProperty("state");
 });
 
 /** Whether GitHub answers from this machine; the real-repository test needs it. */

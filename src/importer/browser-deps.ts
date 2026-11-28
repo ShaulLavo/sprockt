@@ -120,11 +120,13 @@ export async function createNewBrowserWriter(
   const name = storageName(id);
   let storage: IndexedDBStorage;
   try {
+    // Once IndexedDB opens a new database, finish acquiring the writer so `fill` can flush the
+    // incomplete marker before honoring cancellation; otherwise an empty, un-listable DB remains.
+    // `whenBusy: "ifAvailable"` never waits on a live writer lock.
     storage = await IndexedDBStorage.open(name, {
       whenBusy: "ifAvailable",
       expectedEpoch: 0,
       epochOwner: "exclusive",
-      signal,
     });
   } catch (error) {
     if (isCreateCollision(error)) return "taken";
@@ -132,7 +134,7 @@ export async function createNewBrowserWriter(
   }
 
   try {
-    const backend = await PersistentBackend.open(storage, { intervalMs: 0, signal });
+    const backend = await PersistentBackend.open(storage, { intervalMs: 0 });
     if (backend.hasLoadedIndex) {
       await backend.retireFenced();
       return "taken";
