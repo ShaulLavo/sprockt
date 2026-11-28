@@ -665,9 +665,12 @@ test("Retry and Rename on deleted workspaces refuse without recreating their Ind
   });
   expect(dbNames.filter((name) => name.includes("deletedretry") || name.includes("deletedren"))).toEqual([]);
 
-  // An intentional recreation is discoverable from the same landing page after storage is idle.
+  // The same landing page can discover an intentional recreation while its workbench is still open.
   await renameTab.goto("/w/deletedren");
   await expectWorkspace(renameTab);
+  await page.bringToFront();
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByTestId("workspace-live-deletedren")).toHaveText("Active in another tab");
   await renameTab.goto("/");
   await expect(renameTab.getByTestId("workspace-row-deletedren")).toBeVisible();
   await expect(renameTab.getByTestId("workspace-live-deletedren")).toHaveCount(0);

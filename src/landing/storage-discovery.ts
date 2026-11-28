@@ -6,6 +6,8 @@ import { browserIdentityStore } from "../preview/identity-store";
 import { deleteStorage } from "../workspace/storage-lifecycle";
 
 const INDEXEDDB_FORMAT_PREFIX = "waffle-indexeddb-";
+const INDEXEDDB_MAINTENANCE_PREFIX = "bun-wasm:filesystem:indexeddb-maintenance:";
+const INDEXEDDB_WRITER_PREFIX = "bun-wasm:filesystem:indexeddb:";
 const decoder = new TextDecoder();
 
 function idbRequest<T>(request: IDBRequest<T>): Promise<T> {
@@ -105,7 +107,7 @@ async function withIdleIndexedDbLock<T>(name: string, task: () => Promise<T>): P
   const locks = globalThis.navigator?.locks;
   if (!locks) return task();
   return locks.request(
-    `bun-wasm:filesystem:indexeddb-maintenance:${name}`,
+    INDEXEDDB_MAINTENANCE_PREFIX + name,
     { mode: "exclusive", ifAvailable: true },
     async (maintenance) => {
       if (!maintenance) return "busy" as const;
@@ -115,7 +117,7 @@ async function withIdleIndexedDbLock<T>(name: string, task: () => Promise<T>): P
         async (arb) => {
           if (!arb) return "busy" as const;
           return locks.request(
-            `bun-wasm:filesystem:indexeddb:${name}`,
+            INDEXEDDB_WRITER_PREFIX + name,
             { mode: "exclusive", ifAvailable: true },
             async (writer) => {
               if (!writer) return "busy" as const;
@@ -125,6 +127,18 @@ async function withIdleIndexedDbLock<T>(name: string, task: () => Promise<T>): P
         },
       );
     },
+  );
+}
+
+export async function hasOpenIndexedDbWorkspace(name: string): Promise<boolean> {
+  const held = (await globalThis.navigator?.locks?.query())?.held ?? [];
+  const maintenance = INDEXEDDB_MAINTENANCE_PREFIX + name;
+  const writer = INDEXEDDB_WRITER_PREFIX + name;
+  // Waffle takes the writer lock after opening the database, under shared maintenance.
+  // Discovery and Delete hold exclusive maintenance even for names with no database.
+  return (
+    held.some((lock) => lock.name === maintenance && lock.mode === "shared") &&
+    held.some((lock) => lock.name === writer && lock.mode === "exclusive")
   );
 }
 

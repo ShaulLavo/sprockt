@@ -109,16 +109,21 @@ export function listStoredWorkspaces(): Promise<StoredWorkspaceSummary[]> {
     if (ids.length === 0) return [];
     const skipId = mySeq <= handoffSkipThroughSeq ? handoffSkipId : undefined;
 
-    const { inspectIdleWorkspaceMeta } = await import("./storage-discovery");
+    const { hasOpenIndexedDbWorkspace, inspectIdleWorkspaceMeta } = await import("./storage-discovery");
     const results = await Promise.all(
       ids.map(async (id): Promise<StoredWorkspaceSummary | undefined> => {
         if (id === skipId) return unverifiedWorkspace(id, false);
         try {
-          const outcome = await inspectIdleWorkspaceMeta(storageName(id), WORKSPACE_META_PATH);
+          const name = storageName(id);
+          const outcome = await inspectIdleWorkspaceMeta(name, WORKSPACE_META_PATH);
           if (outcome.status === "missing") return undefined;
+          if (
+            outcome.status === "idle" ||
+            (confirmedMissingIds.has(id) && (await hasOpenIndexedDbWorkspace(name)))
+          ) {
+            confirmedMissingIds.delete(id);
+          }
           if (outcome.status === "busy") return unverifiedWorkspace(id, true);
-          // An idle inspection verified storage, so the id can appear again after recreation.
-          confirmedMissingIds.delete(id);
           // Re-read the hint after async disk inspection so a name adopted in another tab during
           // the probe is never overwritten by a stale pre-probe snapshot.
           const hint = readWorkspaceHint(id);
