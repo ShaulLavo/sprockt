@@ -252,3 +252,41 @@ test("monorepo aligns initial picker with preferred app and preserves chosen app
   await expect(second.getByTestId("wb-preview-port-select")).toHaveValue("3102", { timeout: 15_000 });
   await expect(frame(second).getByRole("heading")).toHaveText("Mono API App", { timeout: 15_000 });
 });
+
+test("picker stays on the running target when background edits promote another app to default", async ({
+  page,
+}) => {
+  await newWorkspace(page);
+  await expect.poll(() => page.evaluate(() => globalThis.sprockt?.workspace !== undefined)).toBe(true);
+  await page.evaluate((files) => globalThis.sprockt?.workspace?.files.writeMany(files), {
+    "package.json": JSON.stringify({ name: "mono", private: true, workspaces: ["apps/*"] }),
+    "node_modules/.keep": "",
+    "apps/api/package.json": JSON.stringify({ name: "api", scripts: { dev: "bun server.ts -p 3102" } }),
+    "apps/api/server.ts": SERVER("Mono API App", 3102),
+    "apps/web/package.json": JSON.stringify({ name: "web", scripts: { dev: "bun server.ts -p 3101" } }),
+    "apps/web/server.ts": SERVER("Mono Web App", 3101),
+  });
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+
+  // Default Start launches api · dev (alphabetically first plain Bun target).
+  const targetSelect = page.getByTestId("preview-target-select");
+  await expect(targetSelect).toHaveValue("apps/api:dev");
+  await page.getByTestId("preview-start").click();
+  await expect(frame(page).getByRole("heading")).toHaveText("Mono API App", { timeout: 15_000 });
+
+  // Edit web's package.json so detection promotes web · dev to default while api · dev is running.
+  await page.evaluate((files) => globalThis.sprockt?.workspace?.files.writeMany(files), {
+    "apps/web/package.json": JSON.stringify({
+      name: "web",
+      scripts: { dev: "bun server.ts -p 3101" },
+      devDependencies: { vite: "^6.0.0" },
+    }),
+  });
+  await expect(page.getByTestId("save-state")).toHaveText("saved");
+
+  // Picker must stay on apps/api:dev so selecting apps/web:dev actually triggers a switch.
+  await expect(targetSelect).toHaveValue("apps/api:dev");
+  await targetSelect.selectOption("apps/web:dev");
+  await expect(frame(page).getByRole("heading")).toHaveText("Mono Web App", { timeout: 15_000 });
+  await expect(targetSelect).toHaveValue("apps/web:dev");
+});

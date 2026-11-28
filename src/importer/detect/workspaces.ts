@@ -64,9 +64,37 @@ export function parsePackageWorkspaces(workspaces: unknown): string[] {
   return patterns;
 }
 
+function splitInlineYamlList(content: string): string[] {
+  const items: string[] = [];
+  let quote: "'" | '"' | undefined;
+  let start = 0;
+  for (let i = 0; i < content.length; i += 1) {
+    const ch = content[i];
+    if (quote === '"' && ch === "\\") {
+      i += 1;
+      continue;
+    }
+    if (quote) {
+      if (quote === "'" && ch === "'" && content[i + 1] === "'") {
+        i += 1;
+        continue;
+      }
+      if (ch === quote) quote = undefined;
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === ",") {
+      items.push(content.slice(start, i));
+      start = i + 1;
+    }
+  }
+  items.push(content.slice(start));
+  return items;
+}
+
 function parseInlineYamlList(inline: string): string[] {
   const patterns: string[] = [];
-  for (const entry of inline.slice(1, -1).split(",")) {
+  for (const entry of splitInlineYamlList(inline.slice(1, -1))) {
     const normalized = normalizePattern(unquote(entry));
     if (normalized) patterns.push(normalized);
   }
@@ -262,6 +290,7 @@ function compileSegment(segment: string): RegExp {
 interface CompiledSegment {
   readonly globstar: boolean;
   readonly raw: string;
+  readonly allowHidden: boolean;
   readonly regex: RegExp | undefined;
 }
 
@@ -270,14 +299,36 @@ interface CompiledPattern {
   readonly hasGlobstar: boolean;
 }
 
+function hasGlobSyntax(pattern: string): boolean {
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === "\\") {
+      i += 1;
+      continue;
+    }
+    if (ch === "*" || ch === "?" || ch === "[" || ch === "{") return true;
+  }
+  return false;
+}
+
+function unescapeLiteralPath(pattern: string): string {
+  return pattern.replace(/\\(.)/g, "$1");
+}
+
 function compilePattern(pattern: string): CompiledPattern {
   const parts = pattern.split("/").filter((part) => part !== "");
   const segments: CompiledSegment[] = parts.map((raw) => ({
     globstar: raw === "**",
     raw,
+    allowHidden: raw.startsWith(".") || raw.startsWith("\\."),
     regex: raw === "**" ? undefined : compileSegment(raw),
   }));
   return { segments, hasGlobstar: segments.some((segment) => segment.globstar) };
+}
+
+function matchesSegment(dirSegment: string, patSegment: CompiledSegment): boolean {
+  if (dirSegment.startsWith(".") && !patSegment.allowHidden) return false;
+  return patSegment.regex?.test(dirSegment) ?? false;
 }
 
 function matchSegments(
@@ -290,16 +341,17 @@ function matchSegments(
   const current = patternSegments[patIndex];
   if (!current) return false;
   if (current.globstar) {
-    // `**` matches zero or more path segments.
+    // `**` matches zero or more non-hidden path segments.
     if (matchSegments(dirSegments, patternSegments, dirIndex, patIndex + 1)) return true;
-    if (dirIndex < dirSegments.length) {
+    const nextDir = dirSegments[dirIndex];
+    if (nextDir !== undefined && !nextDir.startsWith(".")) {
       return matchSegments(dirSegments, patternSegments, dirIndex + 1, patIndex);
     }
     return false;
   }
   if (dirIndex >= dirSegments.length) return false;
   const segment = dirSegments[dirIndex] ?? "";
-  if (!current.regex?.test(segment)) return false;
+  if (!matchesSegment(segment, current)) return false;
   return matchSegments(dirSegments, patternSegments, dirIndex + 1, patIndex + 1);
 }
 
@@ -318,24 +370,43 @@ function canMatchDescendant(
   if (!current) return false;
   if (current.globstar) {
     if (canMatchDescendant(prefixSegments, patternSegments, dirIndex, patIndex + 1)) return true;
-    return canMatchDescendant(prefixSegments, patternSegments, dirIndex + 1, patIndex);
+    const nextDir = prefixSegments[dirIndex];
+    if (nextDir !== undefined && !nextDir.startsWith(".")) {
+      return canMatchDescendant(prefixSegments, patternSegments, dirIndex + 1, patIndex);
+    }
+    return false;
   }
   const segment = prefixSegments[dirIndex] ?? "";
-  if (!current.regex?.test(segment)) return false;
+  if (!matchesSegment(segment, current)) return false;
   return canMatchDescendant(prefixSegments, patternSegments, dirIndex + 1, patIndex + 1);
 }
 
 interface CompiledWorkspacePatterns {
+  readonly literals: ReadonlySet<string>;
   readonly positives: readonly CompiledPattern[];
   readonly negatives: readonly CompiledPattern[];
 }
 
+function addLiteralPattern(body: string, literals: Set<string>, positives: CompiledPattern[]): void {
+  const normalized = normalizePattern(body);
+  if (!normalized || normalized.startsWith("!")) return;
+  const compiled = compilePattern(normalized);
+  if (compiled.segments.length === 0) return;
+  literals.add(unescapeLiteralPath(normalized));
+  positives.push(compiled);
+}
+
 function compileWorkspacePatterns(patterns: readonly string[]): CompiledWorkspacePatterns {
+  const literals = new Set<string>();
   const positives: CompiledPattern[] = [];
   const negatives: CompiledPattern[] = [];
   for (const raw of patterns) {
     const negated = raw.startsWith("!");
     const body = negated ? raw.slice(1) : raw;
+    if (!negated && !hasGlobSyntax(body)) {
+      addLiteralPattern(body, literals, positives);
+      continue;
+    }
     for (const expanded of expandBraces(body)) {
       const normalized = normalizePattern(expanded);
       if (!normalized || normalized.startsWith("!")) continue;
@@ -345,7 +416,7 @@ function compileWorkspacePatterns(patterns: readonly string[]): CompiledWorkspac
       else positives.push(compiled);
     }
   }
-  return { positives, negatives };
+  return { literals, positives, negatives };
 }
 
 /** Matches a relative directory against workspace patterns, applying exclusions independently of order. */
@@ -359,6 +430,7 @@ export function matchesWorkspacePatterns(dir: string, patterns: readonly string[
 
 function matchesCompiled(dirSegments: readonly string[], compiled: CompiledWorkspacePatterns): boolean {
   if (dirSegments.length === 0) return false;
+  if (compiled.literals.has(dirSegments.join("/"))) return true;
   const included = compiled.positives.some((pattern) => matchSegments(dirSegments, pattern.segments, 0, 0));
   if (!included) return false;
   const excluded = compiled.negatives.some((pattern) => matchSegments(dirSegments, pattern.segments, 0, 0));

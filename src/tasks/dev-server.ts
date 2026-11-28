@@ -55,6 +55,8 @@ export interface DevServer {
   readonly defaultTargetId: Accessor<string | undefined>;
   /** Explicitly chosen target id, or `undefined` to use the detected default. */
   readonly selectedTargetId: Accessor<string | undefined>;
+  /** Target id currently running in this tab, kept stable until that run stops or ends. */
+  readonly runningTargetId: Accessor<string | undefined>;
   /** Target id currently running in another tab, when following a remote owner. */
   readonly remoteTargetId: Accessor<string | undefined>;
   /** Chooses which detected workspace app or script the next start will run. */
@@ -109,8 +111,10 @@ export function createDevServer(host: DevServerHost): DevServer {
   const [targets, setTargets] = createSignal<readonly WorkspaceTarget[]>([]);
   const [defaultTargetId, setDefaultTargetId] = createSignal<string | undefined>(undefined);
   const [selectedTargetId, setSelectedTargetId] = createSignal<string | undefined>(undefined);
+  const [runningTargetId, setRunningTargetId] = createSignal<string | undefined>(undefined);
   const decoder = new TextDecoder();
   let devTabId: string | undefined;
+  let runToken = 0;
 
   function append(bytes: Uint8Array): void {
     setOutput((text) => (text + decoder.decode(bytes, { stream: true })).slice(-OUTPUT_LIMIT));
@@ -129,8 +133,6 @@ export function createDevServer(host: DevServerHost): DevServer {
     setDefaultTargetId(detected.defaultTargetId);
     const chosenId = preferredTargetId ?? selectedTargetId();
     const chosen = chosenId ? detected.targets.find((target) => target.id === chosenId) : undefined;
-    if (preferredTargetId && chosen) setSelectedTargetId(chosen.id);
-    else if (!preferredTargetId && chosenId && !chosen) setSelectedTargetId(undefined);
     const hasNodeModules = modules !== undefined;
     if (chosen) return devStartForTarget(detected.detection, chosen, hasNodeModules);
     const fallback = devStart(detected.detection, hasNodeModules);
@@ -228,10 +230,15 @@ export function createDevServer(host: DevServerHost): DevServer {
 
   /** Starts the server. A command that does not reload itself runs again when the source changes. */
   async function spawn(start: DevStart, signal: AbortSignal): Promise<ServerProcess> {
+    const token = ++runToken;
+    setRunningTargetId(start.targetId);
     setOutput("");
     setEnded(false);
     setRestartHeld(false);
     let stopped = false;
+    const clearRunning = () => {
+      if (runToken === token) setRunningTargetId(undefined);
+    };
     const process = await restartingProcess({
       script: start.script,
       rerun: start.rerun,
@@ -248,6 +255,7 @@ export function createDevServer(host: DevServerHost): DevServer {
       onHeld: setRestartHeld,
     }).catch((error: unknown) => {
       // No shell, so no server: what went wrong is the output, and it stays on screen.
+      clearRunning();
       setEnded(true);
       throw error;
     });
@@ -256,6 +264,7 @@ export function createDevServer(host: DevServerHost): DevServer {
       targetId: start.targetId,
       // It ended without being asked to: its last output says why, and the pane keeps it.
       exited: process.exited.catch(report).finally(() => {
+        clearRunning();
         setRestartHeld(false);
         setEnded(!stopped && !signal.aborted);
       }),
@@ -301,11 +310,18 @@ export function createDevServer(host: DevServerHost): DevServer {
     targets,
     defaultTargetId,
     selectedTargetId,
+    runningTargetId,
     remoteTargetId: () => state().remoteTargetId,
     selectTarget: (id) => void setSelectedTargetId(id),
     start: () => line.start(),
-    stop: () => line.stop(),
+    stop() {
+      runToken++;
+      setRunningTargetId(undefined);
+      line.stop();
+    },
     dispose() {
+      runToken++;
+      setRunningTargetId(undefined);
       unwatch();
       return line.dispose();
     },

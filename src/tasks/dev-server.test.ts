@@ -247,9 +247,147 @@ describe("createDevServer terminal lifecycle", () => {
     await tick(25);
 
     expect(second.owned()).toBe(true);
-    expect(second.selectedTargetId()).toBe("apps/api:dev");
+    expect(second.runningTargetId()).toBe("apps/api:dev");
     expect(submittedSecond).toEqual(["(cd /workspace && (cd apps/api && bun run dev))"]);
     second.stop();
     secondFinish.resolve();
+  });
+
+  test("canceled takeover lookup never overwrites a user's newly selected target", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "mono", workspaces: ["apps/*"] }),
+      "node_modules/.keep": "",
+      "apps/web/package.json": JSON.stringify({
+        name: "web",
+        scripts: { dev: "vite" },
+        devDependencies: { vite: "^6.0.0" },
+      }),
+      "apps/api/package.json": JSON.stringify({
+        name: "api",
+        scripts: { dev: "bun server.ts" },
+      }),
+    };
+    const workspaceId = `mono-race-${crypto.randomUUID()}`;
+    const locks = new FakeLocks();
+    const channels = new FakeChannels();
+    const firstHost = fakeHost(files, { id: workspaceId, tabId: "tab-1", locks, channels });
+    const secondHost = fakeHost(files, { id: workspaceId, tabId: "tab-2", locks, channels });
+
+    const first = createDevServer(firstHost);
+    const second = createDevServer(secondHost);
+    servers.push(first, second);
+    await tick();
+
+    // Tab 1 starts API.
+    first.selectTarget("apps/api:dev");
+    const firstFinish = Promise.withResolvers<void>();
+    await first.start();
+    await tick();
+    const firstTab = firstHost.terminals.tabs().tabs.find((tab) => tab.title === "dev");
+    if (!firstTab) throw new Error("missing first dev tab");
+    firstHost.terminals.attach(
+      firstTab.id,
+      makeFakeHandle(async () => firstFinish.promise),
+    );
+    firstHost.listen([3102]);
+    await tick(25);
+    expect(second.remoteTargetId()).toBe("apps/api:dev");
+
+    // Gate Tab 2's takeover lookup so we can cancel it before it resolves.
+    const takeoverListGate = Promise.withResolvers<void>();
+    let listCalls = 0;
+    const origList = secondHost.files.list;
+    (secondHost.files as { list: () => Promise<string[]> }).list = async () => {
+      listCalls += 1;
+      if (listCalls === 1) await takeoverListGate.promise;
+      return origList();
+    };
+
+    // Tab 1 closes -> Tab 2 starts takeover lookup for API (now blocked on takeoverListGate).
+    firstFinish.resolve();
+    await first.dispose();
+    await tick(15);
+    expect(listCalls).toBe(1);
+
+    // User cancels takeover in Tab 2 by selecting Web, stopping, and starting fresh.
+    second.selectTarget("apps/web:dev");
+    second.stop();
+    const restartPromise = second.start();
+    // Resolve the canceled takeover lookup FIRST; it must not clobber selectedTargetId.
+    takeoverListGate.resolve();
+    await restartPromise;
+    await tick(25);
+
+    const submittedSecond: string[] = [];
+    const secondFinish = Promise.withResolvers<void>();
+    const secondTab = secondHost.terminals.tabs().tabs.find((tab) => tab.title === "dev");
+    expect(secondTab).toBeDefined();
+    if (!secondTab) return;
+    secondHost.terminals.attach(
+      secondTab.id,
+      makeFakeHandle(async (cmd) => {
+        submittedSecond.push(cmd);
+        await secondFinish.promise;
+      }),
+    );
+    await tick(25);
+
+    expect(second.selectedTargetId()).toBe("apps/web:dev");
+    expect(second.runningTargetId()).toBe("apps/web:dev");
+    expect(submittedSecond).toEqual(["(cd /workspace && (cd apps/web && bun run dev))"]);
+    second.stop();
+    secondFinish.resolve();
+  });
+
+  test("keeps runningTargetId stable when background edits change defaultTargetId mid-run", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "mono", workspaces: ["apps/*"] }),
+      "node_modules/.keep": "",
+      "apps/api/package.json": JSON.stringify({ name: "api", scripts: { dev: "bun server.ts" } }),
+      "apps/web/package.json": JSON.stringify({ name: "web", scripts: { dev: "bun server.ts" } }),
+    };
+    const changeListeners = new Set<(change: { readonly paths: readonly string[] }) => void>();
+    const host = fakeHost(files);
+    (
+      host.files as { subscribe: (fn: (change: { readonly paths: readonly string[] }) => void) => () => void }
+    ).subscribe = (fn) => {
+      changeListeners.add(fn);
+      return () => changeListeners.delete(fn);
+    };
+
+    const server = createDevServer(host);
+    servers.push(server);
+    await tick();
+    expect(server.defaultTargetId()).toBe("apps/api:dev");
+
+    // Default start (selectedTargetId remains undefined) runs API.
+    const finish = Promise.withResolvers<void>();
+    await server.start();
+    await tick();
+    const devTab = host.terminals.tabs().tabs.find((tab) => tab.title === "dev");
+    if (!devTab) throw new Error("missing dev tab");
+    host.terminals.attach(
+      devTab.id,
+      makeFakeHandle(async () => finish.promise),
+    );
+    await tick();
+    expect(server.runningTargetId()).toBe("apps/api:dev");
+
+    // Background edit promotes Web to Vite -> defaultTargetId changes, runningTargetId stays API.
+    files["apps/web/package.json"] = JSON.stringify({
+      name: "web",
+      scripts: { dev: "vite" },
+      devDependencies: { vite: "^6.0.0" },
+    });
+    for (const listener of changeListeners) listener({ paths: ["apps/web/package.json"] });
+    await tick(25);
+
+    expect(server.defaultTargetId()).toBe("apps/web:dev");
+    expect(server.runningTargetId()).toBe("apps/api:dev");
+
+    server.stop();
+    finish.resolve();
+    await tick();
+    expect(server.runningTargetId()).toBeUndefined();
   });
 });

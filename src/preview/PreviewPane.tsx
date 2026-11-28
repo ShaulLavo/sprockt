@@ -82,6 +82,7 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
     targets,
     defaultTargetId,
     selectedTargetId,
+    runningTargetId,
     remoteTargetId,
   } = useValue(() => ({
     status: devServer.status(),
@@ -93,6 +94,7 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
     targets: devServer.targets(),
     defaultTargetId: devServer.defaultTargetId(),
     selectedTargetId: devServer.selectedTargetId(),
+    runningTargetId: devServer.runningTargetId(),
     remoteTargetId: devServer.remoteTargetId(),
   }));
 
@@ -142,7 +144,15 @@ function PreviewPaneBody(props: { devServer: DevServer }) {
   }
 
   const canStart = status === "stopped" && startable;
-  const activeTargetId = remoteTargetId ?? selectedTargetId ?? defaultTargetId ?? targets[0]?.id ?? "";
+  const validTarget = (id: string | undefined) =>
+    id && targets.some((target) => target.id === id) ? id : undefined;
+  const activeTargetId =
+    validTarget(runningTargetId) ??
+    validTarget(remoteTargetId) ??
+    validTarget(selectedTargetId) ??
+    validTarget(defaultTargetId) ??
+    targets[0]?.id ??
+    "";
   const showTargetPicker = targets.length > 1;
 
   const targetPicker = showTargetPicker ? (

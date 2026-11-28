@@ -384,4 +384,84 @@ describe("detectProjectInFs", () => {
     ]);
     expect(result.defaultTargetId).toBe("apps/frontends/customer/web:dev");
   });
+
+  test("preserves literal workspace inclusions even when matched by wildcard exclusions", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({
+        name: "mono",
+        workspaces: ["packages/**", "!**/test/**", "packages/test/demo"],
+      }),
+      "packages/test/demo/package.json": JSON.stringify({ name: "demo", scripts: { dev: "bun server.ts" } }),
+      "packages/test/other/package.json": JSON.stringify({
+        name: "other",
+        scripts: { dev: "bun server.ts" },
+      }),
+      "packages/ui/package.json": JSON.stringify({ name: "ui", scripts: { dev: "vite" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual(["packages/test/demo", "packages/ui"]);
+
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual(["packages/test/demo", "packages/ui"]);
+  });
+
+  test("preserves commas inside quoted inline pnpm-workspace.yaml patterns", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "pnpm-mono" }),
+      "pnpm-workspace.yaml": "packages: [\"{apps,packages}/*\", 'tools/cli']\n",
+      "apps/web/package.json": JSON.stringify({ name: "web", scripts: { dev: "vite" } }),
+      "packages/ui/package.json": JSON.stringify({ name: "ui", scripts: { dev: "bun server.ts" } }),
+      "tools/cli/package.json": JSON.stringify({ name: "cli", scripts: { start: "bun index.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual(["apps/web", "packages/ui", "tools/cli"]);
+    expect(fromPaths.defaultTargetId).toBe("apps/web:dev");
+
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual(["apps/web", "packages/ui", "tools/cli"]);
+    expect(fromFs.defaultTargetId).toBe("apps/web:dev");
+  });
+
+  test("excludes hidden path segments from ordinary workspace wildcards unless explicitly matched", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "mono", workspaces: ["apps/*", "packages/**"] }),
+      "apps/.template/package.json": JSON.stringify({ name: "template", scripts: { dev: "bun server.ts" } }),
+      "apps/web/package.json": JSON.stringify({ name: "web", scripts: { dev: "bun server.ts" } }),
+      "packages/.hidden/app/package.json": JSON.stringify({
+        name: "hidden-app",
+        scripts: { dev: "bun server.ts" },
+      }),
+      "packages/public/package.json": JSON.stringify({ name: "public", scripts: { dev: "bun server.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual(["apps/web", "packages/public"]);
+    expect(fromPaths.defaultTargetId).toBe("apps/web:dev");
+
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual(["apps/web", "packages/public"]);
+    expect(fromFs.defaultTargetId).toBe("apps/web:dev");
+
+    // Explicit leading-dot patterns still match hidden directories.
+    const explicit = detectProjectTargets({
+      paths: Object.keys(files),
+      read: (path) =>
+        path === "package.json" ? JSON.stringify({ name: "mono", workspaces: ["apps/.*"] }) : files[path],
+    });
+    expect(explicit.targets.map((t) => t.dir)).toEqual(["apps/.template"]);
+  });
 });
