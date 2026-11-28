@@ -110,6 +110,7 @@ export const mobileWorkbenchScenario: AgentScenario = {
     await page.waitForTimeout(200);
 
     await page.locator(SELECTORS.workbench.paneButton("Terminal")).tap();
+    await page.locator(SELECTORS.terminal.tab).getByText("bash", { exact: true }).tap();
     await page.waitForFunction(
       (sel) => document.querySelector(sel)?.textContent?.trim() === "ready",
       SELECTORS.terminal.state,

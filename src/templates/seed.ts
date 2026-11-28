@@ -2,6 +2,8 @@
 // Uses the shared exclusive browser writer (`whenBusy: "ifAvailable"`), so another tab's ownership
 // is never stolen and `waffle/runtime.ts` stays unloaded on `/`.
 import { openExistingBrowserWriter, quietBrowserWorkspaceDeps } from "../importer/browser-deps";
+import { detectProject } from "../importer/detect/detect";
+import { planFrom } from "../importer/plan";
 import {
   createWorkspaceWithFiles,
   NotIncompleteError,
@@ -12,7 +14,7 @@ import {
   type NewWorkspaceDeps,
   type WorkspaceWriter,
 } from "../importer/new-workspace";
-import { BLANK_TEMPLATE, findTemplate, type TemplateId } from "./catalog";
+import { BLANK_TEMPLATE, findTemplate, type StarterTemplate, type TemplateId } from "./catalog";
 import {
   createWorkspaceMeta,
   normalizeWorkspaceName,
@@ -55,6 +57,21 @@ export interface SeedWorkspaceResult {
   readonly meta: WorkspaceMeta;
 }
 
+function starterMeta(template: StarterTemplate, customName?: string): WorkspaceMeta {
+  const meta = createWorkspaceMeta({
+    name: customName ?? template.defaultName,
+    template: template.id,
+    defaultName: !customName && template.id === BLANK_TEMPLATE.id,
+  });
+  const plan = planFrom(
+    detectProject({
+      paths: Object.keys(template.files),
+      read: (path) => template.files[path],
+    }),
+  );
+  return plan.dev ? { ...meta, pendingImport: plan } : meta;
+}
+
 /**
  * Seeds a starter template into a brand-new workspace using the shared `createWorkspaceWithFiles`
  * helper (atomic create-if-absent claim, `state: "importing"` marker written first and cleared
@@ -66,11 +83,7 @@ export async function seedWorkspace(
   deps: NewWorkspaceDeps = quietBrowserWorkspaceDeps,
 ): Promise<SeedWorkspaceResult> {
   const template = findTemplate(templateId) ?? BLANK_TEMPLATE;
-  const meta = createWorkspaceMeta({
-    name: options.customName ?? template.defaultName,
-    template: template.id,
-    defaultName: !options.customName && template.id === BLANK_TEMPLATE.id,
-  });
+  const meta = starterMeta(template, options.customName);
   const id = await createWorkspaceWithFiles(template.files, meta, deps, { signal: options.signal });
   return { id, meta };
 }
@@ -91,11 +104,7 @@ export async function retrySeedWorkspace(
 ): Promise<RetrySeedResult> {
   const template = findTemplate(templateId);
   if (!template) throw new RetrySourceMismatchError(id);
-  const meta = createWorkspaceMeta({
-    name: customName ?? template.defaultName,
-    template: template.id,
-    defaultName: !customName && template.id === BLANK_TEMPLATE.id,
-  });
+  const meta = starterMeta(template, customName);
   try {
     await createWorkspaceWithFiles(template.files, meta, deps, { into: id });
     return { status: "seeded", meta };

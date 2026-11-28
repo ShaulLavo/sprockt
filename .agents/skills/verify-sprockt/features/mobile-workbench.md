@@ -18,9 +18,12 @@ Open any workspace on a phone (`390×844` viewport or iOS Safari). Switch betwee
 ```bash
 bun run agent:browser scenario mobile-workbench
 bun run agent:browser scenario mobile-workbench --engine webkit
+bun run agent:browser scenario starter-dev-server --viewport phone
 ```
 
-Inspect all three screenshots (`01-mobile-tab-switch-no-focus.png`, `02-mobile-editor-explicit-focus.png`, `03-mobile-terminal-dark-synced.png`) and `layout.json` (`overflowX === 0`, `focusedAfterTabTap === false`, `focusedAfterEditorTap === true`, dark terminal luminance `< 60`).
+For `mobile-workbench`, inspect all three screenshots (`01-mobile-tab-switch-no-focus.png`, `02-mobile-editor-explicit-focus.png`, `03-mobile-terminal-dark-synced.png`) and `layout.json` (`overflowX === 0`, `focusedAfterTabTap === false`, `focusedAfterEditorTap === true`, dark terminal luminance `< 60`).
+
+For `starter-dev-server --viewport phone`, confirm the starter dev server reaches `running` and attaches a port before the scenario taps **Preview**, then renders in `01-auto-started-preview.png` and resets the counter on preview reload while the server keeps running.
 
 ## Gotchas
 

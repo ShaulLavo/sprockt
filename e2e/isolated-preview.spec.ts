@@ -337,24 +337,23 @@ test("a workspace opened again keeps its preview origin, and so its cookies", as
   await expectPreviewText(again, "#api", `host ${new URL(before ?? "").host} cookie visit=1`);
 });
 
-test("the Vite + React catalog starter boots and renders on its own preview origin", async ({ page }) => {
+test("the Vite + React catalog starter starts automatically on its own preview origin", async ({ page }) => {
   test.setTimeout(900_000);
   const patient = { timeout: 600_000 };
   await page.goto("/");
   await page.getByTestId("template-vite-react").click();
   await expect(page).toHaveURL(/\/w\/[a-z0-9-]+$/);
-  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
 
+  await expect(page.getByTestId("file-tree")).toContainText("index.html");
   // Add the preview probe so this test can read the cross-origin preview DOM in Chromium, Firefox and WebKit.
   const indexHtml = await page.evaluate(() => globalThis.sprockt?.workspace?.files.read("index.html"));
+  await writeFile(page, "public/probe.js", PROBE);
   await writeFile(
     page,
     "index.html",
     (indexHtml ?? "").replace("</head>", '<script src="/probe.js"></script></head>'),
   );
-  await writeFile(page, "public/probe.js", PROBE);
 
-  await page.getByTestId("preview-task").click();
   await expect(page.getByTestId("wb-preview-port-select")).toHaveValue("5173", patient);
   await expectPreviewText(page, "h1", "Hello from bun.wasm", patient);
   await clickInPreview(page, "button");

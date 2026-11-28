@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { findTemplate } from "../src/templates/catalog";
 import { editorText, expect, newWorkspace, test } from "./helpers";
 
 // TypeScript IntelliSense end to end: the tsrs language server runs on the workspace's Waffle
@@ -239,9 +240,11 @@ export function jsxs(type: unknown, props: unknown): JSX.Element;
 test("the Vite + React starter stays clean before install, waits through partial installs, then activates LSP", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.getByTestId("template-vite-react").click();
-  await expect(page).toHaveURL(/\/w\/[a-z0-9]+$/);
+  await newWorkspace(page);
+  const starter = findTemplate("vite-react");
+  if (!starter) throw new Error("Missing React starter");
+  await expect(page.getByTestId("terminal-state")).toHaveText("ready");
+  await writeProject(page, starter.files);
   await page.getByTestId("file-tree").getByRole("treeitem", { name: "App.tsx", exact: true }).click();
   await expect.poll(() => editorText(page)).toContain("Hello from bun.wasm");
   // Before dependencies are installed, the status bar reports all 6 missing packages and

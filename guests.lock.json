@@ -1,11 +1,11 @@
 {
-  "bunWasm": "a997a2069c5201c75c83e6eb68e0995a8f7254f5",
+  "bunWasm": "e51d22ae7c5d8680393f8012ae7fa23ed4a7be7d",
   "bashWeb": "0.0.114",
   "guests": {
     "bun-browser.wasm": {
-      "source": "https://bun-artifacts.shaulavo.dev/83d44be7e803a4ee909a44fd27af97cb9415950d23f8f04ddce3d5e4f062fde4/bun.wasm.gz",
-      "sha256": "83d44be7e803a4ee909a44fd27af97cb9415950d23f8f04ddce3d5e4f062fde4",
-      "bytes": 16490847
+      "source": "https://bun-artifacts.shaulavo.dev/c8a5703b543d8f3800e0dfae89afc86aea144ffa8a6d964312583a24dc8ce354/bun.wasm.gz",
+      "sha256": "c8a5703b543d8f3800e0dfae89afc86aea144ffa8a6d964312583a24dc8ce354",
+      "bytes": 16637885
     },
     "shell-engine.wasm": {
       "source": "https://bun-artifacts.shaulavo.dev/43f6a188756f1d8121eebcb9447136e814d98a6b0f796232f782fe1dee5aae96/shell-engine.wasm.gz",

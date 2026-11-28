@@ -79,6 +79,7 @@ export const SELECTORS = {
     startButton: '[data-testid="preview-start"]',
     empty: '[data-testid="preview-empty"]',
     frame: '[data-testid="wb-preview-iframe"]',
+    reload: '[data-testid="wb-preview-reload"]',
     errors: '[data-testid="wb-preview-errors"]',
     openInTab: '[data-testid="wb-preview-open-tab"]',
   },
