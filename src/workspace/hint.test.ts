@@ -10,6 +10,8 @@ import {
   handleHintStorageEvent,
   hydrateWorkspaceName,
   mergeStoredWorkspaceMeta,
+  notifyWorkspaceWriterSettled,
+  onWorkspaceWriterSettled,
   readWorkspaceHint,
   removeWorkspaceHint,
   saveWorkspaceHint,
@@ -770,5 +772,26 @@ describe("workspace name hydration and reactivity", () => {
       ...ghHint,
       lastOpened: "2026-04-01T00:00:00.000Z",
     });
+  });
+});
+
+describe("workspace writer settled notifications", () => {
+  test("notifies active listeners, isolates listener errors, and stops after unsubscribe", () => {
+    let calls = 0;
+    const stopThrowing = onWorkspaceWriterSettled(() => {
+      throw new Error("boom");
+    });
+    const unsubscribe = onWorkspaceWriterSettled(() => {
+      calls += 1;
+    });
+    try {
+      notifyWorkspaceWriterSettled();
+      expect(calls).toBe(1);
+    } finally {
+      stopThrowing();
+      unsubscribe();
+    }
+    notifyWorkspaceWriterSettled();
+    expect(calls).toBe(1);
   });
 });

@@ -23,6 +23,9 @@ export { hasWorkspaceHints, removeWorkspaceHint, saveWorkspaceHint, touchWorkspa
 // Serialize same-tab storage probes and mutations so a focus/visibility refresh never collides
 // with an explicit rename, retry, or delete on the same Waffle maintenance lock.
 let storageQueue: Promise<unknown> = Promise.resolve();
+let discoverySeq = 0;
+let handoffSkipId: string | undefined;
+let handoffSkipThroughSeq = 0;
 
 function runSerialized<T>(task: () => Promise<T>): Promise<T> {
   const result = storageQueue.then(task, task);
@@ -88,13 +91,16 @@ function compareWorkspaces(a: StoredWorkspaceSummary, b: StoredWorkspaceSummary)
 }
 
 export function listStoredWorkspaces(): Promise<StoredWorkspaceSummary[]> {
+  const mySeq = ++discoverySeq;
   return runSerialized(async () => {
     const ids = await listSprocktWorkspaceIds();
     if (ids.length === 0) return [];
+    const skipId = mySeq <= handoffSkipThroughSeq ? handoffSkipId : undefined;
 
     const { inspectIdleWorkspaceMeta } = await import("./storage-discovery");
     const results = await Promise.all(
       ids.map(async (id): Promise<StoredWorkspaceSummary | undefined> => {
+        if (id === skipId) return summaryFromMeta(id, readWorkspaceHint(id), false);
         try {
           const outcome = await inspectIdleWorkspaceMeta(storageName(id), WORKSPACE_META_PATH);
           // Re-read the hint after async disk inspection so a name adopted in another tab during
@@ -141,6 +147,7 @@ export function renameStoredWorkspace(
     const { renameWorkspace } = await import("../templates/seed");
     const result = await renameWorkspace(id, nextName);
     if (result.status === "renamed") saveWorkspaceHint(id, result.meta);
+    if (result.status === "missing") removeWorkspaceHint(id);
     return result;
   });
 }
@@ -157,6 +164,11 @@ export function retryStoredWorkspace(
     const { retrySeedWorkspace } = await import("../templates/seed");
     const result = await retrySeedWorkspace(id, templateId, name);
     if (result.status === "seeded") saveWorkspaceHint(id, result.meta);
+    if (result.status === "missing") removeWorkspaceHint(id);
+    if (result.status === "seeded" || result.status === "already-ready") {
+      handoffSkipId = id;
+      handoffSkipThroughSeq = discoverySeq;
+    }
     return result;
   });
 }
