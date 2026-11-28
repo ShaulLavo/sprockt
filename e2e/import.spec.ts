@@ -550,8 +550,14 @@ test("Retry and Rename on deleted workspaces refuse without recreating their Ind
   // 2. Create a normal workspace, list it in two landing tabs, delete in tab 1, then Rename in tab 2.
   await page.goto("/w/deletedren");
   await expect(page.getByTestId("save-state")).toHaveText("saved");
+  // A separate workspace tracks whether both the queued and later discovery refreshes landed.
+  await page.goto("/w/discoverylive");
+  await expectWorkspace(page);
   await page.goto("/");
   await expect(page.getByTestId("workspace-row-deletedren")).toBeVisible();
+  const activeBadge = page.getByTestId("workspace-live-discoverylive");
+  await expect(page.getByTestId("workspace-row-discoverylive")).toBeVisible();
+  await expect(activeBadge).toHaveCount(0);
 
   const renameTab = await context.newPage();
   await renameTab.goto("/");
@@ -616,9 +622,31 @@ test("Retry and Rename on deleted workspaces refuse without recreating their Ind
     }, maintenanceLock);
     try {
       await expect.poll(pendingMaintenanceLocks).toBe(2);
+      const activeTab = await context.newPage();
+      await activeTab.goto("/w/discoverylive");
+      await expectWorkspace(activeTab);
+      await page.bringToFront();
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       await blocker.evaluate((state) => state.database.close());
+      await expect(activeBadge).toHaveCount(1);
       await expect(page.getByTestId("workspace-row-deletedren")).toHaveCount(0);
       await expect(renameTab.getByTestId("workspace-row-deletedren")).toHaveCount(0);
+
+      await activeTab.close();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            async (name) => {
+              const snapshot = await navigator.locks.query();
+              return snapshot.held?.some((lock) => lock.name === name) ?? false;
+            },
+            `bun-wasm:filesystem:indexeddb:${storageName("discoverylive")}`,
+          ),
+        )
+        .toBe(false);
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await expect(activeBadge).toHaveCount(0);
+      await expect(page.getByTestId("workspace-row-deletedren")).toHaveCount(0);
     } finally {
       await releaseDiscoveryLock.evaluate((release) => release());
       await releaseDiscoveryLock.dispose();
@@ -636,6 +664,16 @@ test("Retry and Rename on deleted workspaces refuse without recreating their Ind
     return dbs.map((db) => db.name ?? "");
   });
   expect(dbNames.filter((name) => name.includes("deletedretry") || name.includes("deletedren"))).toEqual([]);
+
+  // An intentional recreation is discoverable from the same landing page after storage is idle.
+  await renameTab.goto("/w/deletedren");
+  await expectWorkspace(renameTab);
+  await renameTab.goto("/");
+  await expect(renameTab.getByTestId("workspace-row-deletedren")).toBeVisible();
+  await expect(renameTab.getByTestId("workspace-live-deletedren")).toHaveCount(0);
+  await page.bringToFront();
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByTestId("workspace-row-deletedren")).toBeVisible();
   await renameTab.close();
 });
 
