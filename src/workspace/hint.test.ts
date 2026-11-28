@@ -15,7 +15,6 @@ import {
   readWorkspaceHint,
   removeWorkspaceHint,
   saveWorkspaceHint,
-  withoutWriterSettledNotifications,
   WORKSPACE_HINT_PREFIX,
   workspaceName,
 } from "./hint";
@@ -777,34 +776,22 @@ describe("workspace name hydration and reactivity", () => {
 });
 
 describe("workspace writer settled notifications", () => {
-  test("suppresses notifications during foreground handoff tasks and restores them even on failure", async () => {
+  test("notifies active listeners, isolates listener errors, and stops after unsubscribe", () => {
     let calls = 0;
+    const stopThrowing = onWorkspaceWriterSettled(() => {
+      throw new Error("boom");
+    });
     const unsubscribe = onWorkspaceWriterSettled(() => {
       calls += 1;
     });
     try {
       notifyWorkspaceWriterSettled();
       expect(calls).toBe(1);
-
-      await withoutWriterSettledNotifications(async () => {
-        notifyWorkspaceWriterSettled();
-      });
-      expect(calls).toBe(1);
-
-      await expect(
-        withoutWriterSettledNotifications(async () => {
-          notifyWorkspaceWriterSettled();
-          throw new Error("boom");
-        }),
-      ).rejects.toThrow("boom");
-      expect(calls).toBe(1);
-
-      notifyWorkspaceWriterSettled();
-      expect(calls).toBe(2);
     } finally {
+      stopThrowing();
       unsubscribe();
     }
     notifyWorkspaceWriterSettled();
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
   });
 });

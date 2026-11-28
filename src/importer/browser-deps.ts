@@ -55,23 +55,32 @@ async function writeAbsoluteFile(
   await runBackendOp(backend, "writeFile", [path, false, false], bytes);
 }
 
-async function retireBackend(backend: PersistentBackend): Promise<void> {
+export interface BrowserWriterOptions {
+  /**
+   * Whether closing this writer notifies same-tab landing subscribers. Background imports/restores
+   * default to `true`; foreground landing actions (starter launch, retry, rename) pass `false` so
+   * closing their own writer never triggers a competing discovery probe before handoff.
+   */
+  readonly notifyOnClose?: boolean;
+}
+
+async function retireBackend(backend: PersistentBackend, notifyOnClose: boolean): Promise<void> {
   try {
     await backend.retireFenced();
   } finally {
-    notifyWorkspaceWriterSettled();
+    if (notifyOnClose) notifyWorkspaceWriterSettled();
   }
 }
 
-async function closeStorage(storage: IndexedDBStorage): Promise<void> {
+async function closeStorage(storage: IndexedDBStorage, notifyOnClose: boolean): Promise<void> {
   try {
     await storage.close().catch(() => undefined);
   } finally {
-    notifyWorkspaceWriterSettled();
+    if (notifyOnClose) notifyWorkspaceWriterSettled();
   }
 }
 
-function createBackendWriter(backend: PersistentBackend): WorkspaceWriter {
+function createBackendWriter(backend: PersistentBackend, notifyOnClose: boolean): WorkspaceWriter {
   return {
     files: {
       async writeMany(files) {
@@ -107,7 +116,7 @@ function createBackendWriter(backend: PersistentBackend): WorkspaceWriter {
       },
     },
     dispose(): Promise<void> {
-      return retireBackend(backend);
+      return retireBackend(backend, notifyOnClose);
     },
   };
 }
@@ -132,8 +141,10 @@ function isCreateCollision(error: unknown): boolean {
 export async function createNewBrowserWriter(
   id: string,
   signal?: AbortSignal,
+  options: BrowserWriterOptions = {},
 ): Promise<WorkspaceWriter | "taken"> {
   signal?.throwIfAborted();
+  const notifyOnClose = options.notifyOnClose ?? true;
   const name = storageName(id);
   let storage: IndexedDBStorage;
   try {
@@ -153,12 +164,12 @@ export async function createNewBrowserWriter(
   try {
     const backend = await PersistentBackend.open(storage, { intervalMs: 0 });
     if (backend.hasLoadedIndex) {
-      await retireBackend(backend);
+      await retireBackend(backend, notifyOnClose);
       return "taken";
     }
-    return createBackendWriter(backend);
+    return createBackendWriter(backend, notifyOnClose);
   } catch (error) {
-    await closeStorage(storage);
+    await closeStorage(storage, notifyOnClose);
     throw error;
   }
 }
@@ -171,8 +182,10 @@ export async function createNewBrowserWriter(
 export async function openExistingBrowserWriter(
   id: string,
   signal?: AbortSignal,
+  options: BrowserWriterOptions = {},
 ): Promise<WorkspaceWriter | "busy" | "missing"> {
   signal?.throwIfAborted();
+  const notifyOnClose = options.notifyOnClose ?? true;
   const name = storageName(id);
   let storage: IndexedDBStorage;
   try {
@@ -191,20 +204,29 @@ export async function openExistingBrowserWriter(
   try {
     const backend = await PersistentBackend.open(storage, { intervalMs: 0, signal });
     if (!backend.hasLoadedIndex) {
-      await retireBackend(backend);
+      await retireBackend(backend, notifyOnClose);
       return "missing";
     }
-    return createBackendWriter(backend);
+    return createBackendWriter(backend, notifyOnClose);
   } catch (error) {
-    await closeStorage(storage);
+    await closeStorage(storage, notifyOnClose);
     throw error;
   }
 }
 
-export const browserWorkspaceDeps: NewWorkspaceDeps = {
-  createNew: createNewBrowserWriter,
-  openExisting: openExistingBrowserWriter,
-};
+export function createBrowserWorkspaceDeps(options: BrowserWriterOptions = {}): NewWorkspaceDeps {
+  return {
+    createNew: (id, signal) => createNewBrowserWriter(id, signal, options),
+    openExisting: (id, signal) => openExistingBrowserWriter(id, signal, options),
+  };
+}
+
+export const browserWorkspaceDeps: NewWorkspaceDeps = createBrowserWorkspaceDeps();
+
+/** Browser deps for foreground landing actions that own their own navigation or explicit refresh. */
+export const quietBrowserWorkspaceDeps: NewWorkspaceDeps = createBrowserWorkspaceDeps({
+  notifyOnClose: false,
+});
 
 /**
  * Opens the finished workspace, unless the visitor left while it was being written. The

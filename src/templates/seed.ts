@@ -1,7 +1,7 @@
 // Workspace seeding (delegated to shared `createWorkspaceWithFiles`) and atomic non-stealing rename.
 // Uses the shared exclusive browser writer (`whenBusy: "ifAvailable"`), so another tab's ownership
 // is never stolen and `waffle/runtime.ts` stays unloaded on `/`.
-import { browserWorkspaceDeps, openExistingBrowserWriter } from "../importer/browser-deps";
+import { openExistingBrowserWriter, quietBrowserWorkspaceDeps } from "../importer/browser-deps";
 import {
   createWorkspaceWithFiles,
   NotIncompleteError,
@@ -42,7 +42,7 @@ export interface RenameWorkspaceDeps {
 }
 
 const DEFAULT_RENAME_DEPS: RenameWorkspaceDeps = {
-  open: (id, options) => openExistingBrowserWriter(id, options.signal),
+  open: (id, options) => openExistingBrowserWriter(id, options.signal, { notifyOnClose: false }),
 };
 
 export interface SeedWorkspaceOptions {
@@ -63,7 +63,7 @@ export interface SeedWorkspaceResult {
 export async function seedWorkspace(
   templateId: TemplateId,
   options: SeedWorkspaceOptions = {},
-  deps: NewWorkspaceDeps = browserWorkspaceDeps,
+  deps: NewWorkspaceDeps = quietBrowserWorkspaceDeps,
 ): Promise<SeedWorkspaceResult> {
   const template = findTemplate(templateId) ?? BLANK_TEMPLATE;
   const meta = createWorkspaceMeta({
@@ -87,7 +87,7 @@ export async function retrySeedWorkspace(
   id: string,
   templateId: string,
   customName?: string,
-  deps: NewWorkspaceDeps = browserWorkspaceDeps,
+  deps: NewWorkspaceDeps = quietBrowserWorkspaceDeps,
 ): Promise<RetrySeedResult> {
   const template = findTemplate(templateId);
   if (!template) throw new RetrySourceMismatchError(id);

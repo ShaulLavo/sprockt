@@ -802,6 +802,173 @@ test("a failed starter seed exposes Retry immediately on the landing page withou
   expect(launchProbes).not.toContain(`bun-wasm:filesystem:indexeddb-maintenance:sprockt-${freshId}`);
 });
 
+test("a cancelled share restore settling during a failing starter Retry still refreshes on landing", async ({
+  page,
+}) => {
+  const encoded = await encodeShareFragment({
+    templateId: "blank",
+    files: [{ path: "hello.txt", bytes: new TextEncoder().encode("hi\n") }],
+    deleted: [],
+  });
+  if (!encoded.ok) throw new Error("the fixture fits in a link");
+
+  await page.addInitScript(() => {
+    const lockManager = navigator.locks;
+    const realRequest = lockManager.request.bind(lockManager);
+    let releaseLock!: () => void;
+    const waitLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const host = globalThis as unknown as {
+      sprocktPausedShareDb?: string;
+      sprocktReleaseShareLock?: () => void;
+    };
+    host.sprocktReleaseShareLock = releaseLock;
+    let armed = true;
+    lockManager.request = ((name: string, optionsOrCallback: unknown, maybeCallback?: unknown) => {
+      const hasOptions = typeof optionsOrCallback !== "function";
+      const callback = (hasOptions ? maybeCallback : optionsOrCallback) as LockGrantedCallback<unknown>;
+      if (armed && name.startsWith("bun-wasm:filesystem:indexeddb:sprockt-")) {
+        armed = false;
+        host.sprocktPausedShareDb = name.slice("bun-wasm:filesystem:indexeddb:".length);
+        return waitLock.then(() =>
+          hasOptions
+            ? realRequest(name, optionsOrCallback as LockOptions, callback)
+            : realRequest(name, callback),
+        );
+      }
+      return hasOptions
+        ? realRequest(name, optionsOrCallback as LockOptions, callback)
+        : realRequest(name, callback);
+    }) as typeof lockManager.request;
+  });
+
+  // 1. Cancel a share restore while its writer lock is paused and return to landing.
+  await page.goto(`/s#${encoded.fragment}`);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (globalThis as unknown as { sprocktPausedShareDb?: string }).sprocktPausedShareDb ?? "",
+      ),
+    )
+    .toMatch(/^sprockt-[a-z0-9]+$/);
+  const shareDb = await page.evaluate(
+    () => (globalThis as unknown as { sprocktPausedShareDb?: string }).sprocktPausedShareDb ?? "",
+  );
+  const shareId = shareDb.slice("sprockt-".length);
+
+  await page.evaluate(() => {
+    location.hash = "#share=not-a-real-link";
+  });
+  await expect(page.getByTestId("share-error")).toBeVisible();
+  await page.getByRole("button", { name: "Back to Sprockt" }).click();
+
+  const shareRow = page.getByTestId("workspace-list").locator("li", { hasText: shareId });
+  await expect(shareRow).toBeVisible();
+  await expect(page.getByTestId(`workspace-live-${shareId}`)).toBeVisible();
+
+  // 2. Create an incomplete starter seed on the same landing page by failing its 2nd commit once.
+  await page.evaluate((excludedDb) => {
+    const realPut = IDBObjectStore.prototype.put;
+    let activeCommits = 0;
+    let armed = true;
+    IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
+      const dbName = this.transaction.db.name;
+      if (
+        armed &&
+        this.name === "metadata" &&
+        key === "active" &&
+        dbName.startsWith("sprockt-") &&
+        dbName !== excludedDb
+      ) {
+        activeCommits += 1;
+        if (activeCommits === 2) {
+          armed = false;
+          this.transaction.abort();
+          throw new DOMException("Simulated starter checkpoint failure", "AbortError");
+        }
+      }
+      return realPut.call(this, value, key);
+    };
+  }, shareDb);
+
+  await page.getByTestId("template-bun-sqlite").click();
+  await expect(page.getByTestId("template-error")).toBeVisible();
+  const starterRow = page
+    .getByTestId("workspace-list")
+    .locator("li")
+    .filter({ has: page.getByTestId("incomplete-retry") });
+  await expect(starterRow).toHaveCount(1);
+  const starterTestId = (await starterRow.getAttribute("data-testid")) ?? "";
+  const starterId = starterTestId.slice("workspace-row-".length);
+  expect(starterId).not.toBe("");
+  expect(starterId).not.toBe(shareId);
+
+  // 3. During starter Retry, release the paused share writer and wait until it closes completely,
+  // then fail the starter Retry checkpoint so the visitor stays on landing without a reload.
+  await page.evaluate(
+    ({ shareDbName, starterDbName }) => {
+      const lockManager = navigator.locks;
+      const realRequest = lockManager.request.bind(lockManager);
+      const host = globalThis as unknown as { sprocktReleaseShareLock?: () => void };
+      let armedLock = true;
+      const waitShareSettled = async (): Promise<void> => {
+        host.sprocktReleaseShareLock?.();
+        // Taking the maintenance lock exclusively waits deterministically until the share writer
+        // finishes flushing the incomplete marker, closes, and fires notifyWorkspaceWriterSettled().
+        await realRequest(
+          `bun-wasm:filesystem:indexeddb-maintenance:${shareDbName}`,
+          { mode: "exclusive" },
+          () => undefined,
+        );
+      };
+      lockManager.request = ((name: string, optionsOrCallback: unknown, maybeCallback?: unknown) => {
+        const hasOptions = typeof optionsOrCallback !== "function";
+        const callback = (hasOptions ? maybeCallback : optionsOrCallback) as LockGrantedCallback<unknown>;
+        if (armedLock && name === `bun-wasm:filesystem:indexeddb:${starterDbName}`) {
+          armedLock = false;
+          const wrapped: LockGrantedCallback<unknown> = async (lock) => {
+            if (lock) await waitShareSettled();
+            return callback(lock);
+          };
+          return hasOptions
+            ? realRequest(name, optionsOrCallback as LockOptions, wrapped)
+            : realRequest(name, wrapped);
+        }
+        return hasOptions
+          ? realRequest(name, optionsOrCallback as LockOptions, callback)
+          : realRequest(name, callback);
+      }) as typeof lockManager.request;
+
+      const realPut = IDBObjectStore.prototype.put;
+      let armedFail = true;
+      IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
+        if (
+          armedFail &&
+          this.name === "metadata" &&
+          key === "active" &&
+          this.transaction.db.name === starterDbName
+        ) {
+          armedFail = false;
+          this.transaction.abort();
+          throw new DOMException("Simulated retry checkpoint failure", "AbortError");
+        }
+        return realPut.call(this, value, key);
+      };
+    },
+    { shareDbName: shareDb, starterDbName: `sprockt-${starterId}` },
+  );
+
+  await starterRow.getByTestId("incomplete-retry").click();
+  // Without reloading or refocusing, the share row must transition from busy to incomplete + Delete.
+  await expect(shareRow.getByTestId("incomplete-import")).toBeVisible();
+  await expect(page.getByTestId(`workspace-live-${shareId}`)).toHaveCount(0);
+  await shareRow.getByTestId("incomplete-delete").click();
+  await shareRow.getByTestId("incomplete-confirm-delete").click();
+  await expect(shareRow).toHaveCount(0);
+  await expect.poll(() => storedIn(page, shareId)).toBe(false);
+});
+
 /** Whether GitHub answers from this machine; the real-repository test needs it. */
 async function githubReachable(): Promise<boolean> {
   try {
