@@ -4,7 +4,7 @@
    Dark theme: native sibling inspired by Night Shift — near-black ink ground (#0a0d14), layered
    slate surfaces, crisp ink-white text (#e9edf3) and cornflower-blue accent (#5ab9fc).
    Every color is light-dark(light, dark). The page follows the system unless <html data-theme>
-   is "light" or "dark" (src/workbench/theme.ts sets it from the stored choice). */
+   is "light" or "dark" (src/ui/theme.ts sets it from the stored choice). */
 
 @import "@shaulavo/workbench/layers.css";
 @import "@fontsource-variable/schibsted-grotesk/wght.css";

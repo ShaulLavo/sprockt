@@ -226,7 +226,7 @@ and from an origin it serves), and turns a reported address into a place with `l
 `takesCommands` says whether a page takes "reload" and "go to" by message; otherwise the pane
 steers the frame by its address. `serverEnv` is what a dev server's shell needs so the server
 accepts the transport's host names; the session puts it into every shell of the workspace, the
-task's and the terminals' (`workspace/shell-env.ts`). A transport belongs to one workspace, and
+task's and the terminals' (`workspace/session/shell-env.ts`). A transport belongs to one workspace, and
 the workspace is part of every route it builds, so two workspaces that both run a server on
 port 5173 are routed apart.
 `createPreviewTransport(workspace)` in `preview/index.ts` picks one, by the build
