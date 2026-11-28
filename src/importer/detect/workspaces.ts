@@ -324,6 +324,7 @@ function compilePattern(pattern: string): CompiledPattern | undefined {
   const segments: CompiledSegment[] = [];
   for (const raw of parts) {
     const globstar = raw === "**";
+    if (globstar && segments[segments.length - 1]?.globstar) continue;
     const regex = globstar ? undefined : compileSegment(raw);
     if (!globstar && !regex) return undefined;
     segments.push({
@@ -343,55 +344,67 @@ function matchesSegment(dirSegment: string, patSegment: CompiledSegment, matchHi
   return patSegment.regex?.test(dirSegment) ?? false;
 }
 
+function expandGlobstars(states: Uint8Array, patternSegments: readonly CompiledSegment[]): void {
+  for (let p = 0; p < patternSegments.length; p += 1) {
+    if (states[p] && patternSegments[p]?.globstar) states[p + 1] = 1;
+  }
+}
+
+function stepPatternStates(
+  current: Uint8Array,
+  segment: string,
+  patternSegments: readonly CompiledSegment[],
+  matchHidden: boolean,
+): Uint8Array {
+  const next = new Uint8Array(patternSegments.length + 1);
+  for (let p = 0; p < patternSegments.length; p += 1) {
+    if (!current[p]) continue;
+    const pat = patternSegments[p];
+    if (!pat) continue;
+    if (pat.globstar) {
+      if (matchHidden || !segment.startsWith(".")) next[p] = 1;
+      continue;
+    }
+    if (matchesSegment(segment, pat, matchHidden)) next[p + 1] = 1;
+  }
+  return next;
+}
+
+function runPatternNfa(
+  dirSegments: readonly string[],
+  patternSegments: readonly CompiledSegment[],
+  matchHidden: boolean,
+): Uint8Array {
+  let states: Uint8Array = new Uint8Array(patternSegments.length + 1);
+  states[0] = 1;
+  expandGlobstars(states, patternSegments);
+  for (const segment of dirSegments) {
+    states = stepPatternStates(states, segment, patternSegments, matchHidden);
+    expandGlobstars(states, patternSegments);
+    if (!states.some((flag) => flag !== 0)) return states;
+  }
+  return states;
+}
+
 function matchSegments(
   dirSegments: readonly string[],
   patternSegments: readonly CompiledSegment[],
-  dirIndex: number,
-  patIndex: number,
   matchHidden: boolean,
 ): boolean {
-  if (patIndex === patternSegments.length) return dirIndex === dirSegments.length;
-  const current = patternSegments[patIndex];
-  if (!current) return false;
-  if (current.globstar) {
-    // `**` matches zero or more path segments (skipping hidden ones during positive discovery).
-    if (matchSegments(dirSegments, patternSegments, dirIndex, patIndex + 1, matchHidden)) return true;
-    const nextDir = dirSegments[dirIndex];
-    if (nextDir !== undefined && (matchHidden || !nextDir.startsWith("."))) {
-      return matchSegments(dirSegments, patternSegments, dirIndex + 1, patIndex, matchHidden);
-    }
-    return false;
-  }
-  if (dirIndex >= dirSegments.length) return false;
-  const segment = dirSegments[dirIndex] ?? "";
-  if (!matchesSegment(segment, current, matchHidden)) return false;
-  return matchSegments(dirSegments, patternSegments, dirIndex + 1, patIndex + 1, matchHidden);
+  const states = runPatternNfa(dirSegments, patternSegments, matchHidden);
+  return states[patternSegments.length] === 1;
 }
 
 /** True when `prefixSegments` can match a strict ancestor of some path accepted by `pattern`. */
 function canMatchDescendant(
   prefixSegments: readonly string[],
   patternSegments: readonly CompiledSegment[],
-  dirIndex: number,
-  patIndex: number,
 ): boolean {
-  if (dirIndex === prefixSegments.length) {
-    // We matched the entire prefix; a strict descendant is possible if any segment remains.
-    return patIndex < patternSegments.length;
+  const states = runPatternNfa(prefixSegments, patternSegments, false);
+  for (let p = 0; p < patternSegments.length; p += 1) {
+    if (states[p] === 1) return true;
   }
-  const current = patternSegments[patIndex];
-  if (!current) return false;
-  if (current.globstar) {
-    if (canMatchDescendant(prefixSegments, patternSegments, dirIndex, patIndex + 1)) return true;
-    const nextDir = prefixSegments[dirIndex];
-    if (nextDir !== undefined && !nextDir.startsWith(".")) {
-      return canMatchDescendant(prefixSegments, patternSegments, dirIndex + 1, patIndex);
-    }
-    return false;
-  }
-  const segment = prefixSegments[dirIndex] ?? "";
-  if (!matchesSegment(segment, current, false)) return false;
-  return canMatchDescendant(prefixSegments, patternSegments, dirIndex + 1, patIndex + 1);
+  return false;
 }
 
 interface CompiledWorkspacePatterns {
@@ -434,7 +447,7 @@ function compileWorkspacePatterns(patterns: readonly string[]): CompiledWorkspac
 
 function matchesPositivePattern(dirSegments: readonly string[], pattern: CompiledPattern): boolean {
   if (dirSegments.length > pattern.maxDepth) return false;
-  return matchSegments(dirSegments, pattern.segments, 0, 0, false);
+  return matchSegments(dirSegments, pattern.segments, false);
 }
 
 /** Matches a relative directory against workspace patterns, applying exclusions independently of order. */
@@ -451,9 +464,7 @@ function matchesCompiled(dirSegments: readonly string[], compiled: CompiledWorks
   if (compiled.literals.has(dirSegments.join("/"))) return true;
   const included = compiled.positives.some((pattern) => matchesPositivePattern(dirSegments, pattern));
   if (!included) return false;
-  const excluded = compiled.negatives.some((pattern) =>
-    matchSegments(dirSegments, pattern.segments, 0, 0, true),
-  );
+  const excluded = compiled.negatives.some((pattern) => matchSegments(dirSegments, pattern.segments, true));
   return !excluded;
 }
 
@@ -512,7 +523,7 @@ export async function findWorkspaceDirsInFs(
         compiled.positives.some(
           (pattern) =>
             matchesPositivePattern(child, pattern) ||
-            (child.length < pattern.maxDepth && canMatchDescendant(child, pattern.segments, 0, 0)),
+            (child.length < pattern.maxDepth && canMatchDescendant(child, pattern.segments)),
         ),
       );
     await Promise.all(nextDirs.map((child) => walk(child)));

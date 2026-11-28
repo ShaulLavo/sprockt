@@ -533,4 +533,27 @@ describe("detectProjectInFs", () => {
     expect(fromPaths.defaultTargetId).toBe(`${deepDir}:dev`);
     expect(fromFs.defaultTargetId).toBe(`${deepDir}:dev`);
   });
+
+  test("evaluates multi-globstar patterns on deep paths in linear time without backtracking", async () => {
+    const segs = Array.from({ length: 24 }, () => "a").join("/");
+    const matched = `packages/${segs}/app`;
+    const unmatched = `packages/${segs}/other`;
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({
+        name: "mono",
+        workspaces: ["packages/**/**/a/**/a/**/a/**/a/**/app"],
+      }),
+      [`${matched}/package.json`]: JSON.stringify({ name: "app", scripts: { dev: "bun server.ts" } }),
+      [`${unmatched}/package.json`]: JSON.stringify({ name: "other", scripts: { dev: "bun server.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual([matched]);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual([matched]);
+  });
 });
