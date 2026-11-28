@@ -28,9 +28,11 @@ export interface DevServerState {
   readonly ports: readonly number[];
   /** The command that started it, for display (`bun run dev`). */
   readonly command?: string;
+  /** The chosen workspace target id (`apps/api:dev`), so a successor tab restarts the same app. */
+  readonly targetId?: string;
 }
 
-export type DevServerUpdate = Pick<DevServerState, "phase" | "ports" | "command">;
+export type DevServerUpdate = Pick<DevServerState, "phase" | "ports" | "command" | "targetId">;
 
 export type DevServerRole = "owner" | "follower";
 

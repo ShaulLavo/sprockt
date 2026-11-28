@@ -35,6 +35,29 @@
   color: var(--fg);
 }
 
+.preview-target-select {
+  height: calc(var(--control-h) - 2px);
+  max-width: 172px;
+  padding: 0 var(--space-1_5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font: var(--text-xs) / 1 var(--font-mono);
+}
+
+.preview-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.preview-empty-actions .preview-target-select {
+  height: var(--control-h);
+  max-width: 240px;
+}
+
 .preview-pane .wb-preview-viewport-group {
   gap: 1px;
   padding: 2px;

@@ -204,6 +204,7 @@ interface AttachedSessionRecord {
 export interface WaffleTerminalBridge {
   readonly adapter: TerminalAdapter;
   bindTerminalHandle(sessionId: string, terminal: Terminal): void;
+  reportRendererError(sessionId: string, message: string, cause?: unknown): void;
   clearTerminal(terminal: Terminal, attachment: TerminalAttachment | null): void;
 }
 
@@ -237,6 +238,24 @@ export function createWaffleTerminalBridge(
 ): WaffleTerminalBridge {
   const { terminals } = workspace;
   const attached = new Map<string, AttachedSessionRecord>();
+  const handledErrorObjects = new WeakSet<object>();
+  const handledPrimitiveErrors = new Set<unknown>();
+
+  function markAdapterError(error: unknown): void {
+    if (typeof error === "object" && error !== null) handledErrorObjects.add(error);
+    else handledPrimitiveErrors.add(error);
+  }
+
+  function consumeAdapterError(cause: unknown): boolean {
+    if (typeof cause === "object" && cause !== null) {
+      if (!handledErrorObjects.has(cause)) return false;
+      handledErrorObjects.delete(cause);
+      return true;
+    }
+    if (!handledPrimitiveErrors.has(cause)) return false;
+    handledPrimitiveErrors.delete(cause);
+    return true;
+  }
 
   const sessions = createReactiveSubscribable<readonly TerminalSessionInfo[]>(() => {
     const { tabs } = terminals.tabs();
@@ -294,27 +313,38 @@ export function createWaffleTerminalBridge(
       let told: TerminalSize = { columns: initialSize.cols, rows: initialSize.rows };
       let liveSession: BrowserSession | undefined;
 
-      const browserSession = await BrowserSession.create({
-        runtime: workspace.runtime,
-        wasmUrl: workspace.shell.wasmUrl,
-        workerUrl: workspace.shell.workerUrl,
-        cwd: workspace.shell.cwd,
-        env: { ...workspace.shell.env },
-        cols: initialSize.cols,
-        rows: initialSize.rows,
-        signal,
-        onOutput: (bytes) => {
-          onEvent({ type: "output", data: bytes });
-        },
-        onState: (state, detail) => {
-          if (signal.aborted) return;
-          terminals.setState(sessionId, state);
-          if (state === "failed" && detail) {
-            onEvent({ type: "error", message: detail });
-          }
-          if (liveSession) runStartupCommand(sessionId, liveSession);
-        },
-      });
+      let browserSession: BrowserSession;
+      try {
+        browserSession = await BrowserSession.create({
+          runtime: workspace.runtime,
+          wasmUrl: workspace.shell.wasmUrl,
+          workerUrl: workspace.shell.workerUrl,
+          cwd: workspace.shell.cwd,
+          env: { ...workspace.shell.env },
+          cols: initialSize.cols,
+          rows: initialSize.rows,
+          signal,
+          onOutput: (bytes) => {
+            terminals.emitOutput(sessionId, bytes);
+            onEvent({ type: "output", data: bytes });
+          },
+          onState: (state, detail) => {
+            if (signal.aborted) return;
+            terminals.setState(sessionId, state, detail);
+            if (state === "failed" && detail) {
+              onEvent({ type: "error", message: detail });
+            }
+            if (liveSession) runStartupCommand(sessionId, liveSession);
+          },
+        });
+      } catch (error: unknown) {
+        if (!signal.aborted) {
+          const detail = error instanceof Error ? error.message : String(error);
+          markAdapterError(error);
+          terminals.setState(sessionId, "failed", detail);
+        }
+        throw error;
+      }
       if (signal.aborted) {
         void browserSession.dispose().catch(() => {});
         return { write: () => {}, resize: () => {}, detach: () => {} };
@@ -372,6 +402,8 @@ export function createWaffleTerminalBridge(
       focus: () => terminal.focus(),
       submit: (command) => browserSession.submit(command),
       input: (data) => browserSession.input(data),
+      interrupt: () => browserSession.interrupt(),
+      isRunning: () => browserSession.running,
       clear() {
         terminal.clearSelection();
         terminal.write("\x1b[3J\x1b[2J\x1b[H");
@@ -384,5 +416,12 @@ export function createWaffleTerminalBridge(
     terminals.attach(sessionId, handle);
   }
 
-  return { adapter, bindTerminalHandle, clearTerminal };
+  function reportRendererError(sessionId: string, message: string, cause?: unknown): void {
+    if (cause !== undefined && consumeAdapterError(cause)) return;
+    if (!terminals.handle(sessionId) && terminals.stateOf(sessionId) === "starting") {
+      terminals.setState(sessionId, "failed", message);
+    }
+  }
+
+  return { adapter, bindTerminalHandle, reportRendererError, clearTerminal };
 }

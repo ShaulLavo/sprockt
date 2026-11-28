@@ -1,6 +1,12 @@
 import { joinPath, normalizePath } from "../../lib/fs/path.ts";
 import type { ProjectFs } from "../../lib/fs/types.ts";
 import { decodeUtf8 } from "../../lib/bytes.ts";
+import {
+  findWorkspaceDirsInFs,
+  matchWorkspaceDirs,
+  parsePackageWorkspaces,
+  parsePnpmWorkspaceYaml,
+} from "./workspaces.ts";
 
 export type PackageManager = "bun" | "npm" | "pnpm" | "yarn";
 
@@ -115,59 +121,257 @@ const SERVER_ENTRIES = [
   "src/index.tsx",
 ];
 
+export interface WorkspaceTarget {
+  /** Stable id: `<script>`, `entry:<path>`, `framework:<id>`, or `<dir>:<script>`. */
+  readonly id: string;
+  /** Package display name (from `package.json` `name`, its relative directory, or `"root"`). */
+  readonly name: string;
+  /** Relative package directory (`""` for root, e.g. `"apps/web"`). */
+  readonly dir: string;
+  /** The `package.json` script name (`"dev"`, `"start"`, `"serve"`), or `undefined` for entry/default targets. */
+  readonly script: string | undefined;
+  /** Short human-readable action label (script name, entry filename, or framework tool). */
+  readonly action: string;
+  /** True for a bare server entry (`bun server.ts`) that needs auto-restart on edit. */
+  readonly bareEntry: boolean;
+  readonly framework: FrameworkId | undefined;
+  readonly port: number | undefined;
+  readonly command: Command;
+}
+
+export interface ProjectTargetsDetection {
+  readonly detection: ProjectDetection;
+  readonly targets: readonly WorkspaceTarget[];
+  /** The id of the target that matches `detection.dev` (the default Start/import target). */
+  readonly defaultTargetId: string | undefined;
+}
+
 interface PackageJson {
+  readonly name?: string;
   readonly scripts?: Readonly<Record<string, string>>;
   readonly dependencies?: Readonly<Record<string, string>>;
   readonly devDependencies?: Readonly<Record<string, string>>;
+  readonly workspaces?: unknown;
   readonly module?: string;
   readonly main?: string;
 }
 
-export function detectProject(files: ProjectFiles): ProjectDetection {
+function scopedFiles(files: ProjectFiles, dir: string): ProjectFiles {
+  if (!dir) return files;
+  const prefix = `${dir}/`;
+  const scopedPaths: string[] = [];
+  for (const path of files.paths) {
+    if (path.startsWith(prefix)) scopedPaths.push(path.slice(prefix.length));
+  }
+  return {
+    paths: scopedPaths,
+    read: (path) => files.read(`${prefix}${path}`),
+  };
+}
+
+function packageLabel(pkg: PackageJson | undefined, dir: string): string {
+  if (typeof pkg?.name === "string" && pkg.name.trim()) return pkg.name.trim();
+  return dir || "root";
+}
+
+function packageTargets(dir: string, pkg: PackageJson | undefined, files: ProjectFiles): WorkspaceTarget[] {
+  const scripts = pkg?.scripts;
+  if (!scripts) return [];
+  const label = packageLabel(pkg, dir);
+  const localFiles = scopedFiles(files, dir);
+  const targets: WorkspaceTarget[] = [];
+  for (const script of DEV_SCRIPTS) {
+    const scriptText = scripts[script];
+    if (typeof scriptText !== "string" || !scriptText.trim()) continue;
+    const framework = frameworkFromDeps(pkg) ?? frameworkFromScript(scriptText);
+    const port = detectPort(scriptText, framework, localFiles, undefined);
+    const command: Command = dir
+      ? { command: "bun", args: ["run", "--cwd", dir, script] }
+      : { command: "bun", args: ["run", script] };
+    targets.push({
+      id: dir ? `${dir}:${script}` : script,
+      name: label,
+      dir,
+      script,
+      action: script,
+      bareEntry: false,
+      framework,
+      port,
+      command,
+    });
+  }
+  return targets;
+}
+
+function targetPriority(target: WorkspaceTarget): number {
+  let score = 0;
+  if (target.script === "dev") score += 100;
+  else if (target.script === "start") score += 50;
+  if (target.dir.startsWith("apps/")) score += 40;
+  if (target.framework) score += 20;
+  return score;
+}
+
+function pickDefaultWorkspaceTarget(targets: readonly WorkspaceTarget[]): WorkspaceTarget | undefined {
+  let best: WorkspaceTarget | undefined;
+  let bestScore = -1;
+  for (const target of targets) {
+    const score = targetPriority(target);
+    if (score > bestScore) {
+      best = target;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function workspacePatternsFrom(pkg: PackageJson | undefined, files: ProjectFiles): string[] {
+  const fromPkg = parsePackageWorkspaces(pkg?.workspaces);
+  const fromPnpm = parsePnpmWorkspaceYaml(files.read("pnpm-workspace.yaml"));
+  if (fromPkg.length === 0) return fromPnpm;
+  if (fromPnpm.length === 0) return fromPkg;
+  return Array.from(new Set(fromPkg.concat(fromPnpm)));
+}
+
+function rootEntryTarget(
+  pkg: PackageJson | undefined,
+  entry: string,
+  framework: FrameworkId | undefined,
+  port: number | undefined,
+): WorkspaceTarget {
+  // A bare entry file is run as it is (`bun --hot` in bun-wasm refuses a file without an import
+  // or export and a server with routes or WebSocket handlers); the dev-server task restarts it on edit.
+  return {
+    id: `entry:${entry}`,
+    name: packageLabel(pkg, ""),
+    dir: "",
+    script: undefined,
+    action: entry,
+    bareEntry: true,
+    framework,
+    port,
+    command: { command: "bun", args: [entry] },
+  };
+}
+
+function rootFrameworkFallbackTarget(
+  pkg: PackageJson | undefined,
+  framework: FrameworkId | undefined,
+  port: number | undefined,
+): WorkspaceTarget | undefined {
+  if (!framework || framework === "hono" || framework === "bun-serve") return undefined;
+  const args = DEFAULT_DEV[framework];
+  return {
+    id: `framework:${framework}`,
+    name: packageLabel(pkg, ""),
+    dir: "",
+    script: undefined,
+    action: args.join(" "),
+    bareEntry: false,
+    framework,
+    port,
+    command: { command: "bunx", args },
+  };
+}
+
+export function detectProjectTargets(files: ProjectFiles): ProjectTargetsDetection {
   const paths = new Set(files.paths);
   const pkgText = paths.has("package.json") ? files.read("package.json") : undefined;
   const pkg = parsePackageJson(pkgText);
   const lock = LOCKFILES.find(([name]) => paths.has(name));
-  const devScript = DEV_SCRIPTS.find((name) => typeof pkg?.scripts?.[name] === "string");
-  const scriptText = devScript ? (pkg?.scripts?.[devScript] ?? "") : "";
-  const declared = frameworkFromDeps(pkg) ?? frameworkFromScript(scriptText);
+  const rootTargets = packageTargets("", pkg, files);
+  const primaryRootScript = rootTargets[0];
+  const rootScriptText = primaryRootScript?.script ? (pkg?.scripts?.[primaryRootScript.script] ?? "") : "";
+  const declared = frameworkFromDeps(pkg) ?? frameworkFromScript(rootScriptText);
   // Hono apps often `export default app`, which no pattern recognizes, so any entry file will do.
   const entry = serverEntry(paths, files, pkg) ?? (declared === "hono" ? firstEntry(paths, pkg) : undefined);
-  const framework = declared ?? (entry ? "bun-serve" : undefined);
-  return {
+  const rootFramework = declared ?? (entry ? "bun-serve" : undefined);
+  const rootPort = detectPort(rootScriptText, rootFramework, files, entry);
+
+  const workspacePatterns = workspacePatternsFrom(pkg, files);
+  const workspaceDirs = matchWorkspaceDirs(paths, workspacePatterns);
+  const workspaceTargets: WorkspaceTarget[] = [];
+  for (const dir of workspaceDirs) {
+    const subPkg = parsePackageJson(files.read(`${dir}/package.json`));
+    workspaceTargets.push(...packageTargets(dir, subPkg, files));
+  }
+
+  // Explicit root targets (scripts, or a real root server entry file) take precedence over
+  // workspace apps; an inferred root framework guess (`bunx vite` from shared root
+  // devDependencies) is used only when no workspace apps were discovered.
+  const entryTarget =
+    !primaryRootScript && entry ? rootEntryTarget(pkg, entry, rootFramework, rootPort) : undefined;
+  const explicitRootTargets = entryTarget ? rootTargets.concat(entryTarget) : rootTargets;
+  const defaultWorkspace = pickDefaultWorkspaceTarget(workspaceTargets);
+  const inferredRoot =
+    explicitRootTargets.length === 0 && !defaultWorkspace
+      ? rootFrameworkFallbackTarget(pkg, rootFramework, rootPort)
+      : undefined;
+
+  const targets = inferredRoot ? [inferredRoot] : explicitRootTargets.concat(workspaceTargets);
+  const chosen = explicitRootTargets[0] ?? defaultWorkspace ?? inferredRoot;
+  const chosenFromWorkspace = chosen !== undefined && chosen.dir !== "";
+
+  const detection: ProjectDetection = {
     hasPackageJson: pkgText !== undefined,
     packageManager: lock?.[1],
     lockfile: lock?.[0],
-    framework,
+    framework: chosenFromWorkspace ? chosen.framework : (chosen?.framework ?? rootFramework),
     install: pkgText === undefined ? undefined : { command: "bun", args: ["install"] },
-    devScript,
-    dev: devCommand(devScript, framework, entry),
-    port: detectPort(scriptText, framework, files, entry),
+    devScript: chosen?.script,
+    dev: chosen?.command,
+    port: chosenFromWorkspace ? chosen.port : (chosen?.port ?? rootPort),
   };
+  return { detection, targets, defaultTargetId: chosen?.id };
+}
+
+export function detectProject(files: ProjectFiles): ProjectDetection {
+  return detectProjectTargets(files).detection;
 }
 
 /** Reads only the files detection needs from `fs`, rooted at `root`. */
-export async function detectProjectInFs(fs: ProjectFs, root = ""): Promise<ProjectDetection> {
+export async function detectProjectTargetsInFs(fs: ProjectFs, root = ""): Promise<ProjectTargetsDetection> {
   const top = await fs.readdir(root);
   const srcDir = top.find((entry) => entry.name === "src" && entry.kind === "directory");
   const nested = srcDir ? await fs.readdir(joinPath(root, "src")) : [];
   const paths = top.map((entry) => entry.name).concat(nested.map((entry) => `src/${entry.name}`));
-  const wanted = new Set(["package.json"].concat(VITE_CONFIGS, SERVER_ENTRIES));
+  const wanted = new Set(["package.json", "pnpm-workspace.yaml"].concat(VITE_CONFIGS, SERVER_ENTRIES));
   const texts = await readTexts(
     fs,
     root,
     paths.filter((candidate) => wanted.has(candidate)),
   );
+  const rootPkg = parsePackageJson(texts.get("package.json"));
   // An entry named by `module` or `main` may live anywhere in the tree.
-  const declared = entryCandidates(parsePackageJson(texts.get("package.json"))).filter(
-    (path) => !wanted.has(path),
-  );
+  const declared = entryCandidates(rootPkg).filter((path) => !wanted.has(path));
   const declaredTexts = await readTexts(fs, root, declared);
   for (const [path, text] of declaredTexts) texts.set(path, text);
-  return detectProject({
-    paths: paths.concat(Array.from(declaredTexts.keys())),
+
+  const patterns = workspacePatternsFrom(rootPkg, {
+    paths,
     read: (path) => texts.get(path),
   });
+  const extraPaths: string[] = [];
+  if (patterns.length > 0) {
+    const dirs = await findWorkspaceDirsInFs(fs, root, patterns);
+    const workspaceFiles = dirs.flatMap((dir) =>
+      [`${dir}/package.json`].concat(VITE_CONFIGS.map((cfg) => `${dir}/${cfg}`)),
+    );
+    const workspaceTexts = await readTexts(fs, root, workspaceFiles);
+    for (const [path, text] of workspaceTexts) {
+      texts.set(path, text);
+      extraPaths.push(path);
+    }
+  }
+
+  return detectProjectTargets({
+    paths: paths.concat(Array.from(declaredTexts.keys()), extraPaths),
+    read: (path) => texts.get(path),
+  });
+}
+
+export async function detectProjectInFs(fs: ProjectFs, root = ""): Promise<ProjectDetection> {
+  return (await detectProjectTargetsInFs(fs, root)).detection;
 }
 
 /** The UTF-8 text of each existing file in `paths`, read in parallel. */
@@ -244,20 +448,6 @@ function looksLikeServer(text: string | undefined): boolean {
   return /\bBun\.serve\s*\(/.test(text) || /export\s+default\s*\{[^}]*\bfetch\b/.test(text);
 }
 
-function devCommand(
-  devScript: string | undefined,
-  framework: FrameworkId | undefined,
-  entry: string | undefined,
-): Command | undefined {
-  if (devScript) return { command: "bun", args: ["run", devScript] };
-  // A bare entry file is run as it is. `bun --hot` in bun-wasm refuses a file without an import
-  // or export and a server with routes or WebSocket handlers, and there is no `--watch`; the
-  // dev-server task restarts the file itself when the source changes (tasks/restarting.ts).
-  if (entry) return { command: "bun", args: [entry] };
-  if (!framework || framework === "hono" || framework === "bun-serve") return undefined;
-  return { command: "bunx", args: DEFAULT_DEV[framework] };
-}
-
 function detectPort(
   script: string,
   framework: FrameworkId | undefined,
@@ -271,6 +461,11 @@ function detectPort(
   return framework ? DEFAULT_PORTS[framework] : undefined;
 }
 
+function portSources(viteBased: boolean, entry: string | undefined): readonly string[] {
+  if (viteBased) return VITE_CONFIGS;
+  return entry ? [entry] : [];
+}
+
 /** A `port: N` in the Vite config (for Vite-based frameworks) or in the `Bun.serve` entry. */
 function configuredPort(
   framework: FrameworkId | undefined,
@@ -282,8 +477,7 @@ function configuredPort(
     framework === "sveltekit" ||
     framework === "react-router" ||
     framework === "remix";
-  const sources = viteBased ? VITE_CONFIGS : entry ? [entry] : [];
-  for (const path of sources) {
+  for (const path of portSources(viteBased, entry)) {
     const text = files.read(path) ?? "";
     // In a Vite config only `server.port` counts; `preview.port` and `server.hmr.port` are other servers.
     const scope = viteBased ? topLevelOf(objectBody(text, /\bserver\s*:\s*\{/)) : text;
@@ -293,6 +487,12 @@ function configuredPort(
   return undefined;
 }
 
+function braceDelta(char: string | undefined): number {
+  if (char === "{") return 1;
+  if (char === "}") return -1;
+  return 0;
+}
+
 /** The text inside the braces of the first object literal that `opener` (ending in `{`) introduces. */
 function objectBody(text: string, opener: RegExp): string {
   const match = opener.exec(text);
@@ -300,8 +500,7 @@ function objectBody(text: string, opener: RegExp): string {
   const start = match.index + match[0].length;
   let depth = 1;
   for (let index = start; index < text.length; index++) {
-    const char = text[index];
-    depth += char === "{" ? 1 : char === "}" ? -1 : 0;
+    depth += braceDelta(text[index]);
     if (depth === 0) return text.slice(start, index);
   }
   return text.slice(start);

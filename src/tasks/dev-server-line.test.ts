@@ -9,10 +9,11 @@ interface FakeProcess extends ServerProcess {
   end(): void;
 }
 
-function fakeProcess(command: string): FakeProcess {
+function fakeProcess(command: string, targetId?: string): FakeProcess {
   const exited = Promise.withResolvers<void>();
   const process: FakeProcess = {
     command,
+    targetId,
     exited: exited.promise,
     stops: 0,
     stop() {
@@ -34,6 +35,10 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
 interface FakeTab {
   /** What the project starts with, or nothing when it has no dev script. */
   command: string | undefined;
+  /** Target id reported for the spawned process. */
+  targetId: string | undefined;
+  /** Preferred target ids passed into `command(preferredTargetId)` on takeover. */
+  readonly preferredTargets: (string | undefined)[];
   /** Looking the command up takes until this resolves. */
   looking: Promise<void>;
   /** How often the command was looked up. */
@@ -64,6 +69,8 @@ function browser() {
     let listening: readonly number[] = [];
     const tab: FakeTab = {
       command: "bun run dev",
+      targetId: undefined,
+      preferredTargets: [],
       looking: Promise.resolve(),
       lookups: 0,
       spawns: 0,
@@ -82,15 +89,16 @@ function browser() {
             return () => portListeners.delete(listener);
           },
         },
-        async command() {
+        async command(preferredTargetId) {
           tab.lookups++;
+          tab.preferredTargets.push(preferredTargetId);
           await tab.looking;
           return tab.command;
         },
         async spawn(command, signal) {
           tab.spawns++;
           await tab.ready;
-          const process = fakeProcess(command);
+          const process = fakeProcess(command, tab.targetId);
           processes.push(process);
           // As the real one does: a server nobody wants any more ends as soon as it exists.
           if (signal.aborted) process.stop();
@@ -384,4 +392,27 @@ test("a process still being created when its lease ends is told so, and ends", a
   // Ended by the lease's signal when it came to exist, and asked once more by the line: both harmless.
   expect(first.processes[0]?.stops).toBeGreaterThanOrEqual(1);
   expect(first.line.state().status).toBe("stopped");
+});
+
+test("a successor tab sees the owner's targetId and receives it on lease takeover", async () => {
+  const openTab = browser();
+  const [first, second] = [openTab("tab-0"), openTab("tab-1")];
+  first.targetId = "apps/api:dev";
+  void first.line.start();
+  await settle();
+  first.listen([3102]);
+  await settle();
+
+  expect(second.line.state()).toEqual({
+    status: "running",
+    owned: false,
+    remotePorts: [3102],
+    remoteTargetId: "apps/api:dev",
+  });
+
+  await first.line.dispose();
+  await settle();
+  expect(second.preferredTargets).toEqual(["apps/api:dev"]);
+  expect(second.processes).toHaveLength(1);
+  expect(second.line.state().owned).toBe(true);
 });

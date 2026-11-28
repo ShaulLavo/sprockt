@@ -105,4 +105,25 @@ describe("createWaffleTerminalBridge split wiring", () => {
     unsubSplit();
     unsubPair?.();
   });
+
+  it("settles only the failing session's waitForHandle when renderer init fails while another tab is starting", async () => {
+    const terminals = createTerminalStore();
+    const bashId = terminals.create();
+    const devId = terminals.create({ title: "dev", named: true });
+    // Focus bash while both bash and dev are still starting.
+    terminals.select(bashId);
+    const workspace = { terminals } as unknown as WorkspaceSession;
+    const bridge = createWaffleTerminalBridge(workspace);
+
+    const waited = terminals.waitForHandle(devId);
+    bridge.reportRendererError(devId, "WebGPU adapter unavailable", new Error("WebGPU adapter unavailable"));
+
+    expect(await waited).toEqual({
+      ok: false,
+      reason: "failed",
+      message: "WebGPU adapter unavailable",
+    });
+    expect(terminals.stateOf(devId)).toBe("failed");
+    expect(terminals.stateOf(bashId)).toBe("starting");
+  });
 });

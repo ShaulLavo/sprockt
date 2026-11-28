@@ -20,6 +20,10 @@ export interface TerminalHandle {
   submit(command: string): Promise<void>;
   /** Sends raw input, as if typed. */
   input(data: string): void;
+  /** Sends Ctrl+C to the foreground job in this shell. */
+  interrupt(): void;
+  /** Whether a foreground command is currently running in this shell. */
+  isRunning(): boolean;
   /** Clears the terminal viewport and scrollback. */
   clear(): void;
   /** Currently selected text in the terminal, if any. */

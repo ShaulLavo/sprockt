@@ -163,6 +163,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
         }}
         onTitleChange={(sessionId, title) => terminals.setShellTitle(sessionId, title)}
         onClear={(_sessionId, terminal, attachment) => bridge.clearTerminal(terminal, attachment)}
+        onError={(message, cause, sessionId) => bridge.reportRendererError(sessionId, message, cause)}
         onPasteFailed={() => showNotice(ui.menu.pasteFallback)}
         renderEmpty={() => (
           <div className="term-empty">

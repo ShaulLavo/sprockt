@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { detectProject } from "../importer/detect/detect";
-import { devStart, entriesOf } from "./detect";
+import { detectProject, detectProjectTargets } from "../importer/detect/detect";
+import { devStart, devStartForTarget, entriesOf } from "./detect";
 
 function detected(files: Record<string, string>) {
   return detectProject({ paths: Object.keys(files), read: (path) => files[path] });
@@ -59,4 +59,58 @@ test("a file listing is read as directory entries, one level at a time", () => {
     { name: "lib", kind: "directory" },
   ]);
   expect(entriesOf(files, "missing")).toEqual([]);
+});
+
+test("monorepo targets run inside a subshell in their package directory", () => {
+  const { detection, targets } = detectProjectTargets({
+    paths: ["package.json", "apps/web/package.json"],
+    read: (path) => {
+      if (path === "package.json") return JSON.stringify({ workspaces: ["apps/*"] });
+      if (path === "apps/web/package.json") return JSON.stringify({ name: "web", scripts: { dev: "vite" } });
+      return undefined;
+    },
+  });
+  const [web] = targets;
+  expect(web).toBeDefined();
+  expect(devStart(detection, false)).toEqual({
+    script: "bun install && (cd apps/web && bun run dev)",
+    rerun: undefined,
+  });
+  expect(devStart(detection, true)).toEqual({
+    script: "(cd apps/web && bun run dev)",
+    rerun: undefined,
+  });
+  if (web) {
+    expect(devStartForTarget(detection, web, true)).toEqual({
+      script: "(cd apps/web && bun run dev)",
+      rerun: undefined,
+      targetId: "apps/web:dev",
+    });
+  }
+});
+
+test("selecting a root bare entry target preserves rerun and targetId", () => {
+  const { detection, targets } = detectProjectTargets({
+    paths: ["package.json", "server.ts", "apps/web/package.json"],
+    read: (path) => {
+      if (path === "package.json") return JSON.stringify({ name: "mono", workspaces: ["apps/*"] });
+      if (path === "server.ts") return SERVER;
+      if (path === "apps/web/package.json") return JSON.stringify({ name: "web", scripts: { dev: "vite" } });
+      return undefined;
+    },
+  });
+  const rootEntry = targets.find((target) => target.id === "entry:server.ts");
+  expect(rootEntry).toBeDefined();
+  if (rootEntry) {
+    expect(devStartForTarget(detection, rootEntry, false)).toEqual({
+      script: "bun install && bun server.ts",
+      rerun: "bun server.ts",
+      targetId: "entry:server.ts",
+    });
+    expect(devStartForTarget(detection, rootEntry, true)).toEqual({
+      script: "bun server.ts",
+      rerun: "bun server.ts",
+      targetId: "entry:server.ts",
+    });
+  }
 });

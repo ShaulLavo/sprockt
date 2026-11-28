@@ -1,8 +1,15 @@
 // Turns the project detection of `importer/detect` into the one shell command that brings a
 // project's dev server up, and gives that detection a read-only view of the workspace's files.
 import type { FileService } from "../files/service";
-import { detectProjectInFs, type ProjectDetection } from "../importer/detect/detect";
+import {
+  detectProjectTargetsInFs,
+  type ProjectDetection,
+  type ProjectTargetsDetection,
+  type WorkspaceTarget,
+} from "../importer/detect/detect";
 import type { FsDirent, ProjectFs } from "../lib/fs/types";
+
+export type { WorkspaceTarget };
 
 const readOnly = (): never => {
   throw new Error("Project detection only reads files");
@@ -32,11 +39,15 @@ async function projectView(files: FileService): Promise<ProjectFs> {
   };
 }
 
-export async function detectWorkspace(files: FileService): Promise<ProjectDetection> {
-  return detectProjectInFs(await projectView(files));
+export async function detectWorkspaceTargets(files: FileService): Promise<ProjectTargetsDetection> {
+  return detectProjectTargetsInFs(await projectView(files));
 }
 
-const shellWord = (word: string) =>
+export async function detectWorkspace(files: FileService): Promise<ProjectDetection> {
+  return (await detectWorkspaceTargets(files)).detection;
+}
+
+export const shellWord = (word: string) =>
   /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 
 /** How the dev-server task starts a project. */
@@ -48,6 +59,24 @@ export interface DevStart {
    * itself. Undefined when it does (a dev script: Vite, `bun --hot`, whatever the project chose).
    */
   readonly rerun: string | undefined;
+  /** Stable id of the target this command runs, carried across tab handovers. */
+  readonly targetId?: string;
+}
+
+function startCommandText(command: ProjectDetection["dev"]): string | undefined {
+  if (!command) return undefined;
+  // Run workspace-subdir commands inside a subshell so an interactive dev terminal stays at `/workspace`.
+  if (
+    command.command === "bun" &&
+    command.args.length === 4 &&
+    command.args[0] === "run" &&
+    command.args[1] === "--cwd"
+  ) {
+    const dir = command.args[2];
+    const script = command.args[3];
+    if (dir && script) return `(cd ${shellWord(dir)} && bun run ${shellWord(script)})`;
+  }
+  return [command.command].concat(command.args).map(shellWord).join(" ");
 }
 
 /**
@@ -58,9 +87,26 @@ export interface DevStart {
  * serves what it loaded and never looks at the file again, so the task runs it again on a change.
  */
 export function devStart(detection: ProjectDetection, hasNodeModules: boolean): DevStart | undefined {
-  if (!detection.dev) return undefined;
-  const start = [detection.dev.command].concat(detection.dev.args).map(shellWord).join(" ");
+  const start = startCommandText(detection.dev);
+  if (!start || !detection.dev) return undefined;
   const install = detection.install && !hasNodeModules;
   const bareEntry = detection.devScript === undefined && detection.dev.command === "bun";
   return { script: install ? `bun install && ${start}` : start, rerun: bareEntry ? start : undefined };
+}
+
+/** How to start one chosen monorepo/workspace target (or root entry / script). */
+export function devStartForTarget(
+  detection: ProjectDetection,
+  target: WorkspaceTarget,
+  hasNodeModules: boolean,
+): DevStart {
+  const start =
+    startCommandText(target.command) ??
+    [target.command.command].concat(target.command.args).map(shellWord).join(" ");
+  const install = detection.install && !hasNodeModules;
+  return {
+    script: install ? `bun install && ${start}` : start,
+    rerun: target.bareEntry ? start : undefined,
+    targetId: target.id,
+  };
 }

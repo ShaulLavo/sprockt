@@ -271,13 +271,16 @@ test("terminal supports 3-state visibility, paired split tabs, and intact workbe
   await expect(page.getByTestId("toggle-terminal")).toHaveAttribute("aria-pressed", "true");
 
   // Dragging the terminal resize handle down past the bottom threshold snaps it completely hidden.
+  const currentTerminalHeight = (await page.locator("#wb-slot-terminal").boundingBox())?.height ?? 0;
+  expect(currentTerminalHeight).toBeGreaterThan(100);
   const splitterBox = await page.locator('[data-wb-splitter="terminal"]').boundingBox();
   if (!splitterBox) throw new Error("terminal splitter not found");
   const sx = splitterBox.x + splitterBox.width / 2;
   const sy = splitterBox.y + splitterBox.height / 2;
+  const maxY = (page.viewportSize()?.height ?? 900) - 4;
   await page.mouse.move(sx, sy);
   await page.mouse.down();
-  await page.mouse.move(sx, sy + expandedHeight - 10, { steps: 8 });
+  await page.mouse.move(sx, Math.min(sy + currentTerminalHeight - 10, maxY), { steps: 8 });
   await page.mouse.up();
   await expect(page.getByTestId("workbench")).toHaveAttribute("data-terminal", "hidden");
   await expect(page.locator("#wb-slot-terminal")).toBeHidden();

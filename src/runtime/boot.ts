@@ -4,6 +4,7 @@ import { installShellCommands } from "bash-web";
 import { installBunAdapters, installBunSharedObjects } from "bun-wasm";
 import { createRuntime, openIdleWorkspace, type GuestLauncher, type Runtime } from "waffle";
 import { installBase } from "waffle-base";
+import { createGitPackage } from "waffle-git/program";
 import type { PreviewServer as PreviewBackend } from "waffle/browser/preview";
 import { PROJECT_ROOT, storageName } from "../workspace/paths";
 import { runtimeAssets } from "./assets";
@@ -71,13 +72,18 @@ export function programLauncher(workerUrl: URL): GuestLauncher {
  * storage from another tab: it waits in line (`"wait"`), and only an open the person confirmed
  * uses `"takeover"`.
  */
+function busyPolicy(takeOver: boolean): "attach" | "takeover" | "wait" {
+  if (TAB_POLICY === "attach") return "attach";
+  return takeOver ? "takeover" : "wait";
+}
+
 function createWorkspaceRuntime(id: string, takeOver: boolean, onStage: (stage: BootStage) => void): Runtime {
   return createRuntime({
     filesystem: {
       mode: "fast",
       name: storageName(id),
       workerURL: runtimeAssets.filesystemWorker,
-      whenBusy: TAB_POLICY === "attach" ? "attach" : takeOver ? "takeover" : "wait",
+      whenBusy: busyPolicy(takeOver),
       onStateChange: (state) => {
         if (state.status === "waiting") onStage("waiting");
       },
@@ -102,6 +108,7 @@ async function installPrograms(runtime: Runtime, ports: PortListener | undefined
     network: { ...ports, fetch: createRuntimeFetch() },
   });
   const base = await installBase(runtime, { launcher: programLauncher(runtimeAssets.programWorker) });
+  await runtime.programs.onDemand(createGitPackage({ interpreter: "/bin/bun" }));
   await installShellCommands(runtime, {
     wasmUrl: runtimeAssets.shellGuest,
     workerUrl: runtimeAssets.shellWorker,

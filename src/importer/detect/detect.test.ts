@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { writeFiles } from "../../lib/fs/entries.ts";
 import { MemoryFs } from "../../lib/fs/memory.ts";
 import { textEncoder } from "../../lib/bytes.ts";
-import { detectProject, detectProjectInFs, type ProjectDetection } from "./detect.ts";
+import {
+  detectProject,
+  detectProjectInFs,
+  detectProjectTargets,
+  detectProjectTargetsInFs,
+  type ProjectDetection,
+} from "./detect.ts";
 
 function detect(files: Record<string, string | object>): ProjectDetection {
   const texts = new Map(
@@ -206,4 +212,348 @@ describe("detectProjectInFs", () => {
     await writeFiles(fs, [{ path: "src/server.ts", bytes: textEncoder.encode("Bun.serve({ fetch() {} })") }]);
     expect((await detectProjectInFs(fs)).dev).toEqual({ command: "bun", args: ["src/server.ts"] });
   });
+
+  test("discovers monorepo targets from package.json workspaces and pnpm-workspace.yaml", async () => {
+    const fs = new MemoryFs();
+    await writeFiles(fs, [
+      {
+        path: "package.json",
+        bytes: textEncoder.encode(
+          JSON.stringify({
+            name: "mono",
+            private: true,
+            workspaces: { packages: ["apps/*", "packages/*", "!packages/ignored"] },
+          }),
+        ),
+      },
+      {
+        path: "apps/web/package.json",
+        bytes: textEncoder.encode(
+          JSON.stringify({ name: "@mono/web", scripts: { dev: "vite" }, devDependencies: { vite: "7" } }),
+        ),
+      },
+      {
+        path: "apps/web/vite.config.ts",
+        bytes: textEncoder.encode("export default { server: { port: 5174 } }"),
+      },
+      {
+        path: "apps/api/package.json",
+        bytes: textEncoder.encode(
+          JSON.stringify({ name: "@mono/api", scripts: { dev: "bun run server.ts -p 3102" } }),
+        ),
+      },
+      {
+        path: "packages/ignored/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "ignored", scripts: { dev: "vite" } })),
+      },
+    ]);
+
+    const result = await detectProjectTargetsInFs(fs);
+    expect(result.targets.map((t) => ({ id: t.id, name: t.name, port: t.port, dir: t.dir }))).toEqual([
+      { id: "apps/api:dev", name: "@mono/api", port: 3102, dir: "apps/api" },
+      { id: "apps/web:dev", name: "@mono/web", port: 5174, dir: "apps/web" },
+    ]);
+    // Root has no dev script, so fallback picks the Vite app in apps/web and exposes its id.
+    expect(result.defaultTargetId).toBe("apps/web:dev");
+    expect(result.detection).toMatchObject({
+      hasPackageJson: true,
+      framework: "vite",
+      devScript: "dev",
+      dev: { command: "bun", args: ["run", "--cwd", "apps/web", "dev"] },
+      port: 5174,
+    });
+
+    // Also supports pnpm-workspace.yaml with quoted entries and comments.
+    const pnpm = detectProjectTargets({
+      paths: ["package.json", "pnpm-workspace.yaml", "apps/site/package.json"],
+      read: (path) => {
+        if (path === "package.json") return JSON.stringify({ name: "pnpm-mono" });
+        if (path === "pnpm-workspace.yaml") return 'packages:\n  - "apps/*" # apps\n  - "!apps/skip"\n';
+        if (path === "apps/site/package.json") {
+          return JSON.stringify({ name: "site", scripts: { dev: "astro dev", start: "astro preview" } });
+        }
+        return undefined;
+      },
+    });
+    expect(pnpm.targets.map((t) => t.id)).toEqual(["apps/site:dev", "apps/site:start"]);
+    expect(pnpm.defaultTargetId).toBe("apps/site:dev");
+    expect(pnpm.detection.dev).toEqual({ command: "bun", args: ["run", "--cwd", "apps/site", "dev"] });
+    expect(pnpm.detection.port).toBe(4321);
+  });
+
+  test("prefers workspace apps over inferred root framework devDependencies", async () => {
+    const fs = new MemoryFs();
+    await writeFiles(fs, [
+      {
+        path: "package.json",
+        bytes: textEncoder.encode(
+          JSON.stringify({
+            name: "mono",
+            private: true,
+            workspaces: ["apps/*"],
+            devDependencies: { vite: "^7" },
+          }),
+        ),
+      },
+      {
+        path: "apps/web/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "web", scripts: { dev: "vite --port 5175" } })),
+      },
+    ]);
+    const result = await detectProjectTargetsInFs(fs);
+    expect(result.defaultTargetId).toBe("apps/web:dev");
+    expect(result.detection).toMatchObject({
+      framework: "vite",
+      devScript: "dev",
+      dev: { command: "bun", args: ["run", "--cwd", "apps/web", "dev"] },
+      port: 5175,
+    });
+  });
+
+  test("includes a runnable root server entry alongside workspace apps in targets", async () => {
+    const fs = new MemoryFs();
+    await writeFiles(fs, [
+      {
+        path: "package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "mono", workspaces: ["apps/*"] })),
+      },
+      {
+        path: "server.ts",
+        bytes: textEncoder.encode("Bun.serve({ port: 3000, fetch: () => new Response('root') })"),
+      },
+      {
+        path: "apps/web/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "web", scripts: { dev: "vite" } })),
+      },
+    ]);
+    const result = await detectProjectTargetsInFs(fs);
+    expect(result.targets.map((t) => t.id)).toEqual(["entry:server.ts", "apps/web:dev"]);
+    expect(result.defaultTargetId).toBe("entry:server.ts");
+    expect(result.targets[0]?.bareEntry).toBe(true);
+    expect(result.detection.dev).toEqual({ command: "bun", args: ["server.ts"] });
+  });
+
+  test("supports deep explicit workspace paths, brace/class/? globs, and order-independent exclusions", async () => {
+    const fs = new MemoryFs();
+    await writeFiles(fs, [
+      {
+        path: "package.json",
+        bytes: textEncoder.encode(
+          JSON.stringify({
+            name: "deep-mono",
+            workspaces: [
+              "!apps/skip",
+              "apps/frontends/customer/web",
+              "{apps,packages}/[a-s]*",
+              "tools/cli-?",
+            ],
+          }),
+        ),
+      },
+      {
+        path: "apps/frontends/customer/web/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "customer-web", scripts: { dev: "vite" } })),
+      },
+      {
+        path: "apps/skip/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "skip", scripts: { dev: "vite" } })),
+      },
+      {
+        path: "packages/admin/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "admin", scripts: { dev: "vite" } })),
+      },
+      {
+        path: "packages/zebra/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "zebra", scripts: { dev: "vite" } })),
+      },
+      {
+        path: "tools/cli-1/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "cli-1", scripts: { start: "bun index.ts" } })),
+      },
+      {
+        path: "tools/cli-10/package.json",
+        bytes: textEncoder.encode(JSON.stringify({ name: "cli-10", scripts: { start: "bun index.ts" } })),
+      },
+    ]);
+
+    const result = await detectProjectTargetsInFs(fs);
+    expect(result.targets.map((t) => t.dir)).toEqual([
+      "apps/frontends/customer/web",
+      "packages/admin",
+      "tools/cli-1",
+    ]);
+    expect(result.defaultTargetId).toBe("apps/frontends/customer/web:dev");
+  });
+
+  test("preserves literal workspace inclusions even when matched by wildcard exclusions", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({
+        name: "mono",
+        workspaces: ["packages/**", "!**/test/**", "packages/test/demo"],
+      }),
+      "packages/test/demo/package.json": JSON.stringify({ name: "demo", scripts: { dev: "bun server.ts" } }),
+      "packages/test/other/package.json": JSON.stringify({
+        name: "other",
+        scripts: { dev: "bun server.ts" },
+      }),
+      "packages/ui/package.json": JSON.stringify({ name: "ui", scripts: { dev: "vite" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual(["packages/test/demo", "packages/ui"]);
+
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual(["packages/test/demo", "packages/ui"]);
+  });
+
+  test("preserves commas inside quoted inline pnpm-workspace.yaml patterns", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "pnpm-mono" }),
+      "pnpm-workspace.yaml": "packages: [\"{apps,packages}/*\", 'tools/cli']\n",
+      "apps/web/package.json": JSON.stringify({ name: "web", scripts: { dev: "vite" } }),
+      "packages/ui/package.json": JSON.stringify({ name: "ui", scripts: { dev: "bun server.ts" } }),
+      "tools/cli/package.json": JSON.stringify({ name: "cli", scripts: { start: "bun index.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual(["apps/web", "packages/ui", "tools/cli"]);
+    expect(fromPaths.defaultTargetId).toBe("apps/web:dev");
+
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual(["apps/web", "packages/ui", "tools/cli"]);
+    expect(fromFs.defaultTargetId).toBe("apps/web:dev");
+  });
+
+  test("excludes hidden path segments from ordinary workspace wildcards unless explicitly matched", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "mono", workspaces: ["apps/*", "packages/**"] }),
+      "apps/.template/package.json": JSON.stringify({ name: "template", scripts: { dev: "bun server.ts" } }),
+      "apps/web/package.json": JSON.stringify({ name: "web", scripts: { dev: "bun server.ts" } }),
+      "packages/.hidden/app/package.json": JSON.stringify({
+        name: "hidden-app",
+        scripts: { dev: "bun server.ts" },
+      }),
+      "packages/public/package.json": JSON.stringify({ name: "public", scripts: { dev: "bun server.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual(["apps/web", "packages/public"]);
+    expect(fromPaths.defaultTargetId).toBe("apps/web:dev");
+
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual(["apps/web", "packages/public"]);
+    expect(fromFs.defaultTargetId).toBe("apps/web:dev");
+
+    // Explicit leading-dot patterns still match hidden directories.
+    const explicit = detectProjectTargets({
+      paths: Object.keys(files),
+      read: (path) =>
+        path === "package.json" ? JSON.stringify({ name: "mono", workspaces: ["apps/.*"] }) : files[path],
+    });
+    expect(explicit.targets.map((t) => t.dir)).toEqual(["apps/.template"]);
+  });
+
+  test("allows negative globs to exclude packages inside explicitly included hidden directories", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({
+        name: "mono",
+        workspaces: ["apps/.examples/*", "!**/legacy"],
+      }),
+      "apps/.examples/legacy/package.json": JSON.stringify({
+        name: "legacy",
+        scripts: { dev: "bun server.ts" },
+      }),
+      "apps/.examples/web/package.json": JSON.stringify({ name: "web", scripts: { dev: "bun server.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual(["apps/.examples/web"]);
+    expect(fromPaths.defaultTargetId).toBe("apps/.examples/web:dev");
+
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual(["apps/.examples/web"]);
+    expect(fromFs.defaultTargetId).toBe("apps/.examples/web:dev");
+  });
+
+  test("ignores invalid workspace globs and treats escaped wildcards literally", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({
+        name: "root-app",
+        scripts: { dev: "bun server.ts" },
+        workspaces: ["apps/[z-a]", "apps/foo\\*"],
+      }),
+      "apps/fo/package.json": JSON.stringify({ name: "fo", scripts: { dev: "bun server.ts" } }),
+      "apps/foo/package.json": JSON.stringify({ name: "foo", scripts: { dev: "bun server.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    expect(fromPaths.detection.devScript).toBe("dev");
+    expect(fromPaths.targets.map((t) => t.id)).toEqual(["dev"]);
+
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromFs.detection.devScript).toBe("dev");
+    expect(fromFs.targets.map((t) => t.id)).toEqual(["dev"]);
+  });
+
+  test("discovers deep globstar workspaces consistently in both path-based and filesystem detection", async () => {
+    const deepDir = "packages/a/b/c/d/e/f/g/h/i/j/k/m"; // 13 segments deep
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "mono", workspaces: ["packages/**"] }),
+      [`${deepDir}/package.json`]: JSON.stringify({ name: "deep", scripts: { dev: "bun server.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual([deepDir]);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual([deepDir]);
+    expect(fromPaths.defaultTargetId).toBe(`${deepDir}:dev`);
+    expect(fromFs.defaultTargetId).toBe(`${deepDir}:dev`);
+  });
+
+  test("evaluates multi-globstar patterns on deep paths in linear time without backtracking", async () => {
+    // 36 segments with 9 alternating `**/a` groups triggers C(36,9) > 94M steps on recursive
+    // backtracking (exceeding the 2s hang cap), while the O(D*P) NFA finishes in < 1ms.
+    const segs = Array.from({ length: 36 }, () => "a").join("/");
+    const matched = `packages/${segs}/app`;
+    const unmatched = `packages/${segs}/other`;
+    const pattern = `packages/${Array.from({ length: 9 }, () => "**/a").join("/")}/**/app`;
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "mono", workspaces: [pattern] }),
+      [`${matched}/package.json`]: JSON.stringify({ name: "app", scripts: { dev: "bun server.ts" } }),
+      [`${unmatched}/package.json`]: JSON.stringify({ name: "other", scripts: { dev: "bun server.ts" } }),
+    };
+    const fromPaths = detectProjectTargets({ paths: Object.keys(files), read: (path) => files[path] });
+    const fs = new MemoryFs();
+    await writeFiles(
+      fs,
+      Object.entries(files).map(([path, content]) => ({ path, bytes: textEncoder.encode(content) })),
+    );
+    const fromFs = await detectProjectTargetsInFs(fs);
+    expect(fromPaths.targets.map((t) => t.dir)).toEqual([matched]);
+    expect(fromFs.targets.map((t) => t.dir)).toEqual([matched]);
+  }, 2_000);
 });
